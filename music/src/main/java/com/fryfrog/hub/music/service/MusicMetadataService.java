@@ -9,12 +9,13 @@ import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.nio.file.*;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -23,8 +24,7 @@ public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
 
-    @Value("${hub.music.root-path}")
-    private String rootPath;
+    private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
 
     public List<MusicTrack> getAllTracks() {
         return repository.findAll();
@@ -50,25 +50,28 @@ public class MusicMetadataService {
                 throw new IllegalArgumentException("File not found: " + filePath);
             }
 
+            String absolutePath = file.getAbsolutePath();
+            MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
+
             AudioFile audioFile = AudioFileIO.read(file);
             Tag tag = audioFile.getTagOrCreateDefault();
 
-            MusicTrack track = MusicTrack.builder()
-                    .title(tag.getFirst(FieldKey.TITLE))
-                    .artist(tag.getFirst(FieldKey.ARTIST))
-                    .album(tag.getFirst(FieldKey.ALBUM))
-                    .albumArtist(tag.getFirst(FieldKey.ALBUM_ARTIST))
-                    .trackNumber(parseInteger(tag.getFirst(FieldKey.TRACK)))
-                    .discNumber(parseInteger(tag.getFirst(FieldKey.DISC_NO)))
-                    .year(parseInteger(tag.getFirst(FieldKey.YEAR)))
-                    .genre(tag.getFirst(FieldKey.GENRE))
-                    .filePath(file.getAbsolutePath())
-                    .fileName(file.getName())
-                    .fileSize(file.length())
-                    .durationSeconds((long) audioFile.getAudioHeader().getTrackLength())
-                    .bitrateKbps(parseInteger(audioFile.getAudioHeader().getBitRate()))
-                    .format(audioFile.getAudioHeader().getFormat())
-                    .build();
+            MusicTrack track = existing != null ? existing : MusicTrack.builder().build();
+
+            track.setTitle(tag.getFirst(FieldKey.TITLE));
+            track.setArtist(tag.getFirst(FieldKey.ARTIST));
+            track.setAlbum(tag.getFirst(FieldKey.ALBUM));
+            track.setAlbumArtist(tag.getFirst(FieldKey.ALBUM_ARTIST));
+            track.setTrackNumber(parseInteger(tag.getFirst(FieldKey.TRACK)));
+            track.setDiscNumber(parseInteger(tag.getFirst(FieldKey.DISC_NO)));
+            track.setYear(parseInteger(tag.getFirst(FieldKey.YEAR)));
+            track.setGenre(tag.getFirst(FieldKey.GENRE));
+            track.setFilePath(absolutePath);
+            track.setFileName(file.getName());
+            track.setFileSize(file.length());
+            track.setDurationSeconds((long) audioFile.getAudioHeader().getTrackLength());
+            track.setBitrateKbps(parseInteger(audioFile.getAudioHeader().getBitRate()));
+            track.setFormat(audioFile.getAudioHeader().getFormat());
 
             return repository.save(track);
         } catch (Exception e) {
@@ -84,23 +87,22 @@ public class MusicMetadataService {
                 throw new IllegalArgumentException("Not a directory: " + directoryPath);
             }
 
-            String supportedFormats = "mp3,flac,ogg,wav,aac,m4a";
-            List<String> formats = List.of(supportedFormats.split(","));
-
-            Files.walk(dir)
-                    .filter(Files::isRegularFile)
-                    .filter(path -> {
-                        String name = path.getFileName().toString().toLowerCase();
-                        return formats.stream().anyMatch(name::endsWith);
-                    })
-                    .forEach(path -> {
-                        try {
-                            extractAndSaveMetadata(path.toString());
-                            log.info("Indexed: {}", path.getFileName());
-                        } catch (Exception e) {
-                            log.warn("Failed to index: {}", path.getFileName(), e);
-                        }
-                    });
+            try (Stream<Path> paths = Files.walk(dir)) {
+                paths.filter(Files::isRegularFile)
+                        .filter(path -> {
+                            String name = path.getFileName().toString().toLowerCase();
+                            String extension = name.substring(name.lastIndexOf('.') + 1);
+                            return SUPPORTED_FORMATS.contains(extension);
+                        })
+                        .forEach(path -> {
+                            try {
+                                extractAndSaveMetadata(path.toString());
+                                log.info("Indexed: {}", path.getFileName());
+                            } catch (Exception e) {
+                                log.warn("Failed to index: {}", path.getFileName(), e);
+                            }
+                        });
+            }
         } catch (Exception e) {
             log.error("Failed to scan directory: {}", directoryPath, e);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
