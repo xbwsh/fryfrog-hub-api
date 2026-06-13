@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: fryfrog-hub-api
+
+hub:
+  media:
+    root-path: ${MEDIA_ROOT_PATH:./media-library}
+
+logging:
+  level:
+    com.fryfrog: DEBUG
+    org.hibernate.SQL: WARN
