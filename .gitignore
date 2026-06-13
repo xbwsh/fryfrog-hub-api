@@ -32,3 +32,12 @@ logs/
 # Environment
 .env
 .env.local
+
+# Media Library (contains music files)
+media-library/
+*.mp3
+*.flac
+*.ogg
+*.wav
+*.aac
+*.m4a

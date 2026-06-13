@@ -4,12 +4,21 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.music.dto.MusicTrackUpdateRequest;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -17,6 +26,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/music")
 @RequiredArgsConstructor
+@Tag(name = "音乐管理", description = "音乐元数据管理、搜索、收藏和流媒体播放接口")
 public class MusicController {
 
     private final MusicMetadataService service;
@@ -25,41 +35,57 @@ public class MusicController {
     private String rootPath;
 
     @GetMapping
+    @Operation(summary = "获取所有曲目", description = "返回数据库中所有已索引的音乐曲目列表")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getAllTracks() {
         return ResponseEntity.ok(ApiResponse.success(service.getAllTracks()));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<MusicTrack>> getTrackById(@PathVariable Long id) {
+    @GetMapping("/{id:\\d+}")
+    @Operation(summary = "获取曲目详情", description = "根据ID获取单个曲目的详细信息，包含歌词、封面路径等")
+    public ResponseEntity<ApiResponse<MusicTrack>> getTrackById(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.success(service.getTrackById(id)));
     }
 
     @GetMapping("/search/title")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByTitle(@RequestParam String q) {
+    @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByTitle(
+            @Parameter(description = "搜索关键词") @RequestParam String q) {
         return ResponseEntity.ok(ApiResponse.success(service.searchByTitle(q)));
     }
 
     @GetMapping("/search/artist")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByArtist(@RequestParam String q) {
+    @Operation(summary = "按艺术家搜索", description = "根据艺术家名称模糊搜索音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByArtist(
+            @Parameter(description = "艺术家名称关键词") @RequestParam String q) {
         return ResponseEntity.ok(ApiResponse.success(service.searchByArtist(q)));
     }
 
     @PostMapping("/scan")
-    public ResponseEntity<ApiResponse<String>> scanDirectory(@RequestParam String path) {
+    @Operation(summary = "扫描媒体目录", description = "递归扫描指定目录，提取所有支持格式的音频文件元数据并入库")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "扫描完成"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "路径不在允许的根目录内")
+    })
+    public ResponseEntity<ApiResponse<String>> scanDirectory(
+            @Parameter(description = "要扫描的目录路径（必须在配置的根目录内）") @RequestParam String path) {
         validatePath(path);
         service.scanDirectory(path);
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
     }
 
     @PostMapping("/metadata")
-    public ResponseEntity<ApiResponse<MusicTrack>> extractMetadata(@RequestParam String filePath) {
+    @Operation(summary = "提取单个文件元数据", description = "从指定音频文件提取元数据并保存到数据库")
+    public ResponseEntity<ApiResponse<MusicTrack>> extractMetadata(
+            @Parameter(description = "音频文件完整路径") @RequestParam String filePath) {
         validatePath(filePath);
         return ResponseEntity.ok(ApiResponse.success(service.extractAndSaveMetadata(filePath)));
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/{id:\\d+}")
+    @Operation(summary = "更新曲目信息", description = "修改曲目的标题、艺术家、专辑等元数据信息")
     public ResponseEntity<ApiResponse<MusicTrack>> updateTrack(
-            @PathVariable Long id,
+            @Parameter(description = "曲目ID") @PathVariable Long id,
             @Valid @RequestBody MusicTrackUpdateRequest request) {
         MusicTrack track = MusicTrack.builder()
                 .title(request.getTitle())
@@ -74,10 +100,106 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success(service.updateTrack(id, track)));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Void>> deleteTrack(@PathVariable Long id) {
+    @DeleteMapping("/{id:\\d+}")
+    @Operation(summary = "删除曲目", description = "从数据库中删除指定曲目（不删除实际文件）")
+    public ResponseEntity<ApiResponse<Void>> deleteTrack(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
         service.deleteTrack(id);
         return ResponseEntity.ok(ApiResponse.success("Track deleted", null));
+    }
+
+    @PutMapping("/{id:\\d+}/favorite")
+    @Operation(summary = "切换收藏状态", description = "切换曲目的收藏状态：已收藏→取消，未收藏→收藏")
+    public ResponseEntity<ApiResponse<MusicTrack>> toggleFavorite(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(service.toggleFavorite(id)));
+    }
+
+    @GetMapping("/favorites")
+    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> getFavorites() {
+        return ResponseEntity.ok(ApiResponse.success(service.getFavorites()));
+    }
+
+    @GetMapping("/{id:\\d+}/cover")
+    @Operation(summary = "获取封面图片", description = "返回曲目内嵌的封面图片（JPEG格式）")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无封面")
+    })
+    public ResponseEntity<Resource> getCoverArt(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        MusicTrack track = service.getTrackById(id);
+        if (track.getCoverArtPath() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        File coverFile = new File(track.getCoverArtPath());
+        if (!coverFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_JPEG)
+                .body(new FileSystemResource(coverFile));
+    }
+
+    @GetMapping("/{id:\\d+}/stream")
+    @Operation(summary = "播放音乐", description = "流式返回音频文件，支持Range请求实现断点续播")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回完整音频"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "206", description = "返回部分内容（Partial Content）"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在")
+    })
+    public ResponseEntity<Resource> streamTrack(
+            @Parameter(description = "曲目ID") @PathVariable Long id,
+            @Parameter(description = "字节范围，如 bytes=0-1023") @RequestHeader(value = HttpHeaders.RANGE, required = false) String range,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        MusicTrack track = service.getTrackById(id);
+        File file = new File(track.getFilePath());
+
+        if (!file.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        long fileLength = file.length();
+        Resource resource = new FileSystemResource(file);
+
+        if (range == null) {
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(fileLength))
+                    .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .body(resource);
+        }
+
+        String[] ranges = range.replace("bytes=", "").split("-");
+        long start = Long.parseLong(ranges[0]);
+        long end = ranges.length > 1 && !ranges[1].isEmpty()
+                ? Long.parseLong(ranges[1])
+                : fileLength - 1;
+
+        long contentLength = end - start + 1;
+
+        response.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+        response.setHeader(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + fileLength);
+        response.setHeader(HttpHeaders.ACCEPT_RANGES, "bytes");
+        response.setHeader(HttpHeaders.CONTENT_LENGTH, String.valueOf(contentLength));
+        response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+
+        try {
+            java.io.InputStream inputStream = new java.io.FileInputStream(file);
+            inputStream.skip(start);
+            byte[] buffer = new byte[(int) contentLength];
+            int bytesRead = inputStream.read(buffer, 0, (int) contentLength);
+            inputStream.close();
+
+            response.getOutputStream().write(buffer, 0, bytesRead);
+            response.getOutputStream().flush();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("Failed to stream file", e);
+        }
+
+        return null;
     }
 
     private void validatePath(String path) {

@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 20058
 
 spring:
   application:
@@ -12,3 +12,11 @@ hub:
     root-path: ${MEDIA_ROOT_PATH:./media-library}
   music:
     root-path: ${MUSIC_ROOT_PATH:./media-library/music}
+    supported-formats: mp3,flac,ogg,wav,aac,m4a
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method

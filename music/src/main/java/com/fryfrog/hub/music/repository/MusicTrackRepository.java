@@ -17,4 +17,6 @@ public interface MusicTrackRepository extends JpaRepository<MusicTrack, Long> {
     List<MusicTrack> findByAlbumContainingIgnoreCase(String album);
 
     Optional<MusicTrack> findByFilePath(String filePath);
+
+    List<MusicTrack> findByFavoriteTrue();
 }

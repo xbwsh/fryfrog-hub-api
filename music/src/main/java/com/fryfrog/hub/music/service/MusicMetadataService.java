@@ -9,6 +9,8 @@ import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;
+import org.jaudiotagger.tag.images.Artwork;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -23,6 +25,9 @@ import java.util.stream.Stream;
 public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
+
+    @Value("${hub.music.root-path}")
+    private String rootPath;
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
 
@@ -72,6 +77,26 @@ public class MusicMetadataService {
             track.setDurationSeconds((long) audioFile.getAudioHeader().getTrackLength());
             track.setBitrateKbps(parseInteger(audioFile.getAudioHeader().getBitRate()));
             track.setFormat(audioFile.getAudioHeader().getFormat());
+
+            String lyrics = tag.getFirst(FieldKey.LYRICS);
+            if (lyrics == null || lyrics.isEmpty()) {
+                lyrics = tag.getFirst("USLT");
+            }
+            track.setLyrics(lyrics);
+
+            try {
+                Artwork artwork = tag.getFirstArtwork();
+                if (artwork != null) {
+                    Path coverDir = Paths.get(rootPath, ".cache", "covers");
+                    Files.createDirectories(coverDir);
+                    String coverFileName = file.getName().replaceAll("\\.[^.]+$", ".jpg");
+                    Path coverPath = coverDir.resolve(coverFileName);
+                    Files.write(coverPath, artwork.getBinaryData());
+                    track.setCoverArtPath(coverPath.toAbsolutePath().toString());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to extract cover art from: {}", file.getName(), e);
+            }
 
             return repository.save(track);
         } catch (Exception e) {
@@ -125,6 +150,16 @@ public class MusicMetadataService {
     public void deleteTrack(Long id) {
         MusicTrack track = getTrackById(id);
         repository.delete(track);
+    }
+
+    public MusicTrack toggleFavorite(Long id) {
+        MusicTrack track = getTrackById(id);
+        track.setFavorite(!Boolean.TRUE.equals(track.getFavorite()));
+        return repository.save(track);
+    }
+
+    public List<MusicTrack> getFavorites() {
+        return repository.findByFavoriteTrue();
     }
 
     private Integer parseInteger(String value) {

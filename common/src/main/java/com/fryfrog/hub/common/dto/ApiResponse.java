@@ -1,6 +1,7 @@
 package com.fryfrog.hub.common.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -11,10 +12,16 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@Schema(description = "统一响应格式")
 public class ApiResponse<T> {
 
+    @Schema(description = "请求是否成功", example = "true")
     private boolean success;
+
+    @Schema(description = "提示消息")
     private String message;
+
+    @Schema(description = "响应数据")
     private T data;
 
     public static <T> ApiResponse<T> success(T data) {
