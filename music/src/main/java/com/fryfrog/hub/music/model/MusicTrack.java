@@ -32,6 +32,7 @@ public class MusicTrack extends BaseEntity {
 
     private String genre;
 
+    @Column(unique = true)
     private String filePath;
 
     @Column(nullable = false)
@@ -39,9 +40,9 @@ public class MusicTrack extends BaseEntity {
 
     private Long fileSize;
 
-    private String duration;
+    private Long durationSeconds;
 
-    private String bitrate;
+    private Integer bitrateKbps;
 
     private String format;
 

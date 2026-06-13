@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fryfrog_hub
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+hub:
+  music:
+    root-path: ${MUSIC_ROOT_PATH:/data/music}
+    supported-formats: mp3,flac,ogg,wav,aac,m4a
+
+logging:
+  level:
+    com.fryfrog: INFO
+    org.hibernate.SQL: WARN
