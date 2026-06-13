@@ -4,12 +4,9 @@ server:
 spring:
   application:
     name: fryfrog-hub-api
+  profiles:
+    active: dev
 
 hub:
   media:
     root-path: ${MEDIA_ROOT_PATH:./media-library}
-
-logging:
-  level:
-    com.fryfrog: DEBUG
-    org.hibernate.SQL: WARN

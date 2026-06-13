@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fryfrog_hub
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+hub:
+  media:
+    root-path: ${MEDIA_ROOT_PATH:/data/media}
+
+logging:
+  level:
+    com.fryfrog: INFO
+    org.hibernate.SQL: WARN
