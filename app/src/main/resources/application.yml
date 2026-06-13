@@ -10,3 +10,5 @@ spring:
 hub:
   media:
     root-path: ${MEDIA_ROOT_PATH:./media-library}
+  music:
+    root-path: ${MUSIC_ROOT_PATH:./media-library/music}

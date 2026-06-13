@@ -28,6 +28,7 @@ public class MusicTrack extends BaseEntity {
 
     private Integer discNumber;
 
+    @Column(name = "\"year\"")
     private Integer year;
 
     private String genre;
