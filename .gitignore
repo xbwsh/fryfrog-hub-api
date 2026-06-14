@@ -33,7 +33,7 @@ logs/
 .env
 .env.local
 
-# Media Library (contains music files)
+# Media Library (contains media files)
 media-library/
 *.mp3
 *.flac
@@ -41,3 +41,23 @@ media-library/
 *.wav
 *.aac
 *.m4a
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.flv
+*.wmv
+*.webm
+*.m4v
+*.cbz
+*.cbr
+*.epub
+*.pdf
+*.mobi
+
+# SQLite Database
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

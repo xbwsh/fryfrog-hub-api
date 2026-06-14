@@ -43,14 +43,14 @@ class MusicControllerStreamingTest {
         tempAudioFile = Files.createTempFile("test-audio", ".mp3");
         Files.write(tempAudioFile, new byte[]{0x00, 0x01, 0x02, 0x03, 0x04, 0x05});
 
-        testTrack = repository.save(MusicTrack.builder()
-                .title("Test Song")
-                .artist("Test Artist")
-                .fileName("test-audio.mp3")
-                .filePath(tempAudioFile.toAbsolutePath().toString())
-                .fileSize(6L)
-                .format("MP3")
-                .build());
+        MusicTrack track = new MusicTrack();
+        track.setTitle("Test Song");
+        track.setArtist("Test Artist");
+        track.setFileName("test-audio.mp3");
+        track.setFilePath(tempAudioFile.toAbsolutePath().toString());
+        track.setFileSize(6L);
+        track.setFormat("MP3");
+        testTrack = repository.save(track);
     }
 
     @Test

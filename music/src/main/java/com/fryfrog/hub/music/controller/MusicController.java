@@ -1,7 +1,6 @@
 package com.fryfrog.hub.music.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
-import com.fryfrog.hub.music.dto.MusicTrackUpdateRequest;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,7 +9,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -26,7 +24,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/music")
 @RequiredArgsConstructor
-@Tag(name = "音乐管理", description = "音乐元数据管理、搜索、收藏和流媒体播放接口")
+@Tag(name = "音乐管理", description = "音乐元数据查询、扫描和刮削接口")
 public class MusicController {
 
     private final MusicMetadataService service;
@@ -61,6 +59,20 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success(service.searchByArtist(q)));
     }
 
+    @GetMapping("/favorites")
+    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> getFavorites() {
+        return ResponseEntity.ok(ApiResponse.success(service.getFavorites()));
+    }
+
+    @PutMapping("/{id:\\d+}/favorite")
+    @Operation(summary = "设置收藏状态", description = "设置曲目的收藏状态")
+    public ResponseEntity<ApiResponse<MusicTrack>> setFavorite(
+            @Parameter(description = "曲目ID") @PathVariable Long id,
+            @Parameter(description = "收藏状态") @RequestParam boolean status) {
+        return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
+    }
+
     @PostMapping("/scan")
     @Operation(summary = "扫描媒体目录", description = "递归扫描指定目录，提取所有支持格式的音频文件元数据并入库")
     @ApiResponses(value = {
@@ -74,51 +86,12 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
     }
 
-    @PostMapping("/metadata")
-    @Operation(summary = "提取单个文件元数据", description = "从指定音频文件提取元数据并保存到数据库")
-    public ResponseEntity<ApiResponse<MusicTrack>> extractMetadata(
+    @PostMapping("/scrape")
+    @Operation(summary = "刮削音乐元数据", description = "从外部数据源获取音乐元数据并保存，包括封面、歌词等")
+    public ResponseEntity<ApiResponse<MusicTrack>> scrapeTrack(
             @Parameter(description = "音频文件完整路径") @RequestParam String filePath) {
         validatePath(filePath);
-        return ResponseEntity.ok(ApiResponse.success(service.extractAndSaveMetadata(filePath)));
-    }
-
-    @PutMapping("/{id:\\d+}")
-    @Operation(summary = "更新曲目信息", description = "修改曲目的标题、艺术家、专辑等元数据信息")
-    public ResponseEntity<ApiResponse<MusicTrack>> updateTrack(
-            @Parameter(description = "曲目ID") @PathVariable Long id,
-            @Valid @RequestBody MusicTrackUpdateRequest request) {
-        MusicTrack track = MusicTrack.builder()
-                .title(request.getTitle())
-                .artist(request.getArtist())
-                .album(request.getAlbum())
-                .albumArtist(request.getAlbumArtist())
-                .trackNumber(request.getTrackNumber())
-                .discNumber(request.getDiscNumber())
-                .year(request.getYear())
-                .genre(request.getGenre())
-                .build();
-        return ResponseEntity.ok(ApiResponse.success(service.updateTrack(id, track)));
-    }
-
-    @DeleteMapping("/{id:\\d+}")
-    @Operation(summary = "删除曲目", description = "从数据库中删除指定曲目（不删除实际文件）")
-    public ResponseEntity<ApiResponse<Void>> deleteTrack(
-            @Parameter(description = "曲目ID") @PathVariable Long id) {
-        service.deleteTrack(id);
-        return ResponseEntity.ok(ApiResponse.success("Track deleted", null));
-    }
-
-    @PutMapping("/{id:\\d+}/favorite")
-    @Operation(summary = "切换收藏状态", description = "切换曲目的收藏状态：已收藏→取消，未收藏→收藏")
-    public ResponseEntity<ApiResponse<MusicTrack>> toggleFavorite(
-            @Parameter(description = "曲目ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(service.toggleFavorite(id)));
-    }
-
-    @GetMapping("/favorites")
-    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> getFavorites() {
-        return ResponseEntity.ok(ApiResponse.success(service.getFavorites()));
+        return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(filePath)));
     }
 
     @GetMapping("/{id:\\d+}/cover")

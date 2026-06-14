@@ -13,6 +13,23 @@ hub:
   music:
     root-path: ${MUSIC_ROOT_PATH:./media-library/music}
     supported-formats: mp3,flac,ogg,wav,aac,m4a
+  comic:
+    root-path: ${COMIC_ROOT_PATH:./media-library/comic}
+    supported-formats: cbz,cbr,zip,rar
+  video:
+    root-path: ${VIDEO_ROOT_PATH:./media-library/video}
+    supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
+  ebook:
+    root-path: ${EBOOK_ROOT_PATH:./media-library/ebook}
+    supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt
+  tmdb:
+    api-key: ${TMDB_API_KEY:}
+    language: ${TMDB_LANGUAGE:zh-CN}
+    image-size: ${TMDB_IMAGE_SIZE:original}
+    auto-scrape: ${TMDB_AUTO_SCRAPE:false}
+  proxy:
+    host: ${PROXY_HOST:127.0.0.1}
+    port: ${PROXY_PORT:7890}
 
 springdoc:
   api-docs:

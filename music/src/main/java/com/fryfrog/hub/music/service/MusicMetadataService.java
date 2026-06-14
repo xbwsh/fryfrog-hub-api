@@ -1,19 +1,20 @@
 package com.fryfrog.hub.music.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.music.dto.LyricsResult;
+import com.fryfrog.hub.music.dto.MusicBrainzResult;
+import com.fryfrog.hub.music.metadata.MusicMetadataProviderManager;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.repository.MusicTrackRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jaudiotagger.audio.AudioFile;
-import org.jaudiotagger.audio.AudioFileIO;
-import org.jaudiotagger.tag.FieldKey;
-import org.jaudiotagger.tag.Tag;
-import org.jaudiotagger.tag.images.Artwork;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
 import java.nio.file.*;
 import java.util.List;
 import java.util.Set;
@@ -25,6 +26,8 @@ import java.util.stream.Stream;
 public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
+    private final MusicMetadataProviderManager metadataProviderManager;
+    private final LyricsScrapingService lyricsScrapingService;
 
     @Value("${hub.music.root-path}")
     private String rootPath;
@@ -48,6 +51,16 @@ public class MusicMetadataService {
         return repository.findByArtistContainingIgnoreCase(artist);
     }
 
+    public MusicTrack setFavorite(Long id, boolean status) {
+        MusicTrack track = getTrackById(id);
+        track.setFavorite(status);
+        return repository.save(track);
+    }
+
+    public List<MusicTrack> getFavorites() {
+        return repository.findByFavoriteTrue();
+    }
+
     public MusicTrack extractAndSaveMetadata(String filePath) {
         try {
             File file = new File(filePath);
@@ -58,19 +71,19 @@ public class MusicMetadataService {
             String absolutePath = file.getAbsolutePath();
             MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
 
-            AudioFile audioFile = AudioFileIO.read(file);
-            Tag tag = audioFile.getTagOrCreateDefault();
+            org.jaudiotagger.audio.AudioFile audioFile = org.jaudiotagger.audio.AudioFileIO.read(file);
+            org.jaudiotagger.tag.Tag tag = audioFile.getTagOrCreateDefault();
 
-            MusicTrack track = existing != null ? existing : MusicTrack.builder().build();
+            MusicTrack track = existing != null ? existing : new MusicTrack();
 
-            track.setTitle(tag.getFirst(FieldKey.TITLE));
-            track.setArtist(tag.getFirst(FieldKey.ARTIST));
-            track.setAlbum(tag.getFirst(FieldKey.ALBUM));
-            track.setAlbumArtist(tag.getFirst(FieldKey.ALBUM_ARTIST));
-            track.setTrackNumber(parseInteger(tag.getFirst(FieldKey.TRACK)));
-            track.setDiscNumber(parseInteger(tag.getFirst(FieldKey.DISC_NO)));
-            track.setYear(parseInteger(tag.getFirst(FieldKey.YEAR)));
-            track.setGenre(tag.getFirst(FieldKey.GENRE));
+            track.setTitle(tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE));
+            track.setArtist(tag.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST));
+            track.setAlbum(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM));
+            track.setAlbumArtist(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST));
+            track.setTrackNumber(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.TRACK)));
+            track.setDiscNumber(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.DISC_NO)));
+            track.setYear(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.YEAR)));
+            track.setGenre(tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE));
             track.setFilePath(absolutePath);
             track.setFileName(file.getName());
             track.setFileSize(file.length());
@@ -78,14 +91,14 @@ public class MusicMetadataService {
             track.setBitrateKbps(parseInteger(audioFile.getAudioHeader().getBitRate()));
             track.setFormat(audioFile.getAudioHeader().getFormat());
 
-            String lyrics = tag.getFirst(FieldKey.LYRICS);
+            String lyrics = tag.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS);
             if (lyrics == null || lyrics.isEmpty()) {
                 lyrics = tag.getFirst("USLT");
             }
             track.setLyrics(lyrics);
 
             try {
-                Artwork artwork = tag.getFirstArtwork();
+                org.jaudiotagger.tag.images.Artwork artwork = tag.getFirstArtwork();
                 if (artwork != null) {
                     Path coverDir = Paths.get(rootPath, ".cache", "covers");
                     Files.createDirectories(coverDir);
@@ -134,32 +147,78 @@ public class MusicMetadataService {
         }
     }
 
-    public MusicTrack updateTrack(Long id, MusicTrack updatedTrack) {
-        MusicTrack existing = getTrackById(id);
-        existing.setTitle(updatedTrack.getTitle());
-        existing.setArtist(updatedTrack.getArtist());
-        existing.setAlbum(updatedTrack.getAlbum());
-        existing.setAlbumArtist(updatedTrack.getAlbumArtist());
-        existing.setTrackNumber(updatedTrack.getTrackNumber());
-        existing.setDiscNumber(updatedTrack.getDiscNumber());
-        existing.setYear(updatedTrack.getYear());
-        existing.setGenre(updatedTrack.getGenre());
-        return repository.save(existing);
+    public MusicTrack scrapeAndSave(String filePath) {
+        try {
+            File file = new File(filePath);
+            if (!file.exists()) {
+                throw new IllegalArgumentException("File not found: " + filePath);
+            }
+
+            MusicTrack track = extractAndSaveMetadata(filePath);
+
+            String title = track.getTitle();
+            String artist = track.getArtist();
+
+            if (title == null || title.isBlank()) {
+                title = track.getFileName().replaceAll("\\.[^.]+$", "");
+            }
+
+            MusicBrainzResult scraped = metadataProviderManager.scrapeWithFallback(title, artist, track.getAlbum());
+
+            if (scraped != null) {
+                if (scraped.getAlbum() != null && track.getAlbum() == null) {
+                    track.setAlbum(scraped.getAlbum());
+                }
+                if (scraped.getYear() != null && track.getYear() == null) {
+                    track.setYear(scraped.getYear());
+                }
+                if (scraped.getGenre() != null && track.getGenre() == null) {
+                    track.setGenre(scraped.getGenre());
+                }
+                if (scraped.getTrackNumber() != null && track.getTrackNumber() == null) {
+                    track.setTrackNumber(scraped.getTrackNumber());
+                }
+
+                if (scraped.getCoverUrl() != null && track.getCoverArtPath() == null) {
+                    try {
+                        String coverPath = downloadCover(scraped.getCoverUrl(), file.getName());
+                        track.setCoverArtPath(coverPath);
+                    } catch (Exception e) {
+                        log.warn("Failed to download cover for: {}", file.getName(), e);
+                    }
+                }
+            }
+
+            if (track.getLyrics() == null || track.getLyrics().isBlank()) {
+                LyricsResult lyricsResult = lyricsScrapingService.searchExact(title, artist);
+                if (lyricsResult != null) {
+                    track.setLyrics(lyricsResult.getLyrics());
+                }
+            }
+
+            return repository.save(track);
+        } catch (Exception e) {
+            log.error("Failed to scrape metadata from: {}", filePath, e);
+            throw new RuntimeException("Failed to scrape metadata: " + e.getMessage(), e);
+        }
     }
 
-    public void deleteTrack(Long id) {
-        MusicTrack track = getTrackById(id);
-        repository.delete(track);
-    }
+    private String downloadCover(String imageUrl, String fileName) throws IOException {
+        Path coverDir = Paths.get(rootPath, ".cache", "covers");
+        Files.createDirectories(coverDir);
 
-    public MusicTrack toggleFavorite(Long id) {
-        MusicTrack track = getTrackById(id);
-        track.setFavorite(!Boolean.TRUE.equals(track.getFavorite()));
-        return repository.save(track);
-    }
+        String coverFileName = fileName.replaceAll("[^a-zA-Z0-9.\\-]", "_") + "_cover.jpg";
+        Path coverPath = coverDir.resolve(coverFileName);
 
-    public List<MusicTrack> getFavorites() {
-        return repository.findByFavoriteTrue();
+        if (Files.exists(coverPath)) {
+            return coverPath.toAbsolutePath().toString();
+        }
+
+        try (InputStream in = new URL(imageUrl).openStream()) {
+            Files.copy(in, coverPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        return coverPath.toAbsolutePath().toString();
     }
 
     private Integer parseInteger(String value) {

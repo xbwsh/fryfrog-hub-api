@@ -1,0 +1,77 @@
+package com.fryfrog.hub.video.dto;
+
+import com.fryfrog.hub.video.model.VideoSeries;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+@Schema(description = "视频系列信息")
+public class SeriesDTO {
+
+    @Schema(description = "系列ID")
+    private Long id;
+
+    @Schema(description = "系列名称")
+    private String title;
+
+    @Schema(description = "原始标题")
+    private String originalTitle;
+
+    @Schema(description = "简介")
+    private String overview;
+
+    @Schema(description = "类型（tv/movie）")
+    private String mediaType;
+
+    @Schema(description = "TMDB ID")
+    private Long tmdbId;
+
+    @Schema(description = "评分")
+    private Double rating;
+
+    @Schema(description = "年份")
+    private Integer year;
+
+    @Schema(description = "海报URL")
+    private String posterUrl;
+
+    @Schema(description = "背景图URL")
+    private String backdropUrl;
+
+    @Schema(description = "季数")
+    private Integer seasonNumber;
+
+    @Schema(description = "总集数")
+    private Integer totalEpisodes;
+
+    @Schema(description = "实际集数")
+    private Integer episodeCount;
+
+    @Schema(description = "元数据目录路径")
+    private String metadataDir;
+
+    @Schema(description = "包含的视频列表")
+    private List<VideoDTO> episodes;
+
+    public static SeriesDTO fromEntity(VideoSeries series, List<VideoDTO> episodes) {
+        SeriesDTO dto = new SeriesDTO();
+        dto.setId(series.getId());
+        dto.setTitle(series.getTitle());
+        dto.setOriginalTitle(series.getOriginalTitle());
+        dto.setOverview(series.getOverview());
+        dto.setMediaType(series.getMediaType());
+        dto.setTmdbId(series.getTmdbId());
+        dto.setRating(series.getRating());
+        dto.setYear(series.getYear());
+        dto.setPosterUrl(series.getPosterUrl());
+        dto.setBackdropUrl(series.getBackdropUrl());
+        dto.setSeasonNumber(series.getSeasonNumber());
+        dto.setTotalEpisodes(series.getTotalEpisodes());
+        dto.setEpisodeCount(series.getEpisodeCount());
+        dto.setMetadataDir(series.getMetadataDir());
+        dto.setEpisodes(episodes);
+        return dto;
+    }
+}

@@ -13,7 +13,6 @@ import lombok.*;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
 @Schema(description = "音乐曲目信息")
 public class MusicTrack extends BaseEntity {
 
@@ -71,6 +70,5 @@ public class MusicTrack extends BaseEntity {
     private String lyrics;
 
     @Schema(description = "是否收藏", example = "false")
-    @Builder.Default
     private Boolean favorite = false;
 }

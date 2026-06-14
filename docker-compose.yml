@@ -1,0 +1,17 @@
+services:
+  fryfrog-hub:
+    build: .
+    container_name: fryfrog-hub
+    restart: unless-stopped
+    ports:
+      - "20058:20058"
+    volumes:
+      - ./data:/data
+      - ./media-library:/app/media-library
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - MEDIA_ROOT_PATH=/app/media-library
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - TMDB_AUTO_SCRAPE=true
+      - PROXY_HOST=host.docker.internal
+      - PROXY_PORT=7890
