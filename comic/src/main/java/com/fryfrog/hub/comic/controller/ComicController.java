@@ -1,12 +1,12 @@
 package com.fryfrog.hub.comic.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
 import com.fryfrog.hub.comic.dto.PageInfo;
-import com.fryfrog.hub.comic.dto.ReadingProgressDTO;
 import com.fryfrog.hub.comic.model.Comic;
-import com.fryfrog.hub.comic.model.ReadingProgress;
+import com.fryfrog.hub.comic.model.ComicReadingProgress;
 import com.fryfrog.hub.comic.service.ComicMetadataService;
-import com.fryfrog.hub.comic.service.ReadingProgressService;
+import com.fryfrog.hub.comic.service.ComicReadingProgressService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,7 +29,7 @@ import java.util.List;
 public class ComicController {
 
     private final ComicMetadataService service;
-    private final ReadingProgressService readingProgressService;
+    private final ComicReadingProgressService readingProgressService;
 
     @Value("${hub.comic.root-path}")
     private String rootPath;
@@ -121,23 +121,23 @@ public class ComicController {
 
     @GetMapping("/{id:\\d+}/progress")
     @Operation(summary = "获取阅读进度", description = "获取指定漫画的阅读进度")
-    public ResponseEntity<ApiResponse<ReadingProgressDTO>> getProgress(
+    public ResponseEntity<ApiResponse<ComicReadingProgressDTO>> getProgress(
             @Parameter(description = "漫画ID") @PathVariable Long id) {
-        ReadingProgress progress = readingProgressService.getProgress(id);
+        ComicReadingProgress progress = readingProgressService.getProgress(id);
         if (progress == null) {
             return ResponseEntity.ok(ApiResponse.success(null));
         }
-        return ResponseEntity.ok(ApiResponse.success(ReadingProgressDTO.fromEntity(progress)));
+        return ResponseEntity.ok(ApiResponse.success(ComicReadingProgressDTO.fromEntity(progress)));
     }
 
     @PutMapping("/{id:\\d+}/progress")
     @Operation(summary = "保存阅读进度", description = "保存指定漫画的阅读进度")
-    public ResponseEntity<ApiResponse<ReadingProgressDTO>> saveProgress(
+    public ResponseEntity<ApiResponse<ComicReadingProgressDTO>> saveProgress(
             @Parameter(description = "漫画ID") @PathVariable Long id,
             @Parameter(description = "当前页码（从1开始）") @RequestParam Integer page,
             @Parameter(description = "总页数") @RequestParam Integer totalPages) {
-        ReadingProgress progress = readingProgressService.saveProgress(id, page, totalPages);
-        return ResponseEntity.ok(ApiResponse.success(ReadingProgressDTO.fromEntity(progress)));
+        ComicReadingProgress progress = readingProgressService.saveProgress(id, page, totalPages);
+        return ResponseEntity.ok(ApiResponse.success(ComicReadingProgressDTO.fromEntity(progress)));
     }
 
     @DeleteMapping("/{id:\\d+}/progress")

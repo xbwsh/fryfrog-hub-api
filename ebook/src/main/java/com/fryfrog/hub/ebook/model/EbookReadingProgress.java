@@ -12,7 +12,7 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @Schema(description = "电子书阅读进度")
-public class ReadingProgress extends BaseEntity {
+public class EbookReadingProgress extends BaseEntity {
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "ebook_id", nullable = false, unique = true)

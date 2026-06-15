@@ -1,8 +1,8 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.comic.model.Comic;
-import com.fryfrog.hub.comic.model.ReadingProgress;
-import com.fryfrog.hub.comic.repository.ReadingProgressRepository;
+import com.fryfrog.hub.comic.model.ComicReadingProgress;
+import com.fryfrog.hub.comic.repository.ComicReadingProgressRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,22 +11,22 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class ReadingProgressService {
+public class ComicReadingProgressService {
 
-    private final ReadingProgressRepository repository;
+    private final ComicReadingProgressRepository repository;
     private final ComicMetadataService comicService;
 
     private static final double COMPLETED_THRESHOLD = 0.9;
 
-    public ReadingProgress getProgress(Long comicId) {
+    public ComicReadingProgress getProgress(Long comicId) {
         return repository.findByComicId(comicId).orElse(null);
     }
 
     @Transactional
-    public ReadingProgress saveProgress(Long comicId, Integer currentPage, Integer totalPages) {
+    public ComicReadingProgress saveProgress(Long comicId, Integer currentPage, Integer totalPages) {
         Comic comic = comicService.getComicById(comicId);
 
-        ReadingProgress progress = repository.findByComicId(comicId).orElse(new ReadingProgress());
+        ComicReadingProgress progress = repository.findByComicId(comicId).orElse(new ComicReadingProgress());
         progress.setComic(comic);
         progress.setCurrentPage(currentPage);
         progress.setTotalPages(totalPages);
@@ -35,7 +35,7 @@ public class ReadingProgressService {
             progress.setCompleted((double) currentPage / totalPages >= COMPLETED_THRESHOLD);
         }
 
-        ReadingProgress saved = repository.save(progress);
+        ComicReadingProgress saved = repository.save(progress);
         log.debug("Saved reading progress for comic {}: page {} / {}", comicId, currentPage, totalPages);
         return saved;
     }

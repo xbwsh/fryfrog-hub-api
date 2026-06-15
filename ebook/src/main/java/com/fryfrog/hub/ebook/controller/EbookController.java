@@ -3,11 +3,11 @@ package com.fryfrog.hub.ebook.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
-import com.fryfrog.hub.ebook.dto.ReadingProgressDTO;
+import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.model.Ebook;
-import com.fryfrog.hub.ebook.model.ReadingProgress;
+import com.fryfrog.hub.ebook.model.EbookReadingProgress;
+import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
 import com.fryfrog.hub.ebook.service.EbookService;
-import com.fryfrog.hub.ebook.service.ReadingProgressService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,7 +31,7 @@ import java.util.List;
 public class EbookController {
 
     private final EbookService service;
-    private final ReadingProgressService readingProgressService;
+    private final EbookReadingProgressService readingProgressService;
 
     @Value("${hub.ebook.root-path}")
     private String rootPath;
@@ -165,23 +165,23 @@ public class EbookController {
 
     @GetMapping("/{id:\\d+}/progress")
     @Operation(summary = "获取阅读进度", description = "获取指定电子书的阅读进度")
-    public ResponseEntity<ApiResponse<ReadingProgressDTO>> getProgress(
+    public ResponseEntity<ApiResponse<EbookReadingProgressDTO>> getProgress(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
-        ReadingProgress progress = readingProgressService.getProgress(id);
+        EbookReadingProgress progress = readingProgressService.getProgress(id);
         if (progress == null) {
             return ResponseEntity.ok(ApiResponse.success(null));
         }
-        return ResponseEntity.ok(ApiResponse.success(ReadingProgressDTO.fromEntity(progress)));
+        return ResponseEntity.ok(ApiResponse.success(EbookReadingProgressDTO.fromEntity(progress)));
     }
 
     @PutMapping("/{id:\\d+}/progress")
     @Operation(summary = "保存阅读进度", description = "保存指定电子书的阅读进度")
-    public ResponseEntity<ApiResponse<ReadingProgressDTO>> saveProgress(
+    public ResponseEntity<ApiResponse<EbookReadingProgressDTO>> saveProgress(
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "当前页码/章节数") @RequestParam Integer page,
             @Parameter(description = "总页数/章节数") @RequestParam Integer totalPages) {
-        ReadingProgress progress = readingProgressService.saveProgress(id, page, totalPages);
-        return ResponseEntity.ok(ApiResponse.success(ReadingProgressDTO.fromEntity(progress)));
+        EbookReadingProgress progress = readingProgressService.saveProgress(id, page, totalPages);
+        return ResponseEntity.ok(ApiResponse.success(EbookReadingProgressDTO.fromEntity(progress)));
     }
 
     @DeleteMapping("/{id:\\d+}/progress")
