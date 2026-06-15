@@ -98,6 +98,14 @@ public class MusicMetadataService {
             track.setBitrateKbps(parseInteger(audioFile.getAudioHeader().getBitRate()));
             track.setFormat(audioFile.getAudioHeader().getFormat());
 
+            String fileName = file.getName().replaceAll("\\.[^.]+$", "");
+            if (isGarbled(track.getTitle())) {
+                track.setTitle(parseTitleFromFileName(fileName));
+            }
+            if (isGarbled(track.getArtist())) {
+                track.setArtist(parseArtistFromFileName(fileName));
+            }
+
             inferFromFolderStructure(track, file);
 
             String lyrics = tag.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS);
@@ -146,11 +154,15 @@ public class MusicMetadataService {
                         })
                         .forEach(path -> {
                             try {
-                                if (autoWriteback) {
-                                    scrapeAndSave(path.toString());
-                                } else {
-                                    extractAndSaveMetadata(path.toString());
+                                String absolutePath = path.toAbsolutePath().toString();
+                                MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
+
+                                if (existing != null && !needsRescrape(existing)) {
+                                    log.debug("Skipping already indexed: {}", path.getFileName());
+                                    return;
                                 }
+
+                                scrapeAndSave(absolutePath);
                                 log.info("Indexed: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index: {}", path.getFileName(), e);
@@ -161,6 +173,11 @@ public class MusicMetadataService {
             log.error("Failed to scan directory: {}", directoryPath);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
         }
+    }
+
+    private boolean needsRescrape(MusicTrack track) {
+        return (track.getLyrics() == null || track.getLyrics().isBlank())
+                || (track.getCoverArtPath() == null || track.getCoverArtPath().isBlank());
     }
 
     public MusicTrack scrapeAndSave(String filePath) {
@@ -175,40 +192,70 @@ public class MusicMetadataService {
             String title = track.getTitle();
             String artist = track.getArtist();
 
-            if (title == null || title.isBlank()) {
-                title = file.getName().replaceAll("\\.[^.]+$", "");
+            String fileName = file.getName().replaceAll("\\.[^.]+$", "");
+
+            if (title == null || title.isBlank() || isGarbled(title)) {
+                title = parseTitleFromFileName(fileName);
             }
-            if (artist == null || artist.isBlank()) {
-                artist = defaultArtist;
+            if (artist == null || artist.isBlank() || isGarbled(artist)) {
+                artist = parseArtistFromFileName(fileName);
             }
+
+            log.info("Scraping metadata for: {} - {}", artist, title);
 
             MusicMetadataProviderManager.ProviderResult result =
                     providerManager.scrape(artist, title, track.getAlbum());
 
             if (result.searchResult() != null) {
-                if (track.getAlbum() == null && result.searchResult().getAlbum() != null) {
-                    track.setAlbum(result.searchResult().getAlbum());
+                String matchedName = result.searchResult().getName();
+                String matchedArtist = result.searchResult().getArtist();
+                String matchedAlbum = result.searchResult().getAlbum();
+
+                if (matchedName != null && !matchedName.isBlank()) {
+                    track.setTitle(matchedName);
                 }
+                if (matchedArtist != null && !matchedArtist.isBlank()) {
+                    track.setArtist(matchedArtist);
+                }
+                if (matchedAlbum != null && !matchedAlbum.isBlank()) {
+                    track.setAlbum(matchedAlbum);
+                }
+            }
+
+            Path archiveDir = Paths.get(rootPath, track.getArtist() + " - " + track.getTitle());
+            Files.createDirectories(archiveDir);
+
+            Path audioTarget = archiveDir.resolve(file.getName());
+            if (!file.toPath().toAbsolutePath().equals(audioTarget.toAbsolutePath())) {
+                Files.move(file.toPath(), audioTarget, StandardCopyOption.REPLACE_EXISTING);
+                track.setFilePath(audioTarget.toAbsolutePath().toString());
+                track.setFileName(file.getName());
+                log.info("Moved audio to: {}", archiveDir);
             }
 
             if (result.lyrics() != null && !result.lyrics().isBlank()) {
                 track.setLyrics(result.lyrics());
-                saveLyricsFile(file, result.lyrics());
-                log.info("Got lyrics for: {} - {}", artist, title);
+                Path lyricsPath = archiveDir.resolve(file.getName().replaceAll("\\.[^.]+$", ".lrc"));
+                Files.writeString(lyricsPath, result.lyrics().endsWith("\n") ? result.lyrics() : result.lyrics() + "\n");
+                log.info("Saved lyrics to: {}", lyricsPath);
             } else {
                 log.warn("No lyrics found for: {} - {}", artist, title);
+                track.setLyrics(null);
             }
 
             if (result.coverData() != null) {
-                String coverPath = saveCoverFile(file, result.coverData());
-                track.setCoverArtPath(coverPath);
-                log.info("Got cover for: {} - {}", artist, title);
+                Path coverPath = archiveDir.resolve("cover.jpg");
+                Files.write(coverPath, result.coverData());
+                track.setCoverArtPath(coverPath.toAbsolutePath().toString());
+                log.info("Saved cover to: {}", coverPath);
+            } else {
+                track.setCoverArtPath(null);
             }
 
             MusicTrack saved = repository.save(track);
 
             if (autoWriteback) {
-                writeMetadataToFile(file, saved);
+                writeMetadataToFile(new File(track.getFilePath()), saved);
             }
 
             return saved;
@@ -216,6 +263,24 @@ public class MusicMetadataService {
             log.error("Failed to scrape metadata from: {}", filePath, e);
             throw new RuntimeException("Failed to scrape metadata: " + e.getMessage(), e);
         }
+    }
+
+    private boolean isGarbled(String text) {
+        if (text == null || text.isBlank()) return false;
+        long mojibakeCount = text.chars()
+                .filter(c -> c >= 0x00C0 && c <= 0x00FF)
+                .count();
+        return mojibakeCount > text.length() * 0.3;
+    }
+
+    private String parseTitleFromFileName(String fileName) {
+        String[] parts = fileName.split(" - ", 2);
+        return parts.length > 1 ? parts[1].trim() : fileName.trim();
+    }
+
+    private String parseArtistFromFileName(String fileName) {
+        String[] parts = fileName.split(" - ", 2);
+        return parts.length > 1 ? parts[0].trim() : "";
     }
 
     private void inferFromFolderStructure(MusicTrack track, File file) {

@@ -69,14 +69,30 @@ public class MusicMetadataProviderManager {
 
         String lyrics = null;
         byte[] cover = null;
+
+        List<String> allLyrics = new ArrayList<>();
         for (MusicMetadataProvider provider : providers) {
-            if (lyrics == null) {
-                try {
-                    lyrics = provider.getLyrics(best);
-                } catch (Exception e) {
-                    log.warn("Failed to get lyrics from {}: {}", provider.getName(), e.getMessage());
+            try {
+                String l = provider.getLyrics(best);
+                if (l != null && !l.isBlank()) {
+                    allLyrics.add(l);
+                    log.info("Provider {} returned lyrics ({} chars) for: {} - {}",
+                            provider.getName(), l.length(), artist, title);
                 }
+            } catch (Exception e) {
+                log.warn("Failed to get lyrics from {}: {}", provider.getName(), e.getMessage());
             }
+        }
+
+        if (!allLyrics.isEmpty()) {
+            lyrics = allLyrics.stream()
+                    .max(Comparator.comparingInt(l -> countTimestampedLines(l)))
+                    .orElse(allLyrics.get(0));
+            log.info("Selected best lyrics ({} timestamped lines) from {} candidates",
+                    countTimestampedLines(lyrics), allLyrics.size());
+        }
+
+        for (MusicMetadataProvider provider : providers) {
             if (cover == null) {
                 try {
                     cover = provider.getCover(best);
@@ -84,7 +100,7 @@ public class MusicMetadataProviderManager {
                     log.warn("Failed to get cover from {}: {}", provider.getName(), e.getMessage());
                 }
             }
-            if (lyrics != null && cover != null) break;
+            if (cover != null) break;
         }
 
         return new ProviderResult(best, best.getArtist(), lyrics, cover);
@@ -99,5 +115,16 @@ public class MusicMetadataProviderManager {
 
     public List<MusicMetadataProvider> getProviders() {
         return providers;
+    }
+
+    private int countTimestampedLines(String lyrics) {
+        if (lyrics == null) return 0;
+        int count = 0;
+        for (String line : lyrics.split("\n")) {
+            if (line.matches("^\\[\\d{2}:\\d{2}[.:]\\d{2,3}].+")) {
+                count++;
+            }
+        }
+        return count;
     }
 }

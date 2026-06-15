@@ -176,8 +176,8 @@ public class MusicController {
     }
 
     private void validatePath(String path) {
-        Path requestedPath = Paths.get(path).toAbsolutePath();
-        Path allowedRoot = Paths.get(rootPath).toAbsolutePath();
+        Path requestedPath = Paths.get(path).toAbsolutePath().normalize();
+        Path allowedRoot = Paths.get(rootPath).toAbsolutePath().normalize();
         if (!requestedPath.startsWith(allowedRoot)) {
             throw new IllegalArgumentException("Path is outside allowed root: " + rootPath);
         }
