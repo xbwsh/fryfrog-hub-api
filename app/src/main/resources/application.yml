@@ -13,6 +13,16 @@ hub:
   music:
     root-path: ${MUSIC_ROOT_PATH:./media-library/music}
     supported-formats: mp3,flac,ogg,wav,aac,m4a
+    auto-writeback: ${MUSIC_AUTO_WRITEBACK:true}
+    use-folder-structure: ${MUSIC_USE_FOLDER_STRUCTURE:true}
+    default-artist: ${MUSIC_DEFAULT_ARTIST:}
+    api-provider: ${MUSIC_API_PROVIDER:tunehub}
+    platforms: ${MUSIC_PLATFORMS:netease,kuwo,qq}
+    tunehub:
+      base-url: ${TUNEHUB_BASE_URL:https://music-dl.sayqz.com}
+    lrcapi:
+      url: ${LRCAPI_URL:https://api.lrc.cx}
+      auth: ${LRCAPI_AUTH:}
   comic:
     root-path: ${COMIC_ROOT_PATH:./media-library/comic}
     supported-formats: cbz,cbr,zip,rar
