@@ -176,8 +176,7 @@ public class MusicMetadataService {
     }
 
     private boolean needsRescrape(MusicTrack track) {
-        return (track.getLyrics() == null || track.getLyrics().isBlank())
-                || (track.getCoverArtPath() == null || track.getCoverArtPath().isBlank());
+        return track.getCoverArtPath() == null || track.getCoverArtPath().isBlank();
     }
 
     public MusicTrack scrapeAndSave(String filePath) {
@@ -234,13 +233,11 @@ public class MusicMetadataService {
             }
 
             if (result.lyrics() != null && !result.lyrics().isBlank()) {
-                track.setLyrics(result.lyrics());
                 Path lyricsPath = archiveDir.resolve(file.getName().replaceAll("\\.[^.]+$", ".lrc"));
                 Files.writeString(lyricsPath, result.lyrics().endsWith("\n") ? result.lyrics() : result.lyrics() + "\n");
                 log.info("Saved lyrics to: {}", lyricsPath);
             } else {
                 log.warn("No lyrics found for: {} - {}", artist, title);
-                track.setLyrics(null);
             }
 
             if (result.coverData() != null) {
@@ -381,10 +378,6 @@ public class MusicMetadataService {
             }
             if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE), track.getGenre())) {
                 tag.setField(org.jaudiotagger.tag.FieldKey.GENRE, track.getGenre());
-                changed = true;
-            }
-            if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS), track.getLyrics())) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.LYRICS, track.getLyrics());
                 changed = true;
             }
 

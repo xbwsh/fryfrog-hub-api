@@ -17,6 +17,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -92,6 +93,31 @@ public class MusicController {
             @Parameter(description = "音频文件完整路径") @RequestParam String filePath) {
         validatePath(filePath);
         return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(filePath)));
+    }
+
+    @GetMapping("/{id:\\d+}/lyrics")
+    @Operation(summary = "获取歌词", description = "读取同目录下的.lrc歌词文件")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回歌词内容"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无歌词文件")
+    })
+    public ResponseEntity<ApiResponse<String>> getLyrics(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        MusicTrack track = service.getTrackById(id);
+        Path audioPath = Paths.get(track.getFilePath());
+        Path lyricsPath = audioPath.getParent().resolve(
+                audioPath.getFileName().toString().replaceAll("\\.[^.]+$", ".lrc"));
+
+        if (!Files.exists(lyricsPath)) {
+            return ResponseEntity.ok(ApiResponse.success(null));
+        }
+
+        try {
+            String lyrics = Files.readString(lyricsPath);
+            return ResponseEntity.ok(ApiResponse.success(lyrics));
+        } catch (Exception e) {
+            return ResponseEntity.ok(ApiResponse.success(null));
+        }
     }
 
     @GetMapping("/{id:\\d+}/cover")
