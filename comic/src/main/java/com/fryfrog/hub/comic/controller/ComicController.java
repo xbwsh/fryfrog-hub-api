@@ -2,6 +2,8 @@ package com.fryfrog.hub.comic.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
+import com.fryfrog.hub.comic.dto.ComicSearchResult;
+import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.model.ComicReadingProgress;
@@ -38,6 +40,12 @@ public class ComicController {
     @Operation(summary = "获取所有漫画", description = "返回数据库中所有已索引的漫画列表")
     public ResponseEntity<ApiResponse<List<Comic>>> getAllComics() {
         return ResponseEntity.ok(ApiResponse.success(service.getAllComics()));
+    }
+
+    @GetMapping("/series")
+    @Operation(summary = "按系列分组获取漫画", description = "返回按系列分组的漫画列表，同一系列的漫画归为一组")
+    public ResponseEntity<ApiResponse<List<ComicSeries>>> getComicsBySeries() {
+        return ResponseEntity.ok(ApiResponse.success(service.getComicsBySeries()));
     }
 
     @GetMapping("/{id:\\d+}")
@@ -119,6 +127,23 @@ public class ComicController {
                 .body(new FileSystemResource(coverFile));
     }
 
+    @GetMapping("/cover-image")
+    @Operation(summary = "按路径获取封面图片", description = "根据coverArtPath返回封面图片")
+    public ResponseEntity<Resource> getCoverImage(
+            @Parameter(description = "封面图片完整路径") @RequestParam String path) {
+        File coverFile = new File(path);
+        if (!coverFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        String name = coverFile.getName().toLowerCase();
+        MediaType mediaType = MediaType.IMAGE_JPEG;
+        if (name.endsWith(".png")) mediaType = MediaType.IMAGE_PNG;
+        else if (name.endsWith(".webp")) mediaType = MediaType.parseMediaType("image/webp");
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .body(new FileSystemResource(coverFile));
+    }
+
     @GetMapping("/{id:\\d+}/progress")
     @Operation(summary = "获取阅读进度", description = "获取指定漫画的阅读进度")
     public ResponseEntity<ApiResponse<ComicReadingProgressDTO>> getProgress(
@@ -146,6 +171,30 @@ public class ComicController {
             @Parameter(description = "漫画ID") @PathVariable Long id) {
         readingProgressService.deleteProgress(id);
         return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @GetMapping("/metadata/search")
+    @Operation(summary = "搜索漫画元数据", description = "在外部数据源中搜索漫画元数据")
+    public ResponseEntity<ApiResponse<List<ComicSearchResult>>> searchComicMetadata(
+            @Parameter(description = "漫画标题关键词") @RequestParam String title,
+            @Parameter(description = "作者名称（可选）") @RequestParam(required = false) String author) {
+        return ResponseEntity.ok(ApiResponse.success(service.searchExternal(title, author)));
+    }
+
+    @PostMapping("/{id:\\d+}/metadata/bind")
+    @Operation(summary = "绑定漫画元数据", description = "将搜索到的元数据绑定到指定漫画")
+    public ResponseEntity<ApiResponse<Comic>> bindComicMetadata(
+            @Parameter(description = "漫画ID") @PathVariable Long id,
+            @Parameter(description = "搜索结果") @RequestBody ComicSearchResult searchResult) {
+        return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(id, searchResult)));
+    }
+
+    @PostMapping("/metadata/auto-scrape")
+    @Operation(summary = "自动刮削所有漫画", description = "自动为所有未刮削的漫画搜索并绑定元数据")
+    public ResponseEntity<ApiResponse<String>> autoScrapeAll() {
+        int scraped = service.autoScrape();
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Auto-scrape completed: %d comics scraped", scraped), ""));
     }
 
     private void validatePath(String path) {

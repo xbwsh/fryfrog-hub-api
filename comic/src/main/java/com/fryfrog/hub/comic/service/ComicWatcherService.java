@@ -1,5 +1,7 @@
 package com.fryfrog.hub.comic.service;
 
+import com.fryfrog.hub.comic.dto.ComicSearchResult;
+import com.fryfrog.hub.comic.model.Comic;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -25,6 +28,9 @@ public class ComicWatcherService {
 
     @Value("${hub.comic.supported-formats}")
     private String supportedFormats;
+
+    @Value("${hub.comic.auto-scrape:false}")
+    private boolean autoScrape;
 
     private WatchService watchService;
     private ExecutorService executor;
@@ -44,6 +50,16 @@ public class ComicWatcherService {
             log.info("Initial comic scan completed");
         } catch (Exception e) {
             log.error("Failed to initial scan comics", e);
+        }
+
+        if (autoScrape) {
+            log.info("Auto-scrape enabled, scraping unscraped comics...");
+            try {
+                int scraped = metadataService.autoScrape();
+                log.info("Auto-scrape completed: {} comics scraped", scraped);
+            } catch (Exception e) {
+                log.error("Failed to auto-scrape comics", e);
+            }
         }
 
         try {
@@ -96,7 +112,19 @@ public class ComicWatcherService {
                     if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                         log.info("Detected comic file change: {}", fullPath);
                         try {
-                            metadataService.extractAndSaveMetadata(fullPath.toString());
+                            Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
+                            if (autoScrape) {
+                                try {
+                                    List<ComicSearchResult> results = metadataService.searchExternal(
+                                            comic.getTitle(), null);
+                                    if (!results.isEmpty()) {
+                                        metadataService.scrapeAndSave(comic.getId(), results.get(0));
+                                        log.info("Auto-scraped comic: {}", fileName);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to auto-scrape comic: {}", fileName, e);
+                                }
+                            }
                             log.info("Auto-indexed comic: {}", fileName);
                         } catch (Exception e) {
                             log.warn("Failed to auto-index comic: {}", fileName, e);

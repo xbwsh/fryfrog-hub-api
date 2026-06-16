@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
+import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
 import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
@@ -43,6 +44,12 @@ public class EbookController {
     @Operation(summary = "获取所有电子书", description = "返回数据库中所有已索引的电子书列表")
     public ResponseEntity<ApiResponse<List<Ebook>>> getAllEbooks() {
         return ResponseEntity.ok(ApiResponse.success(service.getAllEbooks()));
+    }
+
+    @GetMapping("/series")
+    @Operation(summary = "按系列分组获取电子书", description = "返回按系列分组的电子书列表，同一系列的电子书归为一组")
+    public ResponseEntity<ApiResponse<List<EbookSeries>>> getEbooksBySeries() {
+        return ResponseEntity.ok(ApiResponse.success(service.getEbooksBySeries()));
     }
 
     @GetMapping("/{id:\\d+}")
@@ -114,6 +121,23 @@ public class EbookController {
         }
     }
 
+    @GetMapping("/cover-image")
+    @Operation(summary = "按路径获取封面图片", description = "根据coverArtPath返回封面图片")
+    public ResponseEntity<Resource> getCoverImage(
+            @Parameter(description = "封面图片完整路径") @RequestParam String path) {
+        File coverFile = new File(path);
+        if (!coverFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        String name = coverFile.getName().toLowerCase();
+        MediaType mediaType = MediaType.IMAGE_JPEG;
+        if (name.endsWith(".png")) mediaType = MediaType.IMAGE_PNG;
+        else if (name.endsWith(".webp")) mediaType = MediaType.parseMediaType("image/webp");
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .body(new FileSystemResource(coverFile));
+    }
+
     @GetMapping("/{id:\\d+}/read")
     @Operation(summary = "在线阅读", description = "返回电子书的内容，epub返回HTML，其他返回纯文本")
     public ResponseEntity<String> readEbook(
@@ -153,6 +177,7 @@ public class EbookController {
     public ResponseEntity<byte[]> getEpubImage(
             @Parameter(description = "电子书文件完整路径") @RequestParam String filePath,
             @Parameter(description = "图片在epub内的路径") @RequestParam String file) {
+        validatePath(filePath);
         try {
             byte[] image = EpubParser.readImage(filePath, file);
             if (image == null) {

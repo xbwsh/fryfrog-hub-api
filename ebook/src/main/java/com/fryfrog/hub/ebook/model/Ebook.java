@@ -23,6 +23,12 @@ public class Ebook extends BaseEntity {
     @Schema(description = "作者", example = "刘慈欣")
     private String author;
 
+    @Schema(description = "系列名称", example = "三体")
+    private String series;
+
+    @Schema(description = "卷号", example = "1")
+    private Integer volume;
+
     @Schema(description = "出版社", example = "重庆出版社")
     private String publisher;
 

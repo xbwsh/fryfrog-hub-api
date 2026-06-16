@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -24,11 +27,16 @@ public class OpenLibraryProvider implements BookMetadataProvider {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
-    public OpenLibraryProvider(ObjectMapper objectMapper) {
+    public OpenLibraryProvider(ObjectMapper objectMapper,
+                               @Value("${hub.proxy.host:}") String proxyHost,
+                               @Value("${hub.proxy.port:0}") int proxyPort) {
         this.objectMapper = objectMapper;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10));
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
+        }
+        this.httpClient = builder.build();
     }
 
     @Override

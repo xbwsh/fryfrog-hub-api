@@ -3,6 +3,7 @@ package com.fryfrog.hub.ebook.service;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
+import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.metadata.BookMetadataProviderManager;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
@@ -19,6 +20,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -61,6 +63,47 @@ public class EbookService {
         return repository.save(ebook);
     }
 
+    public List<EbookSeries> getEbooksBySeries() {
+        List<Ebook> allEbooks = repository.findAll();
+
+        Map<String, List<Ebook>> grouped = allEbooks.stream()
+                .collect(Collectors.groupingBy(e -> {
+                    String series = e.getSeries();
+                    if (series == null || series.isBlank()) {
+                        series = cleanTitleForSearch(e.getFileName());
+                    }
+                    if (series == null || series.isBlank()) {
+                        series = e.getTitle();
+                    }
+                    return series;
+                }));
+
+        List<EbookSeries> seriesList = new ArrayList<>();
+        for (Map.Entry<String, List<Ebook>> entry : grouped.entrySet()) {
+            EbookSeries series = new EbookSeries();
+            series.setName(entry.getKey());
+            series.setBooks(entry.getValue().stream()
+                    .sorted(Comparator.comparing(e -> e.getVolume() != null ? e.getVolume() : 0))
+                    .toList());
+            series.setVolumeCount(entry.getValue().size());
+
+            Optional<Ebook> withAuthor = entry.getValue().stream()
+                    .filter(e -> e.getAuthor() != null && !e.getAuthor().isBlank())
+                    .findFirst();
+            series.setAuthor(withAuthor.map(Ebook::getAuthor).orElse(null));
+
+            Optional<Ebook> withCover = entry.getValue().stream()
+                    .filter(e -> e.getCoverArtPath() != null)
+                    .findFirst();
+            series.setCoverArtPath(withCover.map(Ebook::getCoverArtPath).orElse(null));
+
+            seriesList.add(series);
+        }
+
+        seriesList.sort(Comparator.comparing(EbookSeries::getName));
+        return seriesList;
+    }
+
     public List<BookSearchResult> searchBooks(String title, String author) {
         BookMetadataProviderManager.ProviderResult result = providerManager.scrape(title, author);
         if (result.searchResult() == null) {
@@ -100,6 +143,18 @@ public class EbookService {
             ebook.setLanguage(searchResult.getLanguage());
         }
 
+        String seriesName = extractSeriesName(ebook.getFileName());
+        if (seriesName != null && !seriesName.isBlank()) {
+            ebook.setSeries(seriesName);
+        }
+
+        if (ebook.getVolume() == null) {
+            Integer extractedVolume = extractVolumeFromFileName(ebook.getFileName());
+            if (extractedVolume != null) {
+                ebook.setVolume(extractedVolume);
+            }
+        }
+
         BookMetadataProviderManager.ProviderResult providerResult = providerManager.scrape(
                 searchResult.getTitle(), searchResult.getAuthor());
 
@@ -117,7 +172,9 @@ public class EbookService {
             }
         }
 
-        return repository.save(ebook);
+        ebook = repository.save(ebook);
+        organizeEbookFile(ebook);
+        return ebook;
     }
 
     public int autoScrape() {
@@ -133,12 +190,21 @@ public class EbookService {
             try {
                 String title = ebook.getTitle();
                 String author = ebook.getAuthor();
+                String cleanFileName = cleanTitleForSearch(ebook.getFileName());
 
+                if (title == null || title.isBlank()) {
+                    title = cleanFileName;
+                }
                 if (title == null || title.isBlank()) {
                     continue;
                 }
 
                 BookMetadataProviderManager.ProviderResult result = providerManager.scrape(title, author);
+
+                if (result.searchResult() == null && !cleanFileName.equals(title)) {
+                    log.info("Retrying with filename: '{}'", cleanFileName);
+                    result = providerManager.scrape(cleanFileName, author);
+                }
 
                 if (result.searchResult() != null) {
                     scrapeAndSave(ebook.getId(), result.searchResult());
@@ -147,7 +213,13 @@ public class EbookService {
                             ebook.getTitle(), result.searchResult().getTitle(),
                             result.searchResult().getPlatform());
                 } else {
-                    log.info("No results for: {}", ebook.getTitle());
+                    log.info("No results for: {} (cleaned: {}), organizing with filename", ebook.getTitle(), cleanFileName);
+                    String seriesName = extractSeriesName(ebook.getFileName());
+                    ebook.setSeries(seriesName);
+                    Integer vol = extractVolumeFromFileName(ebook.getFileName());
+                    if (vol != null) ebook.setVolume(vol);
+                    repository.save(ebook);
+                    organizeEbookFile(ebook);
                 }
             } catch (Exception e) {
                 log.warn("Failed to auto-scrape ebook {}: {}", ebook.getTitle(), e.getMessage());
@@ -371,5 +443,117 @@ public class EbookService {
         } catch (IOException e) {
             throw new RuntimeException("Failed to read chapter: " + e.getMessage(), e);
         }
+    }
+
+    private void organizeEbookFile(Ebook ebook) {
+        try {
+            File file = new File(ebook.getFilePath());
+            if (!file.exists()) return;
+
+            String seriesName = ebook.getSeries();
+            if (seriesName == null || seriesName.isBlank()) {
+                seriesName = ebook.getTitle();
+            }
+            if (seriesName == null || seriesName.isBlank()) return;
+
+            Path targetDir = Paths.get(rootPath, sanitizeFileName(seriesName));
+            Files.createDirectories(targetDir);
+
+            String newName = buildEbookFileName(ebook);
+            Path targetPath = targetDir.resolve(newName);
+
+            if (!file.toPath().toAbsolutePath().equals(targetPath.toAbsolutePath())) {
+                Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+                ebook.setFilePath(targetPath.toAbsolutePath().toString());
+                ebook.setFileName(newName);
+                repository.save(ebook);
+                log.info("Organized ebook to: {}", targetPath);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to organize ebook file for {}: {}", ebook.getTitle(), e.getMessage());
+        }
+    }
+
+    private String buildEbookFileName(Ebook ebook) {
+        StringBuilder name = new StringBuilder();
+        String seriesName = ebook.getSeries();
+        if (seriesName != null && !seriesName.isBlank()) {
+            name.append(sanitizeFileName(seriesName));
+        } else {
+            name.append(sanitizeFileName(ebook.getTitle()));
+        }
+        if (ebook.getVolume() != null) {
+            name.append(" Vol.").append(ebook.getVolume());
+        }
+        String ext = ebook.getFormat() != null ? ebook.getFormat().toLowerCase() : "epub";
+        name.append(".").append(ext);
+        return name.toString();
+    }
+
+    private String sanitizeFileName(String name) {
+        if (name == null) return "Unknown";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+    }
+
+    private String cleanTitleForSearch(String title) {
+        String clean = title;
+        clean = clean.replaceAll("[\\[\\]［］]", " ").trim();
+        clean = clean.replaceAll("[（(][^）)]*[）)]", " ").trim();
+        clean = clean.replaceAll("[台日港]版", " ").trim();
+        clean = clean.replaceAll("[Vv]ol\\.?\\s*\\d+", " ").trim();
+        clean = clean.replaceAll("卷\\s*\\d+", " ").trim();
+        clean = clean.replaceAll("#\\s*\\d+", " ").trim();
+        clean = clean.replaceAll("\\d+\\.epub$", " ").trim();
+        clean = clean.replaceAll("\\s+", " ").trim();
+        return clean.isEmpty() ? title : clean;
+    }
+
+    private String extractSeriesName(String fileName) {
+        String clean = fileName;
+        clean = clean.replaceAll("[\\[\\]［］]", "|").trim();
+        String[] parts = clean.split("\\|");
+        List<String> seriesParts = new ArrayList<>();
+
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (trimmed.isEmpty()) continue;
+            if (trimmed.matches("\\d+")) continue;
+            if (trimmed.matches("[台日港]版")) continue;
+            if (trimmed.toLowerCase().matches("(progressive|extra|online|alzation|unlasting|rainbow|clover|regret|mother|deepening|candid|calibur|divine|editorial|illustration|fanbox|doujin|dl版)")) continue;
+            if (trimmed.length() <= 4 && trimmed.matches("[\\p{IsHan}]+")) continue;
+            seriesParts.add(trimmed);
+        }
+
+        String result = String.join("", seriesParts).replaceAll("[\\s\\-_]+", "").trim();
+        if (result.isEmpty()) {
+            result = cleanTitleForSearch(fileName).replaceAll("[\\s\\-_]+", "").trim();
+        }
+        return result;
+    }
+
+    private Integer extractVolumeFromFileName(String fileName) {
+        if (fileName == null) return null;
+
+        Matcher m = Pattern.compile("卷(\\d+)").matcher(fileName);
+        if (m.find()) {
+            return Integer.parseInt(m.group(1));
+        }
+
+        m = Pattern.compile("[Vv]ol\\.?\\s*(\\d+)").matcher(fileName);
+        if (m.find()) {
+            return Integer.parseInt(m.group(1));
+        }
+
+        m = Pattern.compile("#(\\d+)").matcher(fileName);
+        if (m.find()) {
+            return Integer.parseInt(m.group(1));
+        }
+
+        m = Pattern.compile("[(\\[]\\s*(\\d+)\\s*[)\\]]").matcher(fileName);
+        if (m.find()) {
+            return Integer.parseInt(m.group(1));
+        }
+
+        return null;
     }
 }

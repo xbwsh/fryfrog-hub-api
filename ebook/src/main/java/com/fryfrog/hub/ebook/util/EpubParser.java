@@ -136,16 +136,17 @@ public class EpubParser {
             String fullPath = opfDir + href;
             String html = readEntryText(zip, fullPath);
             if (html == null) return "";
-            return rewriteImageSrc(html, opfDir);
+            return rewriteImageSrc(html, opfDir, filePath);
         }
     }
 
     public static byte[] readImage(String filePath, String imageName) throws Exception {
+        String normalized = Path.of(imageName).normalize().toString().replace('\\', '/');
         try (ZipFile zip = new ZipFile(filePath, StandardCharsets.UTF_8)) {
-            ZipEntry entry = zip.getEntry(imageName);
+            ZipEntry entry = zip.getEntry(normalized);
             if (entry == null) {
                 for (ZipEntry e : Collections.list(zip.entries())) {
-                    if (e.getName().endsWith("/" + imageName) || e.getName().equals(imageName)) {
+                    if (e.getName().endsWith("/" + normalized) || e.getName().equals(normalized)) {
                         if (!e.isDirectory() && isImageFile(e.getName().toLowerCase())) {
                             entry = e;
                             break;
@@ -172,15 +173,25 @@ public class EpubParser {
         }
     }
 
-    private static String rewriteImageSrc(String html, String opfDir) {
-        String prefix = IMAGE_API_PREFIX + opfDir;
-        return html.replaceAll(
-                "(<img[^>]*\\bsrc=[\"'])([^\"']+)([\"'])",
-                "$1" + prefix + "$2$3"
-        );
-    }
+    private static final Pattern IMG_SRC_PATTERN = Pattern.compile(
+            "(<img[^>]*\\bsrc=[\"'])([^\"']+)([\"'])"
+    );
 
-    private static final String IMAGE_API_PREFIX = "/api/v1/ebook/epub-image?file=";
+    private static String rewriteImageSrc(String html, String opfDir, String epubFilePath) {
+        String encodedPath = java.net.URLEncoder.encode(epubFilePath, StandardCharsets.UTF_8);
+        String baseUrl = "/api/v1/ebook/epub-image?filePath=" + encodedPath + "&file=";
+        Matcher m = IMG_SRC_PATTERN.matcher(html);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String src = m.group(2);
+            String fullPath = Path.of(opfDir + src).normalize().toString().replace('\\', '/');
+            String replacement = m.group(1) + baseUrl
+                    + java.net.URLEncoder.encode(fullPath, StandardCharsets.UTF_8) + m.group(3);
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(replacement));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
 
     public static byte[] readCover(String filePath, EpubMetadata metadata) throws Exception {
         if (metadata == null || metadata.coverEntryName() == null) return null;

@@ -19,6 +19,7 @@ hub:
   comic:
     root-path: ${COMIC_ROOT_PATH:./media-library/comic}
     supported-formats: cbz,cbr,zip,rar
+    auto-scrape: ${COMIC_AUTO_SCRAPE:false}
   video:
     root-path: ${VIDEO_ROOT_PATH:./media-library/video}
     supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v

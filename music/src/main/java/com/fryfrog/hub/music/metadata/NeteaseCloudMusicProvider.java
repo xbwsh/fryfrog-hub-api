@@ -104,21 +104,54 @@ public class NeteaseCloudMusicProvider implements MusicMetadataProvider {
         }
 
         try {
-            String url = LYRIC_URL + "?id=" + result.getId() + "&lv=1";
+            String url = LYRIC_URL + "?id=" + result.getId() + "&lv=1&yrc=1";
             String json = httpGet(url);
 
             JsonNode root = objectMapper.readTree(json);
+
+            String yrcLyrics = root.path("yrc").path("lyric").asText("");
+            if (!yrcLyrics.isEmpty()) {
+                String converted = convertYrcToLrc(yrcLyrics);
+                if (!converted.isEmpty()) {
+                    log.info("NeteaseCloudMusic got yrc lyrics for: {}", result.getName());
+                    return converted;
+                }
+            }
+
             String lyrics = root.path("lrc").path("lyric").asText("");
             if (lyrics.isEmpty()) {
                 return null;
             }
 
-            log.info("NeteaseCloudMusic got lyrics for: {}", result.getName());
+            log.info("NeteaseCloudMusic got lrc lyrics for: {}", result.getName());
             return lyrics;
         } catch (Exception e) {
             log.warn("Failed to get lyrics from NeteaseCloudMusic for {}: {}", result.getName(), e.getMessage());
             return null;
         }
+    }
+
+    private String convertYrcToLrc(String yrc) {
+        StringBuilder lrc = new StringBuilder();
+        for (String line : yrc.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+
+            if (trimmed.startsWith("[")) {
+                String[] parts = trimmed.split("\\]", 2);
+                if (parts.length < 2) continue;
+
+                String timestamp = parts[0] + "]";
+                String content = parts[1].replaceAll("<\\d{2}:\\d{2}\\.\\d{2,3}>", "");
+                content = content.trim();
+                if (!content.isEmpty()) {
+                    lrc.append(timestamp).append(content).append("\n");
+                }
+            } else {
+                lrc.append(trimmed).append("\n");
+            }
+        }
+        return lrc.toString();
     }
 
     @Override
