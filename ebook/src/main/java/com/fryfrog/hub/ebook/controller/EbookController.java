@@ -2,6 +2,7 @@ package com.fryfrog.hub.ebook.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
+import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.model.Ebook;
@@ -18,6 +19,8 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+
+import com.fryfrog.hub.ebook.util.EpubParser;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -112,7 +115,7 @@ public class EbookController {
     }
 
     @GetMapping("/{id:\\d+}/read")
-    @Operation(summary = "在线阅读", description = "返回电子书的文本内容")
+    @Operation(summary = "在线阅读", description = "返回电子书的内容，epub返回HTML，其他返回纯文本")
     public ResponseEntity<String> readEbook(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
         Ebook ebook = service.getEbookById(id);
@@ -121,12 +124,50 @@ public class EbookController {
             return ResponseEntity.notFound().build();
         }
         try {
-            String content = java.nio.file.Files.readString(file.toPath());
-            return ResponseEntity.ok()
-                    .contentType(MediaType.TEXT_PLAIN)
-                    .body(content);
+            if (EpubParser.isEpub(ebook.getFilePath())) {
+                List<EpubParser.ChapterEntry> chapters = EpubParser.extractChapters(ebook.getFilePath());
+                StringBuilder sb = new StringBuilder();
+                for (EpubParser.ChapterEntry ch : chapters) {
+                    String html = EpubParser.readChapterHtml(ebook.getFilePath(), ch.href());
+                    if (!html.isBlank()) {
+                        if (!sb.isEmpty()) sb.append("\n<hr>\n");
+                        sb.append(html);
+                    }
+                }
+                return ResponseEntity.ok()
+                        .contentType(MediaType.TEXT_HTML)
+                        .body(sb.toString());
+            } else {
+                String content = java.nio.file.Files.readString(file.toPath());
+                return ResponseEntity.ok()
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .body(content);
+            }
         } catch (Exception e) {
             throw new RuntimeException("Failed to read ebook: " + e.getMessage(), e);
+        }
+    }
+
+    @GetMapping("/epub-image")
+    @Operation(summary = "获取epub内嵌图片", description = "从epub文件中提取指定路径的图片")
+    public ResponseEntity<byte[]> getEpubImage(
+            @Parameter(description = "电子书文件完整路径") @RequestParam String filePath,
+            @Parameter(description = "图片在epub内的路径") @RequestParam String file) {
+        try {
+            byte[] image = EpubParser.readImage(filePath, file);
+            if (image == null) {
+                return ResponseEntity.notFound().build();
+            }
+            String lower = file.toLowerCase();
+            MediaType mediaType = MediaType.IMAGE_JPEG;
+            if (lower.endsWith(".png")) mediaType = MediaType.IMAGE_PNG;
+            else if (lower.endsWith(".gif")) mediaType = MediaType.IMAGE_GIF;
+            else if (lower.endsWith(".webp")) mediaType = MediaType.parseMediaType("image/webp");
+            return ResponseEntity.ok()
+                    .contentType(mediaType)
+                    .body(image);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read epub image: " + e.getMessage(), e);
         }
     }
 
@@ -138,10 +179,28 @@ public class EbookController {
     }
 
     @GetMapping("/{id:\\d+}/chapters/{chapterNum}")
-    @Operation(summary = "获取章节内容", description = "返回指定章节的文本内容")
+    @Operation(summary = "获取章节内容", description = "返回指定章节内容，epub返回HTML，其他返回纯文本")
     public ResponseEntity<String> getChapterContent(
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "章节序号（从1开始）") @PathVariable int chapterNum) {
+        Ebook ebook = service.getEbookById(id);
+        if (EpubParser.isEpub(ebook.getFilePath())) {
+            try {
+                List<EpubParser.ChapterEntry> chapters = EpubParser.extractChapters(ebook.getFilePath());
+                if (chapterNum < 1 || chapterNum > chapters.size()) {
+                    throw new IllegalArgumentException("Chapter number out of range: " + chapterNum);
+                }
+                EpubParser.ChapterEntry chapter = chapters.get(chapterNum - 1);
+                String html = EpubParser.readChapterHtml(ebook.getFilePath(), chapter.href());
+                return ResponseEntity.ok()
+                        .contentType(MediaType.TEXT_HTML)
+                        .body(html);
+            } catch (IllegalArgumentException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to read epub chapter: " + e.getMessage(), e);
+            }
+        }
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)
                 .body(service.getChapterContent(id, chapterNum));
@@ -190,6 +249,30 @@ public class EbookController {
             @Parameter(description = "电子书ID") @PathVariable Long id) {
         readingProgressService.deleteProgress(id);
         return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @GetMapping("/metadata/search")
+    @Operation(summary = "搜索书籍元数据", description = "在多个数据源中搜索书籍元数据")
+    public ResponseEntity<ApiResponse<List<BookSearchResult>>> searchBookMetadata(
+            @Parameter(description = "书名关键词") @RequestParam String title,
+            @Parameter(description = "作者名称（可选）") @RequestParam(required = false) String author) {
+        return ResponseEntity.ok(ApiResponse.success(service.searchBooks(title, author)));
+    }
+
+    @PostMapping("/{id:\\d+}/metadata/bind")
+    @Operation(summary = "绑定书籍元数据", description = "将搜索到的元数据绑定到指定电子书")
+    public ResponseEntity<ApiResponse<Ebook>> bindBookMetadata(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
+            @Parameter(description = "搜索结果") @RequestBody BookSearchResult searchResult) {
+        return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(id, searchResult)));
+    }
+
+    @PostMapping("/metadata/auto-scrape")
+    @Operation(summary = "自动刮削所有电子书", description = "自动为所有未刮削的电子书搜索并绑定元数据")
+    public ResponseEntity<ApiResponse<String>> autoScrapeAll() {
+        int scraped = service.autoScrape();
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Auto-scrape completed: %d ebooks scraped", scraped), ""));
     }
 
     private void validatePath(String path) {
