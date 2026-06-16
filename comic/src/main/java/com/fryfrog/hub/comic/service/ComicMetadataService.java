@@ -28,7 +28,7 @@ public class ComicMetadataService {
     @Value("${hub.comic.root-path}")
     private String rootPath;
 
-    private static final Set<String> SUPPORTED_FORMATS = Set.of("cbz", "cbr", "zip", "rar");
+    private static final Set<String> SUPPORTED_FORMATS = Set.of("cbz", "cbr", "zip", "rar", "epub");
 
     public List<Comic> getAllComics() {
         return repository.findAll();
@@ -143,7 +143,7 @@ public class ComicMetadataService {
 
         String ext = getFileExtension(file.getName()).toLowerCase();
         try {
-            if ("cbz".equals(ext) || "zip".equals(ext)) {
+            if (isZipBased(ext)) {
                 return listZipPages(file);
             }
         } catch (IOException e) {
@@ -161,7 +161,7 @@ public class ComicMetadataService {
 
         String ext = getFileExtension(file.getName()).toLowerCase();
         try {
-            if ("cbz".equals(ext) || "zip".equals(ext)) {
+            if (isZipBased(ext)) {
                 return readZipPage(file, pageNum);
             }
         } catch (IOException e) {
@@ -220,7 +220,7 @@ public class ComicMetadataService {
 
     private String extractCover(File file) throws IOException {
         String ext = getFileExtension(file.getName()).toLowerCase();
-        if ("cbz".equals(ext) || "zip".equals(ext)) {
+        if (isZipBased(ext)) {
             try (ZipFile zipFile = new ZipFile(file)) {
                 ZipEntry firstImage = null;
                 Enumeration<? extends ZipEntry> entries = zipFile.entries();
@@ -251,7 +251,7 @@ public class ComicMetadataService {
 
     private int countPages(File file) throws IOException {
         String ext = getFileExtension(file.getName()).toLowerCase();
-        if ("cbz".equals(ext) || "zip".equals(ext)) {
+        if (isZipBased(ext)) {
             try (ZipFile zipFile = new ZipFile(file)) {
                 int count = 0;
                 Enumeration<? extends ZipEntry> entries = zipFile.entries();
@@ -277,5 +277,9 @@ public class ComicMetadataService {
     private String getFileExtension(String fileName) {
         int lastDot = fileName.lastIndexOf('.');
         return lastDot >= 0 ? fileName.substring(lastDot + 1) : "";
+    }
+
+    private boolean isZipBased(String ext) {
+        return "cbz".equals(ext) || "zip".equals(ext) || "epub".equals(ext);
     }
 }
