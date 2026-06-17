@@ -1,10 +1,8 @@
 package com.fryfrog.hub.ebook.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
-import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
-import com.fryfrog.hub.ebook.metadata.BookMetadataProviderManager;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +27,6 @@ import java.util.stream.Stream;
 public class EbookService {
 
     private final EbookRepository repository;
-    private final BookMetadataProviderManager providerManager;
 
     @Value("${hub.ebook.root-path}")
     private String rootPath;
@@ -102,132 +99,6 @@ public class EbookService {
 
         seriesList.sort(Comparator.comparing(EbookSeries::getName));
         return seriesList;
-    }
-
-    public List<BookSearchResult> searchBooks(String title, String author) {
-        BookMetadataProviderManager.ProviderResult result = providerManager.scrape(title, author);
-        if (result.searchResult() == null) {
-            return Collections.emptyList();
-        }
-        return Collections.singletonList(result.searchResult());
-    }
-
-    public Ebook scrapeAndSave(Long ebookId, BookSearchResult searchResult) {
-        Ebook ebook = getEbookById(ebookId);
-
-        if (searchResult.getTitle() != null && !searchResult.getTitle().isBlank()) {
-            ebook.setTitle(searchResult.getTitle());
-        }
-        if (searchResult.getAuthor() != null && !searchResult.getAuthor().isBlank()) {
-            ebook.setAuthor(searchResult.getAuthor());
-        }
-        if (searchResult.getPublisher() != null && !searchResult.getPublisher().isBlank()) {
-            ebook.setPublisher(searchResult.getPublisher());
-        }
-        if (searchResult.getIsbn() != null && !searchResult.getIsbn().isBlank()) {
-            ebook.setIsbn(searchResult.getIsbn());
-        }
-        if (searchResult.getYear() != null) {
-            ebook.setYear(searchResult.getYear());
-        }
-        if (searchResult.getGenre() != null && !searchResult.getGenre().isBlank()) {
-            ebook.setGenre(searchResult.getGenre());
-        }
-        if (searchResult.getDescription() != null && !searchResult.getDescription().isBlank()) {
-            ebook.setDescription(searchResult.getDescription());
-        }
-        if (searchResult.getPageCount() != null && searchResult.getPageCount() > 0) {
-            ebook.setPageCount(searchResult.getPageCount());
-        }
-        if (searchResult.getLanguage() != null && !searchResult.getLanguage().isBlank()) {
-            ebook.setLanguage(searchResult.getLanguage());
-        }
-
-        String seriesName = extractSeriesName(ebook.getFileName());
-        if (seriesName != null && !seriesName.isBlank()) {
-            ebook.setSeries(seriesName);
-        }
-
-        if (ebook.getVolume() == null) {
-            Integer extractedVolume = extractVolumeFromFileName(ebook.getFileName());
-            if (extractedVolume != null) {
-                ebook.setVolume(extractedVolume);
-            }
-        }
-
-        BookMetadataProviderManager.ProviderResult providerResult = providerManager.scrape(
-                searchResult.getTitle(), searchResult.getAuthor());
-
-        if (providerResult.coverData() != null) {
-            try {
-                Path coverDir = Paths.get(rootPath, ".cache", "covers");
-                Files.createDirectories(coverDir);
-                String coverFileName = ebook.getFileName().replaceAll("\\.[^.]+$", ".jpg");
-                Path coverPath = coverDir.resolve(coverFileName);
-                Files.write(coverPath, providerResult.coverData());
-                ebook.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                log.info("Saved cover to: {}", coverPath);
-            } catch (IOException e) {
-                log.warn("Failed to save cover for ebook {}: {}", ebookId, e.getMessage());
-            }
-        }
-
-        ebook = repository.save(ebook);
-        organizeEbookFile(ebook);
-        return ebook;
-    }
-
-    public int autoScrape() {
-        List<Ebook> ebooks = repository.findAll();
-        int scraped = 0;
-
-        for (Ebook ebook : ebooks) {
-            if (ebook.getIsbn() != null && !ebook.getIsbn().isBlank()) {
-                log.debug("Skipping already scraped ebook: {}", ebook.getTitle());
-                continue;
-            }
-
-            try {
-                String title = ebook.getTitle();
-                String author = ebook.getAuthor();
-                String cleanFileName = cleanTitleForSearch(ebook.getFileName());
-
-                if (title == null || title.isBlank()) {
-                    title = cleanFileName;
-                }
-                if (title == null || title.isBlank()) {
-                    continue;
-                }
-
-                BookMetadataProviderManager.ProviderResult result = providerManager.scrape(title, author);
-
-                if (result.searchResult() == null && !cleanFileName.equals(title)) {
-                    log.info("Retrying with filename: '{}'", cleanFileName);
-                    result = providerManager.scrape(cleanFileName, author);
-                }
-
-                if (result.searchResult() != null) {
-                    scrapeAndSave(ebook.getId(), result.searchResult());
-                    scraped++;
-                    log.info("Auto-scraped: {} -> {} ({})",
-                            ebook.getTitle(), result.searchResult().getTitle(),
-                            result.searchResult().getPlatform());
-                } else {
-                    log.info("No results for: {} (cleaned: {}), organizing with filename", ebook.getTitle(), cleanFileName);
-                    String seriesName = extractSeriesName(ebook.getFileName());
-                    ebook.setSeries(seriesName);
-                    Integer vol = extractVolumeFromFileName(ebook.getFileName());
-                    if (vol != null) ebook.setVolume(vol);
-                    repository.save(ebook);
-                    organizeEbookFile(ebook);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to auto-scrape ebook {}: {}", ebook.getTitle(), e.getMessage());
-            }
-        }
-
-        log.info("Auto-scrape completed: {}/{} ebooks scraped", scraped, ebooks.size());
-        return scraped;
     }
 
     public Ebook extractAndSaveMetadata(String filePath) {

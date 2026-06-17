@@ -26,9 +26,6 @@ public class MediaWatcherService {
     @Value("${hub.music.supported-formats}")
     private String supportedFormats;
 
-    @Value("${hub.music.auto-writeback:false}")
-    private boolean autoWriteback;
-
     private WatchService watchService;
     private ExecutorService executor;
     private volatile boolean running = true;
@@ -99,11 +96,7 @@ public class MediaWatcherService {
                     if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                         log.info("Detected media file change: {}", fullPath);
                         try {
-                            if (autoWriteback) {
-                                metadataService.scrapeAndSave(fullPath.toString());
-                            } else {
-                                metadataService.extractAndSaveMetadata(fullPath.toString());
-                            }
+                            metadataService.extractAndSaveMetadata(fullPath.toString());
                             log.info("Auto-indexed: {}", fileName);
                         } catch (Exception e) {
                             log.warn("Failed to auto-index: {}", fileName, e);

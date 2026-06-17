@@ -2,9 +2,9 @@ package com.fryfrog.hub.ebook.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
-import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
+import com.fryfrog.hub.ebook.dto.EbookReadingProgressRequest;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
@@ -262,8 +262,11 @@ public class EbookController {
     @Operation(summary = "保存阅读进度", description = "保存指定电子书的阅读进度")
     public ResponseEntity<ApiResponse<EbookReadingProgressDTO>> saveProgress(
             @Parameter(description = "电子书ID") @PathVariable Long id,
-            @Parameter(description = "当前页码/章节数") @RequestParam Integer page,
-            @Parameter(description = "总页数/章节数") @RequestParam Integer totalPages) {
+            @RequestBody EbookReadingProgressRequest request) {
+        Integer page = request.getCurrentPage();
+        Integer totalPages = request.getTotalPages();
+        if (page == null || page < 1) page = 1;
+        if (totalPages == null || totalPages < 1) totalPages = 1;
         EbookReadingProgress progress = readingProgressService.saveProgress(id, page, totalPages);
         return ResponseEntity.ok(ApiResponse.success(EbookReadingProgressDTO.fromEntity(progress)));
     }
@@ -274,30 +277,6 @@ public class EbookController {
             @Parameter(description = "电子书ID") @PathVariable Long id) {
         readingProgressService.deleteProgress(id);
         return ResponseEntity.ok(ApiResponse.success(null));
-    }
-
-    @GetMapping("/metadata/search")
-    @Operation(summary = "搜索书籍元数据", description = "在多个数据源中搜索书籍元数据")
-    public ResponseEntity<ApiResponse<List<BookSearchResult>>> searchBookMetadata(
-            @Parameter(description = "书名关键词") @RequestParam String title,
-            @Parameter(description = "作者名称（可选）") @RequestParam(required = false) String author) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchBooks(title, author)));
-    }
-
-    @PostMapping("/{id:\\d+}/metadata/bind")
-    @Operation(summary = "绑定书籍元数据", description = "将搜索到的元数据绑定到指定电子书")
-    public ResponseEntity<ApiResponse<Ebook>> bindBookMetadata(
-            @Parameter(description = "电子书ID") @PathVariable Long id,
-            @Parameter(description = "搜索结果") @RequestBody BookSearchResult searchResult) {
-        return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(id, searchResult)));
-    }
-
-    @PostMapping("/metadata/auto-scrape")
-    @Operation(summary = "自动刮削所有电子书", description = "自动为所有未刮削的电子书搜索并绑定元数据")
-    public ResponseEntity<ApiResponse<String>> autoScrapeAll() {
-        int scraped = service.autoScrape();
-        return ResponseEntity.ok(ApiResponse.success(
-                String.format("Auto-scrape completed: %d ebooks scraped", scraped), ""));
     }
 
     private void validatePath(String path) {

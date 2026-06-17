@@ -2,7 +2,7 @@ package com.fryfrog.hub.comic.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
-import com.fryfrog.hub.comic.dto.ComicSearchResult;
+import com.fryfrog.hub.comic.dto.ComicReadingProgressRequest;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
 import com.fryfrog.hub.comic.model.Comic;
@@ -159,8 +159,11 @@ public class ComicController {
     @Operation(summary = "保存阅读进度", description = "保存指定漫画的阅读进度")
     public ResponseEntity<ApiResponse<ComicReadingProgressDTO>> saveProgress(
             @Parameter(description = "漫画ID") @PathVariable Long id,
-            @Parameter(description = "当前页码（从1开始）") @RequestParam Integer page,
-            @Parameter(description = "总页数") @RequestParam Integer totalPages) {
+            @RequestBody ComicReadingProgressRequest request) {
+        Integer page = request.getCurrentPage();
+        Integer totalPages = request.getTotalPages();
+        if (page == null || page < 1) page = 1;
+        if (totalPages == null || totalPages < 1) totalPages = 1;
         ComicReadingProgress progress = readingProgressService.saveProgress(id, page, totalPages);
         return ResponseEntity.ok(ApiResponse.success(ComicReadingProgressDTO.fromEntity(progress)));
     }
@@ -171,30 +174,6 @@ public class ComicController {
             @Parameter(description = "漫画ID") @PathVariable Long id) {
         readingProgressService.deleteProgress(id);
         return ResponseEntity.ok(ApiResponse.success(null));
-    }
-
-    @GetMapping("/metadata/search")
-    @Operation(summary = "搜索漫画元数据", description = "在外部数据源中搜索漫画元数据")
-    public ResponseEntity<ApiResponse<List<ComicSearchResult>>> searchComicMetadata(
-            @Parameter(description = "漫画标题关键词") @RequestParam String title,
-            @Parameter(description = "作者名称（可选）") @RequestParam(required = false) String author) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchExternal(title, author)));
-    }
-
-    @PostMapping("/{id:\\d+}/metadata/bind")
-    @Operation(summary = "绑定漫画元数据", description = "将搜索到的元数据绑定到指定漫画")
-    public ResponseEntity<ApiResponse<Comic>> bindComicMetadata(
-            @Parameter(description = "漫画ID") @PathVariable Long id,
-            @Parameter(description = "搜索结果") @RequestBody ComicSearchResult searchResult) {
-        return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(id, searchResult)));
-    }
-
-    @PostMapping("/metadata/auto-scrape")
-    @Operation(summary = "自动刮削所有漫画", description = "自动为所有未刮削的漫画搜索并绑定元数据")
-    public ResponseEntity<ApiResponse<String>> autoScrapeAll() {
-        int scraped = service.autoScrape();
-        return ResponseEntity.ok(ApiResponse.success(
-                String.format("Auto-scrape completed: %d comics scraped", scraped), ""));
     }
 
     private void validatePath(String path) {

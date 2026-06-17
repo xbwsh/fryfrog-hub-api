@@ -87,14 +87,6 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
     }
 
-    @PostMapping("/scrape")
-    @Operation(summary = "刮削音乐元数据", description = "从外部数据源获取音乐元数据并保存，包括封面、歌词等")
-    public ResponseEntity<ApiResponse<MusicTrack>> scrapeTrack(
-            @Parameter(description = "音频文件完整路径") @RequestParam String filePath) {
-        validatePath(filePath);
-        return ResponseEntity.ok(ApiResponse.success(service.scrapeAndSave(filePath)));
-    }
-
     @GetMapping("/{id:\\d+}/lyrics")
     @Operation(summary = "获取歌词", description = "读取同目录下的.lrc歌词文件")
     @ApiResponses(value = {

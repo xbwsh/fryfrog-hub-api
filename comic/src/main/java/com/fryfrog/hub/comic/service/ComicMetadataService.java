@@ -1,10 +1,8 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
-import com.fryfrog.hub.comic.dto.ComicSearchResult;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
-import com.fryfrog.hub.comic.metadata.ComicMetadataProviderManager;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.repository.ComicRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +26,6 @@ import java.util.zip.ZipFile;
 public class ComicMetadataService {
 
     private final ComicRepository repository;
-    private final ComicMetadataProviderManager providerManager;
 
     @Value("${hub.comic.root-path}")
     private String rootPath;
@@ -214,118 +211,6 @@ public class ComicMetadataService {
             throw new RuntimeException("Failed to read comic page: " + e.getMessage(), e);
         }
         throw new UnsupportedOperationException("Unsupported format: " + ext);
-    }
-
-    public List<ComicSearchResult> searchExternal(String title, String author) {
-        String cleanTitle = cleanTitleForSearch(title);
-        ComicMetadataProviderManager.ProviderResult result = providerManager.scrape(cleanTitle, author);
-        if (result.searchResult() == null) {
-            return Collections.emptyList();
-        }
-        return Collections.singletonList(result.searchResult());
-    }
-
-    public Comic scrapeAndSave(Long comicId, ComicSearchResult searchResult) {
-        Comic comic = getComicById(comicId);
-
-        if (searchResult.getTitle() != null && !searchResult.getTitle().isBlank()) {
-            comic.setTitle(searchResult.getTitle());
-        }
-        if (searchResult.getAuthor() != null && !searchResult.getAuthor().isBlank()) {
-            comic.setAuthor(searchResult.getAuthor());
-        }
-        if (searchResult.getYear() != null) {
-            comic.setYear(searchResult.getYear());
-        }
-        if (searchResult.getGenre() != null && !searchResult.getGenre().isBlank()) {
-            comic.setGenre(searchResult.getGenre());
-        }
-        if (searchResult.getDescription() != null && !searchResult.getDescription().isBlank()) {
-            comic.setSummary(searchResult.getDescription());
-        }
-
-        String seriesName = searchResult.getSeries();
-        if (seriesName == null || seriesName.isBlank()) {
-            seriesName = extractSeriesName(comic.getFileName());
-        }
-        if (seriesName != null && !seriesName.isBlank()) {
-            comic.setSeries(seriesName);
-        }
-
-        if (searchResult.getVolume() != null) {
-            comic.setVolume(searchResult.getVolume());
-        } else {
-            Integer extractedVolume = extractVolumeFromFileName(comic.getFileName());
-            if (extractedVolume != null) {
-                comic.setVolume(extractedVolume);
-            }
-        }
-
-        ComicMetadataProviderManager.ProviderResult providerResult = providerManager.scrape(
-                searchResult.getTitle(), searchResult.getAuthor());
-
-        if (providerResult.coverData() != null) {
-            try {
-                Path coverDir = Paths.get(rootPath, ".cache", "covers");
-                Files.createDirectories(coverDir);
-                String coverFileName = comic.getFileName().replaceAll("\\.[^.]+$", ".jpg");
-                Path coverPath = coverDir.resolve(coverFileName);
-                Files.write(coverPath, providerResult.coverData());
-                comic.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                log.info("Saved cover to: {}", coverPath);
-            } catch (IOException e) {
-                log.warn("Failed to save cover for comic {}: {}", comicId, e.getMessage());
-            }
-        }
-
-        comic = repository.save(comic);
-        organizeComicFile(comic);
-        return comic;
-    }
-
-    public int autoScrape() {
-        List<Comic> comics = repository.findAll();
-        int scraped = 0;
-
-        for (Comic comic : comics) {
-            if (comic.getAuthor() != null && !comic.getAuthor().isBlank()) {
-                log.debug("Skipping already scraped comic: {}", comic.getTitle());
-                continue;
-            }
-
-            try {
-                String title = comic.getTitle();
-                if (title == null || title.isBlank()) {
-                    continue;
-                }
-
-                String cleanTitle = cleanTitleForSearch(title);
-                log.info("Searching for comic: '{}' -> '{}'", title, cleanTitle);
-
-                ComicMetadataProviderManager.ProviderResult result = providerManager.scrape(cleanTitle, null);
-
-                if (result.searchResult() != null) {
-                    scrapeAndSave(comic.getId(), result.searchResult());
-                    scraped++;
-                    log.info("Auto-scraped: {} -> {} ({})",
-                            title, result.searchResult().getTitle(),
-                            result.searchResult().getPlatform());
-                } else {
-                    log.info("No results for: {} (cleaned: {}), organizing with filename", title, cleanTitle);
-                    String seriesName = extractSeriesName(comic.getFileName());
-                    comic.setSeries(seriesName);
-                    Integer vol = extractVolumeFromFileName(comic.getFileName());
-                    if (vol != null) comic.setVolume(vol);
-                    repository.save(comic);
-                    organizeComicFile(comic);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to auto-scrape comic {}: {}", comic.getTitle(), e.getMessage());
-            }
-        }
-
-        log.info("Auto-scrape completed: {}/{} comics scraped", scraped, comics.size());
-        return scraped;
     }
 
     private void organizeComicFile(Comic comic) {

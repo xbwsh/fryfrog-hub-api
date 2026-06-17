@@ -1,8 +1,6 @@
 package com.fryfrog.hub.music.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
-import com.fryfrog.hub.music.dto.SearchResult;
-import com.fryfrog.hub.music.metadata.MusicMetadataProviderManager;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.repository.MusicTrackRepository;
 import lombok.RequiredArgsConstructor;
@@ -12,8 +10,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
 import java.nio.file.*;
 import java.util.List;
 import java.util.Set;
@@ -25,7 +21,6 @@ import java.util.stream.Stream;
 public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
-    private final MusicMetadataProviderManager providerManager;
 
     @Value("${hub.music.root-path}")
     private String rootPath;
@@ -157,12 +152,12 @@ public class MusicMetadataService {
                                 String absolutePath = path.toAbsolutePath().toString();
                                 MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
 
-                                if (existing != null && !needsRescrape(existing)) {
+                                if (existing != null) {
                                     log.debug("Skipping already indexed: {}", path.getFileName());
                                     return;
                                 }
 
-                                scrapeAndSave(absolutePath);
+                                extractAndSaveMetadata(absolutePath);
                                 log.info("Indexed: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index: {}", path.getFileName(), e);
@@ -175,101 +170,6 @@ public class MusicMetadataService {
         }
     }
 
-    private boolean needsRescrape(MusicTrack track) {
-        return track.getCoverArtPath() == null || track.getCoverArtPath().isBlank();
-    }
-
-    public MusicTrack scrapeAndSave(String filePath) {
-        try {
-            File file = new File(filePath);
-            if (!file.exists()) {
-                throw new IllegalArgumentException("File not found: " + filePath);
-            }
-
-            MusicTrack track = extractAndSaveMetadata(filePath);
-
-            String title = track.getTitle();
-            String artist = track.getArtist();
-
-            String fileName = file.getName().replaceAll("\\.[^.]+$", "");
-
-            if (title == null || title.isBlank() || isGarbled(title)) {
-                title = parseTitleFromFileName(fileName);
-            }
-            if (artist == null || artist.isBlank() || isGarbled(artist)) {
-                artist = parseArtistFromFileName(fileName);
-            }
-
-            log.info("Scraping metadata for: {} - {}", artist, title);
-
-            MusicMetadataProviderManager.ProviderResult result =
-                    providerManager.scrape(artist, title, track.getAlbum());
-
-            if (result.searchResult() != null) {
-                String matchedName = result.searchResult().getName();
-                String matchedArtist = result.searchResult().getArtist();
-                String matchedAlbum = result.searchResult().getAlbum();
-
-                if (matchedName != null && !matchedName.isBlank()) {
-                    track.setTitle(matchedName);
-                }
-                if (matchedArtist != null && !matchedArtist.isBlank()) {
-                    track.setArtist(matchedArtist);
-                }
-                if (matchedAlbum != null && !matchedAlbum.isBlank()) {
-                    track.setAlbum(matchedAlbum);
-                }
-            }
-
-            Path archiveDir = Paths.get(rootPath, track.getArtist() + " - " + track.getTitle());
-            Files.createDirectories(archiveDir);
-
-            Path audioTarget = archiveDir.resolve(file.getName());
-            if (!file.toPath().toAbsolutePath().equals(audioTarget.toAbsolutePath())) {
-                Files.move(file.toPath(), audioTarget, StandardCopyOption.REPLACE_EXISTING);
-                track.setFilePath(audioTarget.toAbsolutePath().toString());
-                track.setFileName(file.getName());
-                log.info("Moved audio to: {}", archiveDir);
-            }
-
-            if (result.lyrics() != null && !result.lyrics().isBlank()) {
-                Path lyricsPath = archiveDir.resolve(file.getName().replaceAll("\\.[^.]+$", ".lrc"));
-                Files.writeString(lyricsPath, result.lyrics().endsWith("\n") ? result.lyrics() : result.lyrics() + "\n");
-                log.info("Saved lyrics to: {}", lyricsPath);
-            } else {
-                log.warn("No lyrics found for: {} - {}", artist, title);
-            }
-
-            if (result.coverData() != null) {
-                Path coverPath = archiveDir.resolve("cover.jpg");
-                Files.write(coverPath, result.coverData());
-                track.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                log.info("Saved cover to: {}", coverPath);
-            } else {
-                track.setCoverArtPath(null);
-            }
-
-            MusicTrack saved = repository.save(track);
-
-            if (autoWriteback) {
-                writeMetadataToFile(new File(track.getFilePath()), saved);
-            }
-
-            return saved;
-        } catch (Exception e) {
-            log.error("Failed to scrape metadata from: {}", filePath, e);
-            throw new RuntimeException("Failed to scrape metadata: " + e.getMessage(), e);
-        }
-    }
-
-    private boolean isGarbled(String text) {
-        if (text == null || text.isBlank()) return false;
-        long mojibakeCount = text.chars()
-                .filter(c -> c >= 0x00C0 && c <= 0x00FF)
-                .count();
-        return mojibakeCount > text.length() * 0.3;
-    }
-
     private String parseTitleFromFileName(String fileName) {
         String[] parts = fileName.split(" - ", 2);
         return parts.length > 1 ? parts[1].trim() : fileName.trim();
@@ -278,6 +178,14 @@ public class MusicMetadataService {
     private String parseArtistFromFileName(String fileName) {
         String[] parts = fileName.split(" - ", 2);
         return parts.length > 1 ? parts[0].trim() : "";
+    }
+
+    private boolean isGarbled(String text) {
+        if (text == null || text.isBlank()) return false;
+        long mojibakeCount = text.chars()
+                .filter(c -> c >= 0x00C0 && c <= 0x00FF)
+                .count();
+        return mojibakeCount > text.length() * 0.3;
     }
 
     private void inferFromFolderStructure(MusicTrack track, File file) {

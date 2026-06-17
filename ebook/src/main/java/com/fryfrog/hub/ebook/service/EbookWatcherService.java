@@ -1,6 +1,5 @@
 package com.fryfrog.hub.ebook.service;
 
-import com.fryfrog.hub.ebook.dto.BookSearchResult;
 import com.fryfrog.hub.ebook.model.Ebook;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.*;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,9 +26,6 @@ public class EbookWatcherService {
 
     @Value("${hub.ebook.supported-formats}")
     private String supportedFormats;
-
-    @Value("${hub.ebook.auto-scrape:false}")
-    private boolean autoScrape;
 
     private WatchService watchService;
     private ExecutorService executor;
@@ -50,16 +45,6 @@ public class EbookWatcherService {
             log.info("Initial ebook scan completed");
         } catch (Exception e) {
             log.error("Failed to initial scan ebooks", e);
-        }
-
-        if (autoScrape) {
-            log.info("Auto-scrape enabled, scraping unscraped ebooks...");
-            try {
-                int scraped = metadataService.autoScrape();
-                log.info("Auto-scrape completed: {} ebooks scraped", scraped);
-            } catch (Exception e) {
-                log.error("Failed to auto-scrape ebooks", e);
-            }
         }
 
         try {
@@ -112,20 +97,7 @@ public class EbookWatcherService {
                     if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                         log.info("Detected ebook file change: {}", fullPath);
                         try {
-                            Ebook ebook = metadataService.extractAndSaveMetadata(fullPath.toString());
-                            if (autoScrape) {
-                                try {
-                                    String title = ebook.getTitle();
-                                    String author = ebook.getAuthor();
-                                    List<BookSearchResult> results = metadataService.searchBooks(title, author);
-                                    if (!results.isEmpty()) {
-                                        metadataService.scrapeAndSave(ebook.getId(), results.get(0));
-                                        log.info("Auto-scraped ebook: {}", fileName);
-                                    }
-                                } catch (Exception e) {
-                                    log.warn("Failed to auto-scrape ebook: {}", fileName, e);
-                                }
-                            }
+                            metadataService.extractAndSaveMetadata(fullPath.toString());
                             log.info("Auto-indexed ebook: {}", fileName);
                         } catch (Exception e) {
                             log.warn("Failed to auto-index ebook: {}", fileName, e);
