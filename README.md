@@ -101,30 +101,34 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 ### Docker 部署 / Docker Deployment
 
-**方式一：本地构建**
+使用 host 网络模式，容器直接使用宿主机网络，无需端口映射。
+
+**方式一：docker-compose 本地构建**
+
 ```bash
 docker-compose up -d
 ```
 
-**方式二：直接拉取镜像（推荐）**
-
-项目配置了 GitHub Actions，每次推送自动构建镜像：
+**方式二：拉取预构建镜像（推荐）**
 
 ```bash
-# 登录 GitHub Container Registry
-docker login ghcr.io -u xbwsh
-
-# 拉取镜像
-docker pull ghcr.io/xbwsh/fryfrog-hub-api:develop
-
-# 运行
 docker run -d \
-  -p 20058:20058 \
+  --name fryfrog-hub \
+  --network host \
   -v /path/to/data:/data \
   -v /path/to/music:/app/media-library/music \
+  -v /path/to/video:/app/media-library/video \
+  -v /path/to/comic:/app/media-library/comic \
+  -v /path/to/ebook:/app/media-library/ebook \
   -e SPRING_PROFILES_ACTIVE=prod \
+  -e MEDIA_ROOT_PATH=/app/media-library \
   -e MUSIC_ROOT_PATH=/app/media-library/music \
-  ghcr.io/xbwsh/fryfrog-hub-api:develop
+  -e VIDEO_ROOT_PATH=/app/media-library/video \
+  -e COMIC_ROOT_PATH=/app/media-library/comic \
+  -e EBOOK_ROOT_PATH=/app/media-library/ebook \
+  -e TMDB_API_KEY=your_tmdb_api_key \
+  --restart unless-stopped \
+  ghcr.io/xbwsh/fryfrog-hub-api:master
 ```
 
 **NAS 部署（群晖/威联通等）**
@@ -134,20 +138,23 @@ docker run -d \
 ```yaml
 services:
   fryfrog-hub:
-    build:
-      context: https://github.com/xbwsh/fryfrog-hub-api.git
-      dockerfile: Dockerfile
+    image: ghcr.io/xbwsh/fryfrog-hub-api:master
     container_name: fryfrog-hub
+    network_mode: host
     restart: unless-stopped
-    ports:
-      - "20058:20058"
     volumes:
       - /vol1/docker/fryfrog-hub/data:/data
-      - /vol1/media/music:/app/media-library/music
+      - /volume1/media/music:/app/media-library/music
+      - /volume1/media/video:/app/media-library/video
+      - /volume1/media/comic:/app/media-library/comic
+      - /volume1/media/ebook:/app/media-library/ebook
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - MEDIA_ROOT_PATH=/app/media-library
       - MUSIC_ROOT_PATH=/app/media-library/music
+      - VIDEO_ROOT_PATH=/app/media-library/video
+      - COMIC_ROOT_PATH=/app/media-library/comic
+      - EBOOK_ROOT_PATH=/app/media-library/ebook
 ```
 
 ### 生产部署 / Production Deployment
