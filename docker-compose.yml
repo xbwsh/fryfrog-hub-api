@@ -1,6 +1,10 @@
 services:
   fryfrog-hub:
-    build: .
+    build:
+      context: .
+      args:
+        MAVEN_IMAGE: docker.1ms.run/maven:3.9-eclipse-temurin-21
+        RUNTIME_IMAGE: docker.1ms.run/eclipse-temurin:21-jre-alpine
     container_name: fryfrog-hub
     restart: unless-stopped
     ports:
