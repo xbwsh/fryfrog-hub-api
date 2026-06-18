@@ -13,6 +13,22 @@ spring:
 hub:
   media:
     root-path: ${MEDIA_ROOT_PATH:/data/media}
+  music:
+    root-path: ${MUSIC_ROOT_PATH:/data/media/music}
+    supported-formats: mp3,flac,ogg,wav,aac,m4a
+    auto-writeback: ${MUSIC_AUTO_WRITEBACK:true}
+    use-folder-structure: ${MUSIC_USE_FOLDER_STRUCTURE:true}
+    default-artist: ${MUSIC_DEFAULT_ARTIST:}
+  comic:
+    root-path: ${COMIC_ROOT_PATH:/data/media/comic}
+    supported-formats: cbz,cbr,zip,rar
+    auto-scrape: ${COMIC_AUTO_SCRAPE:false}
+  video:
+    root-path: ${VIDEO_ROOT_PATH:/data/media/video}
+    supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
+  ebook:
+    root-path: ${EBOOK_ROOT_PATH:/data/media/ebook}
+    supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt
   tmdb:
     api-key: ${TMDB_API_KEY:}
     language: ${TMDB_LANGUAGE:zh-CN}

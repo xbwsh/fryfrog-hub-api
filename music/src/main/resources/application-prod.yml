@@ -11,7 +11,7 @@ spring:
 
 hub:
   music:
-    root-path: ${MUSIC_ROOT_PATH:/data/music}
+    root-path: ${MUSIC_ROOT_PATH:/data/media/music}
     supported-formats: mp3,flac,ogg,wav,aac,m4a
 
 logging:

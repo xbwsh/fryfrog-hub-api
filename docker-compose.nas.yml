@@ -1,23 +1,17 @@
 services:
   fryfrog-hub:
-    build: .
+    image: ghcr.io/你的用户名/fryfrog-hub-api:develop
     container_name: fryfrog-hub
     restart: unless-stopped
     ports:
       - "20058:20058"
     volumes:
-      - ./data:/data
-      - /volume1/media/music:/app/media-library/music
-      - /volume1/media/comic:/app/media-library/comic
-      - /volume1/media/video:/app/media-library/video
-      - /volume1/media/ebook:/app/media-library/ebook
+      - /vol1/1000/docker/fryfrog-hub-api/data:/data
+      - /vol1/1000/music:/app/media-library/music
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - MEDIA_ROOT_PATH=/app/media-library
       - MUSIC_ROOT_PATH=/app/media-library/music
-      - COMIC_ROOT_PATH=/app/media-library/comic
-      - VIDEO_ROOT_PATH=/app/media-library/video
-      - EBOOK_ROOT_PATH=/app/media-library/ebook
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - TMDB_AUTO_SCRAPE=true
       - PROXY_HOST=host.docker.internal

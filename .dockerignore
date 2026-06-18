@@ -1,0 +1,13 @@
+.git
+.idea
+*.iml
+common/target
+music/target
+comic/target
+ebook/target
+video/target
+**/node_modules
+**/.DS_Store
+*.md
+LICENSE
+docker-compose.yml
