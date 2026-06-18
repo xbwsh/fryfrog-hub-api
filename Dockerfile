@@ -17,6 +17,6 @@ RUN mvn clean package -DskipTests -B
 FROM ${RUNTIME_IMAGE}
 WORKDIR /app
 COPY --from=build /workspace/app/target/fryfrog-hub-app-*.jar app.jar
-RUN mkdir -p /data /app/media-library
+RUN mkdir -p /data /app/data /app/media-library
 EXPOSE 20058
 ENTRYPOINT ["java", "-jar", "app.jar"]
