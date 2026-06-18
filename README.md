@@ -54,7 +54,7 @@ A unified media backend API service supporting metadata management and streaming
 ## 技术栈 / Tech Stack
 
 - Java 21 + Spring Boot 3.2.x
-- Spring Data JPA + H2（开发）/ PostgreSQL（生产）
+- Spring Data JPA + H2（开发）/ SQLite（生产）
 - jaudiotagger（音乐元数据提取）
 - Thumbnails4j（漫画缩略图）
 - Apache Tika（漫画/电子书元数据提取）
