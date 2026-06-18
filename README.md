@@ -54,11 +54,14 @@ A unified media backend API service supporting metadata management and streaming
 ## 技术栈 / Tech Stack
 
 - Java 21 + Spring Boot 3.2.x
-- Spring Data JPA + H2（开发）/ MySQL（生产）
+- Spring Data JPA + H2（开发）/ PostgreSQL（生产）
 - jaudiotagger（音乐元数据提取）
 - Thumbnails4j（漫画缩略图）
 - Apache Tika（漫画/电子书元数据提取）
+- FFmpeg + ProcessBuilder（音频/视频转码）
+- TMDB API（视频元数据刮削）
 - Springdoc OpenAPI（Swagger 文档）
+- GitHub Actions（自动构建 Docker 镜像）
 
 ## 项目结构 / Project Structure
 
@@ -98,25 +101,68 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 ### Docker 部署 / Docker Deployment
 
+**方式一：本地构建**
 ```bash
 docker-compose up -d
+```
+
+**方式二：直接拉取镜像（推荐）**
+
+项目配置了 GitHub Actions，每次推送自动构建镜像：
+
+```bash
+# 登录 GitHub Container Registry
+docker login ghcr.io -u xbwsh
+
+# 拉取镜像
+docker pull ghcr.io/xbwsh/fryfrog-hub-api:develop
+
+# 运行
+docker run -d \
+  -p 20058:20058 \
+  -v /path/to/data:/data \
+  -v /path/to/music:/app/media-library/music \
+  -e SPRING_PROFILES_ACTIVE=prod \
+  -e MUSIC_ROOT_PATH=/app/media-library/music \
+  ghcr.io/xbwsh/fryfrog-hub-api:develop
+```
+
+**NAS 部署（群晖/威联通等）**
+
+在 Docker 管理界面创建项目，compose 配置：
+
+```yaml
+services:
+  fryfrog-hub:
+    build:
+      context: https://github.com/xbwsh/fryfrog-hub-api.git
+      dockerfile: Dockerfile
+    container_name: fryfrog-hub
+    restart: unless-stopped
+    ports:
+      - "20058:20058"
+    volumes:
+      - /vol1/docker/fryfrog-hub/data:/data
+      - /vol1/media/music:/app/media-library/music
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - MEDIA_ROOT_PATH=/app/media-library
+      - MUSIC_ROOT_PATH=/app/media-library/music
 ```
 
 ### 生产部署 / Production Deployment
 
 ```bash
-# 1. 初始化数据库
-mysql -u root -p < docs/sql/init.sql
-
-# 2. 设置环境变量
-export DB_USERNAME=your_username
-export DB_PASSWORD=your_password
+# 设置环境变量
 export MUSIC_ROOT_PATH=/path/to/your/music
 export VIDEO_ROOT_PATH=/path/to/your/video
 export COMIC_ROOT_PATH=/path/to/your/comic
 export EBOOK_ROOT_PATH=/path/to/your/ebook
+export TMDB_API_KEY=your_tmdb_api_key  # 可选，用于视频刮削
+export PROXY_HOST=127.0.0.1            # 可选，代理地址
+export PROXY_PORT=7890                 # 可选，代理端口
 
-# 3. 启动应用
+# 启动应用
 java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
 ```
 
@@ -227,8 +273,10 @@ hub:
 | `VIDEO_ROOT_PATH` | `./media-library/video` | 视频文件目录 |
 | `COMIC_ROOT_PATH` | `./media-library/comic` | 漫画文件目录 |
 | `EBOOK_ROOT_PATH` | `./media-library/ebook` | 电子书文件目录 |
-| `DB_USERNAME` | `root` | 数据库用户名 |
-| `DB_PASSWORD` | `root` | 数据库密码 |
+| `TMDB_API_KEY` | - | TMDB API Key（视频刮削用） |
+| `TMDB_AUTO_SCRAPE` | `false` | 扫描时自动刮削视频 |
+| `PROXY_HOST` | - | 代理地址 |
+| `PROXY_PORT` | - | 代理端口 |
 
 ## 支持的格式 / Supported Formats
 
