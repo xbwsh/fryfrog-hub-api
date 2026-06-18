@@ -6,9 +6,8 @@ services:
         MAVEN_IMAGE: docker.1ms.run/maven:3.9-eclipse-temurin-21
         RUNTIME_IMAGE: docker.1ms.run/eclipse-temurin:21-jre-alpine
     container_name: fryfrog-hub
+    network_mode: host
     restart: unless-stopped
-    ports:
-      - "20058:20058"
     volumes:
       - ./data:/data
       - /volume1/media/music:/app/media-library/music
