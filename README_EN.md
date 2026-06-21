@@ -104,23 +104,41 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 **NAS / Docker UI Deployment (Recommended)**
 
 1. Pull the image: `ghcr.io/xbwsh/fryfrog-hub-api:latest`
-2. Create a container, set network mode to `host`
-3. Add volume mounts (configure your actual paths in the UI):
+2. Create a container, **set network mode to host**
+3. **Required environment variable**:
+   - `SPRING_PROFILES_ACTIVE=prod` (without this, H2 in-memory database is used, data lost on restart)
+4. Add volume mounts (configure your actual paths in the UI):
 
 | Container Path | Purpose | Example Host Path |
 |---|---|---|
 | `/data` | Database | `/vol1/docker/fryfrog-hub/data` |
 | `/data/media/music` | Music | `/vol1/1000/music` |
+| `/data/media/video` | Videos | `/vol2/1000/Media` |
 | `/data/media/comic` | Comics | `/vol1/1000/comic` |
-| `/data/media/video` | Videos | `/vol1/1000/video` |
 | `/data/media/ebook` | Ebooks | `/vol1/1000/ebook` |
 
-4. Set environment variable: `SPRING_PROFILES_ACTIVE=prod`
 5. Optional environment variables (set in UI):
    - `TMDB_API_KEY` — TMDB API Key for video scraping
-   - `PROXY_HOST` / `PROXY_PORT` — Proxy settings
+   - `PROXY_HOST` — Proxy address (e.g., `127.0.0.1`)
+   - `PROXY_PORT` — Proxy port (e.g., `7890`)
+6. Access `http://NAS_IP:20058/swagger-ui.html` after startup
 
 **docker-compose Deployment**
+
+```yaml
+services:
+  fryfrog-hub-api:
+    image: ghcr.io/xbwsh/fryfrog-hub-api:latest
+    container_name: fryfrog-hub-api
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    volumes:
+      - ./db:/data
+      # - /your/music/path:/data/media/music
+      # - /your/video/path:/data/media/video
+```
 
 ```bash
 docker compose up -d

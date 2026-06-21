@@ -103,32 +103,48 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 **飞牛 NAS / Docker UI 部署（推荐）**
 
-1. 在 Docker 管理界面拉取镜像：`ghcr.io/xbwsh/fryfrog-hub-api:latest`
-2. 创建容器，端口映射 `20058:20058`
-3. 添加挂载路径（在 UI 中配置你的实际路径）：
+1. 拉取镜像：`ghcr.io/xbwsh/fryfrog-hub-api:latest`
+2. 创建容器，**网络模式选择 host**
+3. **必须设置环境变量**：
+   - `SPRING_PROFILES_ACTIVE=prod`（不设置会用 H2 内存数据库，重启丢数据）
+4. 添加挂载路径（在 UI 中配置你的实际路径）：
 
 | 容器路径 | 用途 | 示例宿主机路径 |
 |---|---|---|
 | `/data` | 数据库 | `/vol1/docker/fryfrog-hub/data` |
 | `/data/media/music` | 音乐 | `/vol1/1000/music` |
+| `/data/media/video` | 视频 | `/vol2/1000/Media` |
 | `/data/media/comic` | 漫画 | `/vol1/1000/comic` |
-| `/data/media/video` | 视频 | `/vol1/1000/video` |
 | `/data/media/ebook` | 电子书 | `/vol1/1000/ebook` |
 
-4. 设置环境变量：`SPRING_PROFILES_ACTIVE=prod`
 5. 可选环境变量（在 UI 中设置）：
    - `TMDB_API_KEY` — TMDB API Key，用于视频刮削
-   - `PROXY_HOST` / `PROXY_PORT` — 代理设置
+   - `PROXY_HOST` — 代理地址（如 `127.0.0.1`）
+   - `PROXY_PORT` — 代理端口（如 `7890`）
+6. 启动后访问 `http://NAS_IP:20058/swagger-ui.html` 验证
 
 **docker-compose 部署**
+
+```yaml
+services:
+  fryfrog-hub-api:
+    image: ghcr.io/xbwsh/fryfrog-hub-api:latest
+    container_name: fryfrog-hub-api
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    volumes:
+      - ./db:/data
+      # - /your/music/path:/data/media/music
+      # - /your/video/path:/data/media/video
+```
 
 ```bash
 docker compose up -d
 ```
 
 默认拉取 GHCR 镜像。如需本地构建，编辑 `docker-compose.yml` 注释掉 `image` 行，取消 `build` 行注释。
-
-媒体目录和可选配置在 Docker UI 或 docker-compose.yml 中挂载/设置。
 
 ### 生产部署 / Production Deployment
 
