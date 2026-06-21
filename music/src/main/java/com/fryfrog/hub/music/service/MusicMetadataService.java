@@ -94,10 +94,10 @@ public class MusicMetadataService {
             track.setFormat(audioFile.getAudioHeader().getFormat());
 
             String fileName = file.getName().replaceAll("\\.[^.]+$", "");
-            if (isGarbled(track.getTitle())) {
+            if (track.getTitle() == null || track.getTitle().isBlank() || isGarbled(track.getTitle())) {
                 track.setTitle(parseTitleFromFileName(fileName));
             }
-            if (isGarbled(track.getArtist())) {
+            if (track.getArtist() == null || track.getArtist().isBlank() || isGarbled(track.getArtist())) {
                 track.setArtist(parseArtistFromFileName(fileName));
             }
 
