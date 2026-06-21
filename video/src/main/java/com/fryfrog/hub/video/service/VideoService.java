@@ -19,8 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
@@ -147,9 +146,15 @@ public class VideoService {
             video.setFileSize(file.length());
             video.setFormat(getFileExtension(fileName).toUpperCase());
 
+            NfoService.NfoData nfoData = nfoService.readNfoForVideo(file.toPath());
+            if (nfoData != null) {
+                nfoService.applyNfoData(video, nfoData);
+                log.info("Applied local NFO metadata: {}", fileName);
+            }
+
             Video saved = repository.save(video);
 
-            if (autoScrape && saved.getTmdbId() == null) {
+            if (autoScrape && saved.getTmdbId() == null && nfoData == null) {
                 scrapeExecutor.submit(() -> tryScrapeVideo(saved));
             }
 
@@ -220,9 +225,48 @@ public class VideoService {
                             }
                         });
             }
+
+            autoGroupSeries();
         } catch (Exception e) {
             log.error("Failed to scan directory: {}", directoryPath, e);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
+        }
+    }
+
+    private void autoGroupSeries() {
+        List<Video> allVideos = repository.findAll();
+
+        Map<String, List<Video>> grouped = new LinkedHashMap<>();
+        for (Video video : allVideos) {
+            if (video.getSeries() != null) continue;
+            String cleanedTitle = seriesService.cleanTitle(video.getTitle());
+            grouped.computeIfAbsent(cleanedTitle, k -> new ArrayList<>()).add(video);
+        }
+
+        int groupedCount = 0;
+        for (Map.Entry<String, List<Video>> entry : grouped.entrySet()) {
+            List<Video> videos = entry.getValue();
+            if (videos.size() < 2) continue;
+
+            String seriesTitle = entry.getKey();
+            VideoSeries series = seriesService.getOrCreateSeries(seriesTitle);
+
+            for (Video video : videos) {
+                int[] se = parseSeasonEpisode(video.getFileName());
+                seriesService.assignVideoToSeries(video, series);
+                if (video.getSeasonNumber() == null) video.setSeasonNumber(se[0]);
+                if (video.getEpisodeNumber() == null) video.setEpisodeNumber(se[1]);
+                repository.save(video);
+            }
+
+            series.setTotalEpisodes(videos.size());
+            seriesService.saveSeries(series);
+            groupedCount++;
+            log.info("Auto-grouped series: {} ({} episodes)", seriesTitle, videos.size());
+        }
+
+        if (groupedCount > 0) {
+            log.info("Auto-grouped {} series from scan", groupedCount);
         }
     }
 

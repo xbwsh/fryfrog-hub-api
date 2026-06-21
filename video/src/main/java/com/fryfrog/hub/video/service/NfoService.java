@@ -3,12 +3,22 @@ package com.fryfrog.hub.video.service;
 import com.fryfrog.hub.video.model.Video;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.File;
 import java.io.IOException;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -226,5 +236,148 @@ public class NfoService {
 
     public Path getNfoPath(Video video) {
         return getMetadataDir(video).resolve(getNfoFileName(video));
+    }
+
+    public NfoData readNfoForVideo(Path videoPath) {
+        Path videoDir = videoPath.getParent();
+        String videoBaseName = getBaseName(videoPath.getFileName().toString());
+
+        Path[] searchPaths = {
+                videoDir.resolve(videoBaseName + ".nfo"),
+                videoDir.resolve("tvshow.nfo"),
+                videoDir.resolve("movie.nfo"),
+                videoDir.resolve(videoBaseName + ".xml")
+        };
+
+        for (Path nfoPath : searchPaths) {
+            if (Files.exists(nfoPath)) {
+                log.info("Found NFO file: {}", nfoPath);
+                return parseNfoFile(nfoPath);
+            }
+        }
+
+        return null;
+    }
+
+    private NfoData parseNfoFile(Path nfoPath) {
+        try {
+            String content = Files.readString(nfoPath, StandardCharsets.UTF_8);
+            if (content.isBlank()) {
+                return null;
+            }
+
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(new InputSource(new StringReader(content)));
+
+            NfoData data = new NfoData();
+            Element root = doc.getDocumentElement();
+            data.isTvShow = "episodedetails".equalsIgnoreCase(root.getTagName());
+
+            data.title = getTagText(root, "title");
+            data.originalTitle = getTagText(root, "originaltitle");
+            data.plot = getTagText(root, "plot");
+            data.director = getTagText(root, "director");
+            data.year = getTagText(root, "year");
+            data.genre = getTagText(root, "genre");
+            data.rating = getTagText(root, "rating");
+            data.votes = getTagText(root, "votes");
+            data.imdbId = getTagText(root, "imdbid");
+            data.runtime = getTagText(root, "runtime");
+
+            if (data.isTvShow) {
+                data.season = getTagText(root, "season");
+                data.episode = getTagText(root, "episode");
+            }
+
+            NodeList actorNodes = root.getElementsByTagName("actor");
+            StringBuilder actors = new StringBuilder();
+            for (int i = 0; i < actorNodes.getLength(); i++) {
+                Element actorEl = (Element) actorNodes.item(i);
+                String name = getTagText(actorEl, "name");
+                if (name != null && !name.isBlank()) {
+                    if (!actors.isEmpty()) actors.append(",");
+                    actors.append(name.trim());
+                }
+            }
+            data.actors = actors.toString();
+
+            NodeList genreNodes = root.getElementsByTagName("genre");
+            StringBuilder genres = new StringBuilder();
+            for (int i = 0; i < genreNodes.getLength(); i++) {
+                String g = genreNodes.item(i).getTextContent();
+                if (g != null && !g.isBlank()) {
+                    if (!genres.isEmpty()) genres.append(",");
+                    genres.append(g.trim());
+                }
+            }
+            if (!genres.isEmpty()) {
+                data.genre = genres.toString();
+            }
+
+            return data;
+        } catch (Exception e) {
+            log.warn("Failed to parse NFO file {}: {}", nfoPath, e.getMessage());
+            return null;
+        }
+    }
+
+    private String getTagText(Element parent, String tagName) {
+        NodeList nodes = parent.getElementsByTagName(tagName);
+        if (nodes.getLength() > 0) {
+            String text = nodes.item(0).getTextContent();
+            return (text != null && !text.isBlank()) ? text.trim() : null;
+        }
+        return null;
+    }
+
+    public void applyNfoData(Video video, NfoData data) {
+        if (data.title != null) video.setTitle(data.title);
+        if (data.originalTitle != null) video.setOriginalTitle(data.originalTitle);
+        if (data.plot != null) video.setOverview(data.plot);
+        if (data.director != null) video.setDirector(data.director);
+        if (data.actors != null && !data.actors.isBlank()) video.setActors(data.actors);
+        if (data.genre != null) video.setGenre(data.genre);
+        if (data.year != null) {
+            try { video.setYear(Integer.parseInt(data.year)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.rating != null) {
+            try { video.setRating(Double.parseDouble(data.rating)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.votes != null) {
+            try { video.setVoteCount(Integer.parseInt(data.votes)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.imdbId != null) video.setImdbId(data.imdbId);
+        if (data.runtime != null) {
+            try { video.setDurationMinutes(Integer.parseInt(data.runtime)); } catch (NumberFormatException ignored) {}
+        }
+
+        video.setMediaType(data.isTvShow ? "tv" : "movie");
+        video.setMetadataSource("nfo");
+
+        if (data.season != null) {
+            try { video.setSeasonNumber(Integer.parseInt(data.season)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.episode != null) {
+            try { video.setEpisodeNumber(Integer.parseInt(data.episode)); } catch (NumberFormatException ignored) {}
+        }
+    }
+
+    public static class NfoData {
+        public String title;
+        public String originalTitle;
+        public String plot;
+        public String director;
+        public String actors;
+        public String genre;
+        public String year;
+        public String rating;
+        public String votes;
+        public String imdbId;
+        public String runtime;
+        public String season;
+        public String episode;
+        public boolean isTvShow;
     }
 }
