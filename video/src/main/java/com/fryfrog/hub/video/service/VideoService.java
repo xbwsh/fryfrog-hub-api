@@ -239,8 +239,14 @@ public class VideoService {
         Map<String, List<Video>> grouped = new LinkedHashMap<>();
         for (Video video : allVideos) {
             if (video.getSeries() != null) continue;
-            String cleanedTitle = seriesService.cleanTitle(video.getTitle());
-            grouped.computeIfAbsent(cleanedTitle, k -> new ArrayList<>()).add(video);
+
+            String groupKey;
+            if (video.getSeriesName() != null && !video.getSeriesName().isBlank()) {
+                groupKey = video.getSeriesName();
+            } else {
+                groupKey = seriesService.cleanTitle(video.getTitle());
+            }
+            grouped.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(video);
         }
 
         int groupedCount = 0;

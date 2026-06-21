@@ -116,4 +116,7 @@ public class Video extends BaseEntity {
 
     @Schema(description = "是否为系列", example = "false")
     private Boolean isSeries = false;
+
+    @Schema(description = "系列名称（来自 NFO 或目录名）")
+    private String seriesName;
 }

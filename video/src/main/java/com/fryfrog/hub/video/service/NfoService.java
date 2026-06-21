@@ -252,10 +252,33 @@ public class NfoService {
         for (Path nfoPath : searchPaths) {
             if (Files.exists(nfoPath)) {
                 log.info("Found NFO file: {}", nfoPath);
-                return parseNfoFile(nfoPath);
+                NfoData data = parseNfoFile(nfoPath);
+                if (data != null && data.isTvShow && "tvshow.nfo".equals(nfoPath.getFileName().toString())) {
+                    data.seriesTitle = data.title;
+                }
+                if (data != null && data.isTvShow && data.seriesTitle == null) {
+                    data.seriesTitle = findSeriesTitleFromParentDirs(videoDir);
+                }
+                return data;
             }
         }
 
+        return null;
+    }
+
+    private String findSeriesTitleFromParentDirs(Path videoDir) {
+        Path current = videoDir;
+        while (current != null) {
+            Path tvshowNfo = current.resolve("tvshow.nfo");
+            if (Files.exists(tvshowNfo)) {
+                NfoData seriesData = parseNfoFile(tvshowNfo);
+                if (seriesData != null && seriesData.title != null) {
+                    log.info("Found tvshow.nfo in parent dir: {}", tvshowNfo);
+                    return seriesData.title;
+                }
+            }
+            current = current.getParent();
+        }
         return null;
     }
 
@@ -362,6 +385,9 @@ public class NfoService {
         if (data.episode != null) {
             try { video.setEpisodeNumber(Integer.parseInt(data.episode)); } catch (NumberFormatException ignored) {}
         }
+        if (data.seriesTitle != null) {
+            video.setSeriesName(data.seriesTitle);
+        }
     }
 
     public static class NfoData {
@@ -379,5 +405,6 @@ public class NfoService {
         public String season;
         public String episode;
         public boolean isTvShow;
+        public String seriesTitle;
     }
 }
