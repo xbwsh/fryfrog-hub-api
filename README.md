@@ -2,7 +2,7 @@
 
 统一媒体后端 API 服务，支持音乐、漫画、电子书、视频的元数据管理和流媒体播放。
 
-A unified media backend API service supporting metadata management and streaming for music, comics, ebooks, and video.
+[English](./README_EN.md)
 
 ## 功能特性 / Features
 
