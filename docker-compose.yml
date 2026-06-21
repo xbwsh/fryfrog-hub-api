@@ -5,8 +5,7 @@ services:
     # build: .
     container_name: fryfrog-hub-api
     restart: unless-stopped
-    ports:
-      - "20058:20058"
+    network_mode: host
     environment:
       - SPRING_PROFILES_ACTIVE=prod
     volumes:
