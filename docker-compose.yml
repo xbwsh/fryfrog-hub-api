@@ -6,14 +6,12 @@ services:
     network_mode: host
     environment:
       - SPRING_PROFILES_ACTIVE=prod
-      # 取消注释并填写你的配置
       # - TMDB_API_KEY=your_tmdb_api_key
       # - PROXY_HOST=127.0.0.1
       # - PROXY_PORT=7890
     volumes:
       - ./db:/data
-      # 媒体目录挂载，填写你的实际路径
-      - /vol1/1000/music:/data/media/music
-      - /vol2/1000/Media:/data/media/video
-      # - /vol1/1000/comic:/data/media/comic
-      # - /vol1/1000/ebook:/data/media/ebook
+      # - /your/music/path:/data/media/music
+      # - /your/video/path:/data/media/video
+      # - /your/comic/path:/data/media/comic
+      # - /your/ebook/path:/data/media/ebook
