@@ -253,11 +253,13 @@ public class NfoService {
             if (Files.exists(nfoPath)) {
                 log.info("Found NFO file: {}", nfoPath);
                 NfoData data = parseNfoFile(nfoPath);
-                if (data != null && data.isTvShow && "tvshow.nfo".equals(nfoPath.getFileName().toString())) {
-                    data.seriesTitle = data.title;
-                }
-                if (data != null && data.isTvShow && data.seriesTitle == null) {
-                    data.seriesTitle = findSeriesTitleFromParentDirs(videoDir);
+                if (data != null && data.isTvShow) {
+                    if ("tvshow.nfo".equals(nfoPath.getFileName().toString())) {
+                        data.seriesTitle = data.showTitle != null ? data.showTitle : data.title;
+                    }
+                    if (data.seriesTitle == null) {
+                        data.seriesTitle = findSeriesTitleFromParentDirs(videoDir);
+                    }
                 }
                 return data;
             }
@@ -300,6 +302,7 @@ public class NfoService {
 
             data.title = getTagText(root, "title");
             data.originalTitle = getTagText(root, "originaltitle");
+            data.showTitle = getTagText(root, "showtitle");
             data.plot = getTagText(root, "plot");
             data.director = getTagText(root, "director");
             data.year = getTagText(root, "year");
@@ -393,6 +396,7 @@ public class NfoService {
     public static class NfoData {
         public String title;
         public String originalTitle;
+        public String showTitle;
         public String plot;
         public String director;
         public String actors;
