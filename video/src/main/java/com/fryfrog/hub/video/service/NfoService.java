@@ -307,10 +307,39 @@ public class NfoService {
             data.director = getTagText(root, "director");
             data.year = getTagText(root, "year");
             data.genre = getTagText(root, "genre");
-            data.rating = getTagText(root, "rating");
-            data.votes = getTagText(root, "votes");
-            data.imdbId = getTagText(root, "imdbid");
             data.runtime = getTagText(root, "runtime");
+
+            if (data.year == null) {
+                String premiered = getTagText(root, "premiered");
+                if (premiered != null && premiered.length() >= 4) {
+                    data.year = premiered.substring(0, 4);
+                }
+            }
+
+            NodeList ratingNodes = root.getElementsByTagName("rating");
+            for (int i = 0; i < ratingNodes.getLength(); i++) {
+                Element ratingEl = (Element) ratingNodes.item(i);
+                String value = getTagText(ratingEl, "value");
+                if (value != null && !value.isBlank()) {
+                    data.rating = value;
+                    String votes = getTagText(ratingEl, "votes");
+                    if (votes != null) data.votes = votes;
+                    break;
+                }
+            }
+
+            NodeList uniqueIdNodes = root.getElementsByTagName("uniqueid");
+            for (int i = 0; i < uniqueIdNodes.getLength(); i++) {
+                Element uidEl = (Element) uniqueIdNodes.item(i);
+                String type = uidEl.getAttribute("type");
+                String value = uidEl.getTextContent();
+                if (value == null || value.isBlank()) continue;
+                if ("tmdb".equalsIgnoreCase(type)) {
+                    try { data.tmdbId = Long.parseLong(value.trim()); } catch (NumberFormatException ignored) {}
+                } else if ("imdb".equalsIgnoreCase(type)) {
+                    data.imdbId = value.trim();
+                }
+            }
 
             if (data.isTvShow) {
                 data.season = getTagText(root, "season");
@@ -375,6 +404,7 @@ public class NfoService {
             try { video.setVoteCount(Integer.parseInt(data.votes)); } catch (NumberFormatException ignored) {}
         }
         if (data.imdbId != null) video.setImdbId(data.imdbId);
+        if (data.tmdbId != null) video.setTmdbId(data.tmdbId);
         if (data.runtime != null) {
             try { video.setDurationMinutes(Integer.parseInt(data.runtime)); } catch (NumberFormatException ignored) {}
         }
@@ -405,6 +435,7 @@ public class NfoService {
         public String rating;
         public String votes;
         public String imdbId;
+        public Long tmdbId;
         public String runtime;
         public String season;
         public String episode;
