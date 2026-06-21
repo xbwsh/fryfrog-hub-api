@@ -47,9 +47,9 @@ A unified media backend API service supporting metadata management and streaming
 
 -   **Swagger 文档** - 自动生成 API 文档，支持在线测试
 -   **CORS 支持** - 已配置跨域，可直接对接前端
--   **Docker 部署** - 提供 Dockerfile 和 docker-compose.yml
+-   **Docker 部署** - 提供 Dockerfile 和 docker-compose.yml，支持飞牛 NAS 一键部署
 -   **H2 开发库** - 开发环境使用 H2 内存数据库
--   **MySQL 支持** - 生产环境使用 MySQL 数据库
+-   **SQLite 生产库** - 生产环境使用 SQLite，无需额外数据库
 
 ## 技术栈 / Tech Stack
 
@@ -101,61 +101,34 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 ### Docker 部署 / Docker Deployment
 
-使用 host 网络模式，容器直接使用宿主机网络，无需端口映射。
+**飞牛 NAS / Docker UI 部署（推荐）**
 
-**方式一：docker-compose 本地构建**
+1. 在 Docker 管理界面拉取镜像：`ghcr.io/xbwsh/fryfrog-hub-api:latest`
+2. 创建容器，端口映射 `20058:20058`
+3. 添加挂载路径（在 UI 中配置你的实际路径）：
+
+| 容器路径 | 用途 | 示例宿主机路径 |
+|---|---|---|
+| `/data` | 数据库 | `/vol1/docker/fryfrog-hub/data` |
+| `/data/media/music` | 音乐 | `/vol1/1000/music` |
+| `/data/media/comic` | 漫画 | `/vol1/1000/comic` |
+| `/data/media/video` | 视频 | `/vol1/1000/video` |
+| `/data/media/ebook` | 电子书 | `/vol1/1000/ebook` |
+
+4. 设置环境变量：`SPRING_PROFILES_ACTIVE=prod`
+5. 可选环境变量（在 UI 中设置）：
+   - `TMDB_API_KEY` — TMDB API Key，用于视频刮削
+   - `PROXY_HOST` / `PROXY_PORT` — 代理设置
+
+**docker-compose 部署**
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-**方式二：拉取预构建镜像（推荐）**
+默认拉取 GHCR 镜像。如需本地构建，编辑 `docker-compose.yml` 注释掉 `image` 行，取消 `build` 行注释。
 
-```bash
-docker run -d \
-  --name fryfrog-hub \
-  --network host \
-  -v /path/to/data:/data \
-  -v /path/to/music:/app/media-library/music \
-  -v /path/to/video:/app/media-library/video \
-  -v /path/to/comic:/app/media-library/comic \
-  -v /path/to/ebook:/app/media-library/ebook \
-  -e SPRING_PROFILES_ACTIVE=prod \
-  -e MEDIA_ROOT_PATH=/app/media-library \
-  -e MUSIC_ROOT_PATH=/app/media-library/music \
-  -e VIDEO_ROOT_PATH=/app/media-library/video \
-  -e COMIC_ROOT_PATH=/app/media-library/comic \
-  -e EBOOK_ROOT_PATH=/app/media-library/ebook \
-  -e TMDB_API_KEY=your_tmdb_api_key \
-  --restart unless-stopped \
-  ghcr.io/xbwsh/fryfrog-hub-api:master
-```
-
-**NAS 部署（群晖/威联通等）**
-
-在 Docker 管理界面创建项目，compose 配置：
-
-```yaml
-services:
-  fryfrog-hub:
-    image: ghcr.io/xbwsh/fryfrog-hub-api:master
-    container_name: fryfrog-hub
-    network_mode: host
-    restart: unless-stopped
-    volumes:
-      - /vol1/docker/fryfrog-hub/data:/data
-      - /volume1/media/music:/app/media-library/music
-      - /volume1/media/video:/app/media-library/video
-      - /volume1/media/comic:/app/media-library/comic
-      - /volume1/media/ebook:/app/media-library/ebook
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - MEDIA_ROOT_PATH=/app/media-library
-      - MUSIC_ROOT_PATH=/app/media-library/music
-      - VIDEO_ROOT_PATH=/app/media-library/video
-      - COMIC_ROOT_PATH=/app/media-library/comic
-      - EBOOK_ROOT_PATH=/app/media-library/ebook
-```
+媒体目录和可选配置在 Docker UI 或 docker-compose.yml 中挂载/设置。
 
 ### 生产部署 / Production Deployment
 

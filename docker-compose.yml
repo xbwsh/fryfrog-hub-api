@@ -1,27 +1,13 @@
 services:
-  fryfrog-hub:
-    build:
-      context: .
-      args:
-        MAVEN_IMAGE: docker.1ms.run/maven:3.9-eclipse-temurin-21
-        RUNTIME_IMAGE: docker.1ms.run/eclipse-temurin:21-jre-alpine
-    container_name: fryfrog-hub
-    network_mode: host
+  fryfrog-hub-api:
+    image: ghcr.io/xbwsh/fryfrog-hub-api:latest
+    # 本地构建改用下面这行，注释掉上面的 image
+    # build: .
+    container_name: fryfrog-hub-api
     restart: unless-stopped
-    volumes:
-      - ./data:/data
-      - /volume1/media/music:/app/media-library/music
-      - /volume1/media/comic:/app/media-library/comic
-      - /volume1/media/video:/app/media-library/video
-      - /volume1/media/ebook:/app/media-library/ebook
+    ports:
+      - "20058:20058"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
-      - MEDIA_ROOT_PATH=/app/media-library
-      - MUSIC_ROOT_PATH=/app/media-library/music
-      - COMIC_ROOT_PATH=/app/media-library/comic
-      - VIDEO_ROOT_PATH=/app/media-library/video
-      - EBOOK_ROOT_PATH=/app/media-library/ebook
-      - TMDB_API_KEY=${TMDB_API_KEY:-}
-      - TMDB_AUTO_SCRAPE=true
-      - PROXY_HOST=host.docker.internal
-      - PROXY_PORT=7890
+    volumes:
+      - ./db:/data

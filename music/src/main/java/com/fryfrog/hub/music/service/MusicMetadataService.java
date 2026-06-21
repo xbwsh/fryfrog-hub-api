@@ -196,9 +196,9 @@ public class MusicMetadataService {
         Path grandparent = parent != null ? parent.getParent() : null;
 
         if (track.getArtist() == null || track.getArtist().isBlank()) {
-            if (grandparent != null && !grandparent.toAbsolutePath().equals(musicRoot)) {
-                track.setArtist(grandparent.getFileName().toString());
-            } else if (parent != null && grandparent != null && grandparent.toAbsolutePath().equals(musicRoot)) {
+            if (grandparent != null && !grandparent.toAbsolutePath().equals(musicRoot)
+                    && grandparent.getParent() != null
+                    && grandparent.getParent().toAbsolutePath().equals(musicRoot)) {
                 track.setArtist(parent.getFileName().toString());
             }
         }
@@ -206,7 +206,10 @@ public class MusicMetadataService {
         if ((track.getAlbum() == null || track.getAlbum().isBlank()) && parent != null) {
             String parentName = parent.getFileName().toString();
             if (!parentName.equals(track.getArtist())) {
-                track.setAlbum(parentName);
+                Path parentParent = parent.getParent();
+                if (parentParent == null || !parentParent.toAbsolutePath().equals(musicRoot)) {
+                    track.setAlbum(parentName);
+                }
             }
         }
 
