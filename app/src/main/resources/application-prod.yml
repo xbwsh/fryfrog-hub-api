@@ -41,3 +41,8 @@ hub:
 logging:
   level:
     com.fryfrog: INFO
+    org.springframework: WARN
+    org.hibernate: WARN
+    org.h2: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level %logger{20} - %msg%n"
