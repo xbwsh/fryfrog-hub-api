@@ -65,9 +65,38 @@ public class MusicTrack extends BaseEntity {
     @Schema(description = "封面图片缓存路径")
     private String coverArtPath;
 
+    @Schema(description = "封面来源", example = "embedded")
+    private String coverSource;
+
     @Schema(description = "歌词文本")
     @Column(columnDefinition = "TEXT")
     private String lyrics;
+
+    @Schema(description = "歌词来源", example = "embedded")
+    private String lyricsSource;
+
+    @Schema(description = "唱片公司", example = "Gold Typhoon")
+    private String label;
+
+    @Schema(description = "目录编号")
+    private String catalogNumber;
+
+    @Schema(description = "发行日期", example = "2009-01-01")
+    private String releaseDate;
+
+    @Schema(description = "MusicBrainz Recording ID")
+    private String musicBrainzId;
+
+    @Schema(description = "艺术家图片URL")
+    private String artistImage;
+
+    @Schema(description = "艺术家简介")
+    @Column(columnDefinition = "TEXT")
+    private String artistBio;
+
+    @Schema(description = "刮削状态", example = "scraped")
+    @Column(name = "scrape_status")
+    private String scrapeStatus;
 
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;

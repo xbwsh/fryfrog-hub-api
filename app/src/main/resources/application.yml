@@ -16,6 +16,12 @@ hub:
     auto-writeback: ${MUSIC_AUTO_WRITEBACK:true}
     use-folder-structure: ${MUSIC_USE_FOLDER_STRUCTURE:true}
     default-artist: ${MUSIC_DEFAULT_ARTIST:}
+    scrape:
+      enabled: ${MUSIC_SCRAPE_ENABLED:true}
+      auto-scrape: ${MUSIC_AUTO_SCRAPE:true}
+      cover-fallback: ${MUSIC_COVER_FALLBACK:true}
+      lyrics-fallback: ${MUSIC_LYRICS_FALLBACK:true}
+      sources: ${MUSIC_SCRAPE_SOURCES:netease,qqmusic}
   comic:
     root-paths: ${COMIC_ROOT_PATHS:./media-library/comic}
     supported-formats: cbz,cbr,zip,rar

@@ -3,6 +3,7 @@ package com.fryfrog.hub.music.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
+import com.fryfrog.hub.music.service.MusicScrapeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -31,6 +32,7 @@ import java.util.stream.Collectors;
 public class MusicController {
 
     private final MusicMetadataService service;
+    private final MusicScrapeService scrapeService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -200,6 +202,32 @@ public class MusicController {
         }
 
         return null;
+    }
+
+    @PostMapping("/{id:\\d+}/scrape")
+    @Operation(summary = "刮削单曲元数据", description = "从在线源搜索并补充歌词、封面、专辑信息等元数据")
+    public ResponseEntity<ApiResponse<MusicTrack>> scrapeTrack(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeTrack(id)));
+    }
+
+    @PostMapping("/scrape/all")
+    @Operation(summary = "批量刮削所有曲目", description = "对所有缺失元数据的曲目执行在线刮削")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeAll() {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAll()));
+    }
+
+    @PostMapping("/scrape/artist")
+    @Operation(summary = "按艺术家刮削", description = "刮削指定艺术家的所有曲目元数据")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeByArtist(
+            @Parameter(description = "艺术家名称") @RequestParam String artist) {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeByArtist(artist)));
+    }
+
+    @GetMapping("/scrape/status")
+    @Operation(summary = "刮削状态", description = "返回待刮削曲目数量")
+    public ResponseEntity<ApiResponse<Long>> scrapeStatus() {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.countPendingScrape()));
     }
 
     private void validatePath(String path) {

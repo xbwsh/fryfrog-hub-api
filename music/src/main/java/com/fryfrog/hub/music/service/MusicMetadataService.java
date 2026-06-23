@@ -23,6 +23,7 @@ import java.util.stream.Stream;
 public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
+    private final MusicScrapeService scrapeService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -47,6 +48,9 @@ public class MusicMetadataService {
 
     @Value("${hub.music.default-artist:}")
     private String defaultArtist;
+
+    @Value("${hub.music.scrape.auto-scrape:false}")
+    private boolean autoScrape;
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
 
@@ -126,24 +130,57 @@ public class MusicMetadataService {
             }
             track.setLyrics(lyrics);
 
+            Path targetDir = organizeTrackFolder(track);
+
+            if (lyrics != null && !lyrics.isBlank()) {
+                track.setLyricsSource("embedded");
+                Path lrcPath = targetDir.resolve(
+                        track.getFileName().replaceAll("\\.[^.]+$", ".lrc"));
+                if (!Files.exists(lrcPath)) {
+                    Files.writeString(lrcPath, lyrics);
+                }
+            }
+
             try {
                 org.jaudiotagger.tag.images.Artwork artwork = tag.getFirstArtwork();
                 if (artwork != null) {
-                    Path coverDir = Paths.get(getFirstRootPath(), ".cache", "covers");
-                    Files.createDirectories(coverDir);
-                    String coverFileName = file.getName().replaceAll("\\.[^.]+$", ".jpg");
-                    Path coverPath = coverDir.resolve(coverFileName);
+                    Path coverPath = targetDir.resolve("cover.jpg");
                     Files.write(coverPath, artwork.getBinaryData());
                     track.setCoverArtPath(coverPath.toAbsolutePath().toString());
+                    track.setCoverSource("embedded");
                 }
             } catch (Exception e) {
-                log.warn("Failed to extract cover art from: {}", file.getName(), e);
+                log.warn("提取封面失败 / Failed to extract cover art from: {}", file.getName(), e);
             }
 
             return repository.save(track);
         } catch (Exception e) {
-            log.error("Failed to extract metadata from: {}", filePath, e);
+            log.error("提取元数据失败 / Failed to extract metadata from: {}", filePath, e);
             throw new RuntimeException("Failed to extract metadata: " + e.getMessage(), e);
+        }
+    }
+
+    private Path organizeTrackFolder(MusicTrack track) {
+        try {
+            String firstRootPath = getFirstRootPath();
+            Path audioPath = Paths.get(track.getFilePath());
+            String folderName = track.getArtist() + " - " + track.getTitle();
+            Path targetDir = Paths.get(firstRootPath, folderName);
+
+            if (!Files.exists(targetDir)) {
+                Files.createDirectories(targetDir);
+            }
+
+            Path targetFile = targetDir.resolve(track.getFileName());
+            if (!audioPath.equals(targetFile) && Files.exists(audioPath) && !Files.exists(targetFile)) {
+                Files.move(audioPath, targetFile);
+                track.setFilePath(targetFile.toAbsolutePath().toString());
+            }
+
+            return targetDir;
+        } catch (Exception e) {
+            log.warn("整理文件夹失败 / Failed to organize folder for {}: {}", track.getFileName(), e.getMessage());
+            return Paths.get(track.getFilePath()).getParent();
         }
     }
 
@@ -199,6 +236,11 @@ public class MusicMetadataService {
                                 log.warn("Failed to index: {}", path.getFileName(), e);
                             }
                         });
+            }
+
+            if (autoScrape && scrapeService.isScrapeEnabled()) {
+                log.info("Auto-scrape enabled, starting scrape after scan...");
+                scrapeService.scrapeAll();
             }
         } catch (Exception e) {
             log.error("Failed to scan directory: {}", directoryPath);
