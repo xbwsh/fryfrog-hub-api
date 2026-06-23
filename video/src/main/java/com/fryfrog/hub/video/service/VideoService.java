@@ -77,7 +77,7 @@ public class VideoService {
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
 
     public String getRootPath() {
-        return rootPath;
+        return getFirstRootPath();
     }
 
     public List<Video> getAllVideos() {

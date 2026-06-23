@@ -213,7 +213,7 @@ public class EbookService {
     }
 
     public void scanFromRoot() {
-        scanDirectory(rootPath);
+        scanDirectory(getFirstRootPath());
     }
 
     public void scanDirectory(String directoryPath) {
