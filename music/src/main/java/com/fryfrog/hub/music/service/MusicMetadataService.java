@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import org.springframework.transaction.annotation.Transactional;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
@@ -133,8 +135,30 @@ public class MusicMetadataService {
         }
     }
 
+    @Transactional
+    public int cleanupInvalidRecords() {
+        List<MusicTrack> allTracks = repository.findAll();
+        int removed = 0;
+
+        for (MusicTrack track : allTracks) {
+            if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
+                log.info("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
+                repository.deleteById(track.getId());
+                removed++;
+            }
+        }
+
+        log.info("Music cleanup completed: removed {} invalid records", removed);
+        return removed;
+    }
+
+    public void scanFromRoot() {
+        scanDirectory(rootPath);
+    }
+
     public void scanDirectory(String directoryPath) {
         try {
+            cleanupInvalidRecords();
             Path dir = Paths.get(directoryPath);
             if (!Files.isDirectory(dir)) {
                 throw new IllegalArgumentException("Not a directory: " + directoryPath);

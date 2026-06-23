@@ -10,6 +10,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import org.springframework.transaction.annotation.Transactional;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -148,8 +150,30 @@ public class ComicMetadataService {
         }
     }
 
+    @Transactional
+    public int cleanupInvalidRecords() {
+        List<Comic> allComics = repository.findAll();
+        int removed = 0;
+
+        for (Comic comic : allComics) {
+            if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
+                log.info("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
+                repository.deleteById(comic.getId());
+                removed++;
+            }
+        }
+
+        log.info("Comic cleanup completed: removed {} invalid records", removed);
+        return removed;
+    }
+
+    public void scanFromRoot() {
+        scanDirectory(rootPath);
+    }
+
     public void scanDirectory(String directoryPath) {
         try {
+            cleanupInvalidRecords();
             Path dir = Paths.get(directoryPath);
             if (!Files.isDirectory(dir)) {
                 throw new IllegalArgumentException("Not a directory: " + directoryPath);

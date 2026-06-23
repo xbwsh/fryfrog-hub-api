@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 
 import com.fryfrog.hub.ebook.util.EpubParser;
 
+import org.springframework.transaction.annotation.Transactional;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
@@ -181,8 +183,30 @@ public class EbookService {
         }
     }
 
+    @Transactional
+    public int cleanupInvalidRecords() {
+        List<Ebook> allEbooks = repository.findAll();
+        int removed = 0;
+
+        for (Ebook ebook : allEbooks) {
+            if (ebook.getFilePath() == null || !Files.exists(Paths.get(ebook.getFilePath()))) {
+                log.info("Removing invalid record: {} (path: {})", ebook.getTitle(), ebook.getFilePath());
+                repository.deleteById(ebook.getId());
+                removed++;
+            }
+        }
+
+        log.info("Ebook cleanup completed: removed {} invalid records", removed);
+        return removed;
+    }
+
+    public void scanFromRoot() {
+        scanDirectory(rootPath);
+    }
+
     public void scanDirectory(String directoryPath) {
         try {
+            cleanupInvalidRecords();
             Path dir = Paths.get(directoryPath);
             if (!Files.isDirectory(dir)) {
                 throw new IllegalArgumentException("Not a directory: " + directoryPath);

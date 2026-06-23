@@ -63,6 +63,10 @@ public class VideoService {
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
 
+    public String getRootPath() {
+        return rootPath;
+    }
+
     public List<Video> getAllVideos() {
         return repository.findAll();
     }
@@ -106,6 +110,8 @@ public class VideoService {
             }
         }
 
+        seriesService.cleanupEmptySeries();
+
         log.info("Cleanup completed: removed {} invalid records", removed);
         return removed;
     }
@@ -130,7 +136,11 @@ public class VideoService {
                     existing.setFileName(fileName);
                     existing.setFileSize(file.length());
                     existing.setFormat(getFileExtension(fileName).toUpperCase());
-                    return repository.save(existing);
+                    Video updated = repository.save(existing);
+                    if (autoScrape && updated.getTmdbId() == null) {
+                        scrapeExecutor.submit(() -> tryScrapeVideo(updated));
+                    }
+                    return updated;
                 }
             }
 
@@ -208,14 +218,6 @@ public class VideoService {
                             String extension = name.substring(name.lastIndexOf('.') + 1);
                             return SUPPORTED_FORMATS.contains(extension);
                         })
-                        .filter(path -> {
-                            String absolutePath = path.toAbsolutePath().toString();
-                            boolean exists = repository.findByFilePath(absolutePath).isPresent();
-                            if (exists) {
-                                log.debug("Skipping already indexed video: {}", path.getFileName());
-                            }
-                            return !exists;
-                        })
                         .forEach(path -> {
                             try {
                                 extractAndSaveMetadata(path.toString());
@@ -281,6 +283,27 @@ public class VideoService {
         return lastDot >= 0 ? fileName.substring(lastDot + 1) : "";
     }
 
+    private static final String DOTTED_QUALITY =
+            "(?i)\\bH\\.?264\\b|\\bH\\.?265\\b|\\bDD[P+]\\s*\\.?\\s*\\d+(?:\\.\\d+)*\\b" +
+            "|\\bDTS(?:\\s*-?\\s*HD)?(?:\\s*\\.?\\s*(?:MA|ES|RA))?(?:\\s*\\.?\\s*\\d+(?:\\.\\d+)*)?\\b" +
+            "|\\bAC\\s*\\.?\\s*3\\b|\\bE\\s*-?\\s*AC\\s*-?\\s*3\\b" +
+            "|\\bA(?:V|C)\\s*\\.?\\s*A(?:V|C)?\\s*\\.?\\s*1\\b" +
+            "|\\bMPEG\\s*-?\\s*[24]\\b" +
+            "|\\bFLAC\\s*\\.?\\s*\\d+(?:\\.\\d+)*\\b";
+
+    private static final String QUALITY_PATTERN =
+            "(?i)\\b(?:2160p|1080p|720p|480p|4K|UHD|FHD)\\b" +
+            "|\\b(?:BluRay|BDRip|BRRip|WEB-?DL|WEB-?Rip|HDRip|DVDRip|HDTV|TVRip|CamRip|TS|TC|SCR|R5)\\b" +
+            "|\\b(?:x264|x265|HEVC|AVC|AV1)\\b" +
+            "|\\b(?:AAC|FLAC|DTS(?:MA|HD)?|AC3|EAC3|DDP?\\d|Atmos|TrueHD|MP3|OGG|Opus)\\b" +
+            "|\\bHDR(?:10?)?\\b|\\bDoVi\\b|\\bDV\\b|\\bHLG\\b" +
+            "|\\b(?:10-?bit|8-?bit)\\b" +
+            "|\\bREMUX\\b|\\bBlu-?ray\\b" +
+            "|\\b(?:AVS|FRDS|Ma10p|Ma10s|NCOP|NCED)\\b" +
+            "|\\b(?:Baha|ADBA|Bilibili|ABEMA|Crunchyroll|Funimation|Netflix|Disney\\+?|Amazon|Hulu|Hi10|Nazzy|FGT|SPARKS|SHAFT)\\b" +
+            "|\\b(?:ASS|SSA|SRT|BIG5|GB2312|UTF-?8|EUC-?JP|Shift-?JIS)\\b" +
+            "|\\b(?:PART|CHAPTER|CD|DVD|BD|DISC?)\\b";
+
     public String cleanTitleForSearch(String title) {
         if (title == null || title.isBlank()) {
             return title;
@@ -288,17 +311,30 @@ public class VideoService {
 
         String cleaned = title;
 
-        // 先处理明确的标记格式：S01E01, EP01, ＃1 等
-        cleaned = cleaned.replaceAll("(?i)S\\d{1,2}E\\d{1,4}$", "");
-        cleaned = cleaned.replaceAll("(?i)EP?\\d{1,4}$", "");
-        cleaned = cleaned.replaceAll("[＃#]\\d{1,4}$", "");
-        cleaned = cleaned.replaceAll("[\\s._\\-]*(?:CD|DVD|BD|DISK?|PART|EP?|CHAPTER)[\\s._\\-#＃]*\\d{1,4}[\\s._\\-]*$", "");
+        cleaned = cleaned.replaceAll("\\[.*?\\]", " ");
+        cleaned = cleaned.replaceAll("【.*?】", " ");
+        cleaned = cleaned.replaceAll("\\(.*?\\)", " ");
+        cleaned = cleaned.replaceAll("（.*?）", " ");
 
-        // 处理末尾数字（有分隔符或无分隔符）
-        cleaned = cleaned.replaceAll("[\\s._\\-＃#EPep]+\\d{1,4}$", "");
-        cleaned = cleaned.replaceAll("\\d{1,4}$", "");
+        cleaned = cleaned.replaceAll(DOTTED_QUALITY, " ");
+        cleaned = cleaned.replaceAll("[._]", " ");
 
-        cleaned = cleaned.replaceAll("[\\[\\]【】()（）]", " ");
+        cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\s*E\\d{1,4}\\b", " ");
+        cleaned = cleaned.replaceAll(QUALITY_PATTERN, " ");
+
+        cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:季|部|期)", " ");
+        cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:话|集|回|篇|章)", " ");
+
+        cleaned = cleaned.replaceAll("(?i)\\bSeason\\s*\\d+\\b", " ");
+        cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\b", " ");
+
+        cleaned = cleaned.replaceAll("(?i)\\bE(?:p(?:isode)?)?\\s*\\d{1,4}\\b", " ");
+        cleaned = cleaned.replaceAll("[＃#]\\s*\\d{1,4}\\b", " ");
+
+        cleaned = cleaned.replaceAll("\\s*[-–—]\\s*\\d{1,4}\\s*$", "");
+        cleaned = cleaned.replaceAll("\\s+\\d{1,4}\\s*$", "");
+        cleaned = cleaned.replaceAll("^\\d{1,4}\\s*[-–—]\\s*", "");
+        cleaned = cleaned.replaceAll("\\s*[-–—]\\s*$", "");
 
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
 
