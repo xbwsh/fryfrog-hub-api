@@ -13,8 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -24,8 +24,20 @@ public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
 
-    @Value("${hub.music.root-path}")
-    private String rootPath;
+    @Value("${hub.music.root-paths:./media-library/music}")
+    private String rootPathsConfig;
+
+    public List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    public String getFirstRootPath() {
+        List<String> paths = getRootPaths();
+        return paths.isEmpty() ? "./media-library/music" : paths.get(0);
+    }
 
     @Value("${hub.music.auto-writeback:false}")
     private boolean autoWriteback;
@@ -117,7 +129,7 @@ public class MusicMetadataService {
             try {
                 org.jaudiotagger.tag.images.Artwork artwork = tag.getFirstArtwork();
                 if (artwork != null) {
-                    Path coverDir = Paths.get(rootPath, ".cache", "covers");
+                    Path coverDir = Paths.get(getFirstRootPath(), ".cache", "covers");
                     Files.createDirectories(coverDir);
                     String coverFileName = file.getName().replaceAll("\\.[^.]+$", ".jpg");
                     Path coverPath = coverDir.resolve(coverFileName);
@@ -215,9 +227,13 @@ public class MusicMetadataService {
     private void inferFromFolderStructure(MusicTrack track, File file) {
         if (!useFolderStructure) return;
 
-        Path musicRoot = Paths.get(rootPath).toAbsolutePath();
+        Path musicRoot = Paths.get(getFirstRootPath()).toAbsolutePath();
         Path parent = file.toPath().getParent();
         Path grandparent = parent != null ? parent.getParent() : null;
+
+        boolean isUnderRoot = getRootPaths().stream()
+                .anyMatch(root -> file.toPath().toAbsolutePath().startsWith(Paths.get(root).toAbsolutePath()));
+        if (!isUnderRoot) return;
 
         if (track.getArtist() == null || track.getArtist().isBlank()) {
             if (grandparent != null && !grandparent.toAbsolutePath().equals(musicRoot)

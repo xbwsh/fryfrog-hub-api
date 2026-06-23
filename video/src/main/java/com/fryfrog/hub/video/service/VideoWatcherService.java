@@ -9,10 +9,11 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.*;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -21,13 +22,13 @@ public class VideoWatcherService {
 
     private final VideoService metadataService;
 
-    @Value("${hub.video.root-path}")
-    private String rootPath;
+    @Value("${hub.video.root-paths:./media-library/video}")
+    private String rootPathsConfig;
 
     @Value("${hub.video.supported-formats}")
     private String supportedFormats;
 
-    private WatchService watchService;
+    private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
     private volatile boolean running = true;
 
@@ -41,47 +42,61 @@ public class VideoWatcherService {
         scrapingPaths.remove(path);
     }
 
+    private List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
     @PostConstruct
     public void startWatching() {
-        Path dir = Paths.get(rootPath);
-        if (!Files.isDirectory(dir)) {
-            log.warn("Video directory does not exist: {}", rootPath);
-            return;
+        List<String> rootPaths = getRootPaths();
+
+        for (String rootPath : rootPaths) {
+            Path dir = Paths.get(rootPath);
+            if (!Files.isDirectory(dir)) {
+                log.warn("Video directory does not exist: {}", rootPath);
+                continue;
+            }
+
+            log.info("Initial scan of video directory: {}", rootPath);
+            try {
+                metadataService.scanDirectory(rootPath);
+            } catch (Exception e) {
+                log.error("Failed to initial scan videos from {}", rootPath, e);
+            }
+
+            try {
+                WatchService ws = FileSystems.getDefault().newWatchService();
+                watchServices.add(ws);
+                registerDirectory(dir, ws);
+                log.info("Started watching video directory: {}", rootPath);
+            } catch (IOException e) {
+                log.error("Failed to start video watcher for {}", rootPath, e);
+            }
         }
 
-        log.info("Initial scan of video directory: {}", rootPath);
-        try {
-            metadataService.scanDirectory(rootPath);
-            log.info("Initial video scan completed");
-        } catch (Exception e) {
-            log.error("Failed to initial scan videos", e);
-        }
-
-        try {
-            watchService = FileSystems.getDefault().newWatchService();
+        if (!watchServices.isEmpty()) {
             executor = Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "video-watcher");
                 t.setDaemon(true);
                 return t;
             });
-
-            registerDirectory(dir);
             executor.execute(this::watch);
-            log.info("Started watching video directory: {}", rootPath);
-        } catch (IOException e) {
-            log.error("Failed to start video watcher", e);
+            log.info("Initial video scan completed, watching {} directories", watchServices.size());
         }
     }
 
-    private void registerDirectory(Path dir) throws IOException {
-        dir.register(watchService,
+    private void registerDirectory(Path dir, WatchService ws) throws IOException {
+        dir.register(ws,
                 StandardWatchEventKinds.ENTRY_CREATE,
                 StandardWatchEventKinds.ENTRY_MODIFY);
 
         try (var stream = Files.list(dir)) {
             stream.filter(Files::isDirectory).forEach(subDir -> {
                 try {
-                    registerDirectory(subDir);
+                    registerDirectory(subDir, ws);
                 } catch (IOException e) {
                     log.warn("Failed to register subdirectory: {}", subDir, e);
                 }
@@ -91,40 +106,47 @@ public class VideoWatcherService {
 
     private void watch() {
         while (running) {
-            try {
-                WatchKey key = watchService.take();
-                for (WatchEvent<?> event : key.pollEvents()) {
-                    if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
-                        continue;
-                    }
+            for (WatchService ws : watchServices) {
+                try {
+                    WatchKey key = ws.poll();
+                    if (key == null) continue;
 
-                    @SuppressWarnings("unchecked")
-                    WatchEvent<Path> ev = (WatchEvent<Path>) event;
-                    Path fileName = ev.context();
-                    Path parentDir = (Path) key.watchable();
-                    Path fullPath = parentDir.resolve(fileName);
+                    for (WatchEvent<?> event : key.pollEvents()) {
+                        if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
+                            continue;
+                        }
 
-                    if (scrapingPaths.contains(fullPath.toString())) {
-                        log.debug("Skipping file being scraped: {}", fullPath);
-                        continue;
-                    }
+                        @SuppressWarnings("unchecked")
+                        WatchEvent<Path> ev = (WatchEvent<Path>) event;
+                        Path fileName = ev.context();
+                        Path parentDir = (Path) key.watchable();
+                        Path fullPath = parentDir.resolve(fileName);
 
-                    if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
-                        log.info("Detected video file change: {}", fullPath);
-                        try {
-                            metadataService.extractAndSaveMetadata(fullPath.toString());
-                            log.info("Auto-indexed video: {}", fileName);
-                        } catch (Exception e) {
-                            log.warn("Failed to auto-index video: {}", fileName, e);
+                        if (scrapingPaths.contains(fullPath.toString())) {
+                            log.debug("Skipping file being scraped: {}", fullPath);
+                            continue;
+                        }
+
+                        if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
+                            log.info("Detected video file change: {}", fullPath);
+                            try {
+                                metadataService.extractAndSaveMetadata(fullPath.toString());
+                                log.info("Auto-indexed video: {}", fileName);
+                            } catch (Exception e) {
+                                log.warn("Failed to auto-index video: {}", fileName, e);
+                            }
                         }
                     }
+                    key.reset();
+                } catch (Exception e) {
+                    log.error("Error in video watcher", e);
                 }
-                key.reset();
+            }
+            try {
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
-            } catch (Exception e) {
-                log.error("Error in video watcher", e);
             }
         }
     }
@@ -138,9 +160,9 @@ public class VideoWatcherService {
     @PreDestroy
     public void stopWatching() {
         running = false;
-        if (watchService != null) {
+        for (WatchService ws : watchServices) {
             try {
-                watchService.close();
+                ws.close();
             } catch (IOException e) {
                 log.error("Failed to close watch service", e);
             }
@@ -148,6 +170,6 @@ public class VideoWatcherService {
         if (executor != null) {
             executor.shutdown();
         }
-        log.info("Stopped watching video directory");
+        log.info("Stopped watching video directories");
     }
 }

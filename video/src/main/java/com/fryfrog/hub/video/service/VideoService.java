@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -55,8 +56,20 @@ public class VideoService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    @Value("${hub.video.root-path}")
-    private String rootPath;
+    @Value("${hub.video.root-paths:./media-library/video}")
+    private String rootPathsConfig;
+
+    public List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    public String getFirstRootPath() {
+        List<String> paths = getRootPaths();
+        return paths.isEmpty() ? "./media-library/video" : paths.get(0);
+    }
 
     @Value("${hub.tmdb.auto-scrape:false}")
     private boolean autoScrape;

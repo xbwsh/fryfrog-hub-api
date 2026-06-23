@@ -30,8 +30,20 @@ public class EbookService {
 
     private final EbookRepository repository;
 
-    @Value("${hub.ebook.root-path}")
-    private String rootPath;
+    @Value("${hub.ebook.root-paths:./media-library/ebook}")
+    private String rootPathsConfig;
+
+    public List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    public String getFirstRootPath() {
+        List<String> paths = getRootPaths();
+        return paths.isEmpty() ? "./media-library/ebook" : paths.get(0);
+    }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("epub", "pdf", "mobi", "azw", "azw3", "fb2", "txt");
 
@@ -145,7 +157,7 @@ public class EbookService {
                             try {
                                 byte[] coverData = EpubParser.readCover(filePath, meta);
                                 if (coverData != null && coverData.length > 0) {
-                                    Path coverDir = Paths.get(rootPath, ".cache", "covers");
+                                    Path coverDir = Paths.get(getFirstRootPath(), ".cache", "covers");
                                     Files.createDirectories(coverDir);
                                     String coverFileName = baseName + ".jpg";
                                     Path coverPath = coverDir.resolve(coverFileName);
@@ -351,7 +363,7 @@ public class EbookService {
             }
             if (seriesName == null || seriesName.isBlank()) return;
 
-            Path targetDir = Paths.get(rootPath, sanitizeFileName(seriesName));
+            Path targetDir = Paths.get(getFirstRootPath(), sanitizeFileName(seriesName));
             Files.createDirectories(targetDir);
 
             String newName = buildEbookFileName(ebook);

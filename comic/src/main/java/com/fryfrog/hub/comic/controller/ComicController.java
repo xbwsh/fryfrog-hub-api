@@ -22,7 +22,9 @@ import org.springframework.web.bind.annotation.*;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/comic")
@@ -33,8 +35,15 @@ public class ComicController {
     private final ComicMetadataService service;
     private final ComicReadingProgressService readingProgressService;
 
-    @Value("${hub.comic.root-path}")
-    private String rootPath;
+    @Value("${hub.comic.root-paths:./media-library/comic}")
+    private String rootPathsConfig;
+
+    private List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
 
     @GetMapping
     @Operation(summary = "获取所有漫画", description = "返回数据库中所有已索引的漫画列表")
@@ -178,9 +187,10 @@ public class ComicController {
 
     private void validatePath(String path) {
         Path requestedPath = Paths.get(path).toAbsolutePath();
-        Path allowedRoot = Paths.get(rootPath).toAbsolutePath();
-        if (!requestedPath.startsWith(allowedRoot)) {
-            throw new IllegalArgumentException("Path is outside allowed root: " + rootPath);
+        boolean allowed = getRootPaths().stream()
+                .anyMatch(root -> requestedPath.startsWith(Paths.get(root).toAbsolutePath()));
+        if (!allowed) {
+            throw new IllegalArgumentException("Path is outside allowed root paths");
         }
     }
 }

@@ -29,8 +29,20 @@ public class ComicMetadataService {
 
     private final ComicRepository repository;
 
-    @Value("${hub.comic.root-path}")
-    private String rootPath;
+    @Value("${hub.comic.root-paths:./media-library/comic}")
+    private String rootPathsConfig;
+
+    public List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    public String getFirstRootPath() {
+        List<String> paths = getRootPaths();
+        return paths.isEmpty() ? "./media-library/comic" : paths.get(0);
+    }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("cbz", "cbr", "zip", "rar", "epub");
 
@@ -248,7 +260,7 @@ public class ComicMetadataService {
             }
             if (seriesName == null || seriesName.isBlank()) return;
 
-            Path targetDir = Paths.get(rootPath, sanitizeFileName(seriesName));
+            Path targetDir = Paths.get(getFirstRootPath(), sanitizeFileName(seriesName));
             Files.createDirectories(targetDir);
 
             String newName = buildComicFileName(comic);
@@ -411,7 +423,7 @@ public class ComicMetadataService {
                 }
 
                 if (firstImage != null) {
-                    Path coverDir = Paths.get(rootPath, ".cache", "covers");
+                    Path coverDir = Paths.get(getFirstRootPath(), ".cache", "covers");
                     Files.createDirectories(coverDir);
                     String coverFileName = file.getName().replaceAll("\\.[^.]+$", ".jpg");
                     Path coverPath = coverDir.resolve(coverFileName);

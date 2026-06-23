@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.ByteArrayResource;
@@ -27,6 +28,8 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -34,6 +37,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/video")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "视频管理", description = "视频元数据查询、扫描接口")
 public class VideoController {
 
@@ -43,8 +47,15 @@ public class VideoController {
     private final CoverArtService coverArtService;
     private final WatchProgressService watchProgressService;
 
-    @Value("${hub.video.root-path}")
-    private String rootPath;
+    @Value("${hub.video.root-paths:./media-library/video}")
+    private String rootPathsConfig;
+
+    private List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
 
     @GetMapping
     @Operation(summary = "获取所有视频", description = "返回数据库中所有已索引的视频列表")
@@ -110,6 +121,22 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
     }
 
+    @PostMapping("/scan-all")
+    @Operation(summary = "扫描所有配置的根目录", description = "扫描所有配置的root-paths目录")
+    public ResponseEntity<ApiResponse<List<String>>> scanAll() {
+        List<String> rootPaths = getRootPaths();
+        List<String> scanned = new ArrayList<>();
+        for (String rootPath : rootPaths) {
+            try {
+                service.scanDirectory(rootPath);
+                scanned.add(rootPath);
+            } catch (Exception e) {
+                log.warn("Failed to scan directory {}: {}", rootPath, e.getMessage());
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.success("Scan completed for " + scanned.size() + " directories", scanned));
+    }
+
     @PostMapping("/cleanup")
     @Operation(summary = "清理无效记录", description = "删除数据库中文件已不存在的视频记录")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> cleanupInvalidRecords() {
@@ -160,9 +187,10 @@ public class VideoController {
 
     private void validatePath(String path) {
         Path requestedPath = Paths.get(path).toAbsolutePath();
-        Path allowedRoot = Paths.get(rootPath).toAbsolutePath();
-        if (!requestedPath.startsWith(allowedRoot)) {
-            throw new IllegalArgumentException("Path is outside allowed root: " + rootPath);
+        boolean allowed = getRootPaths().stream()
+                .anyMatch(root -> requestedPath.startsWith(Paths.get(root).toAbsolutePath()));
+        if (!allowed) {
+            throw new IllegalArgumentException("Path is outside allowed root paths");
         }
     }
 

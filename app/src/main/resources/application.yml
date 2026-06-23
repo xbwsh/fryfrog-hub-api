@@ -11,20 +11,20 @@ hub:
   media:
     root-path: ${MEDIA_ROOT_PATH:./media-library}
   music:
-    root-path: ${MUSIC_ROOT_PATH:./media-library/music}
+    root-paths: ${MUSIC_ROOT_PATHS:./media-library/music}
     supported-formats: mp3,flac,ogg,wav,aac,m4a
     auto-writeback: ${MUSIC_AUTO_WRITEBACK:true}
     use-folder-structure: ${MUSIC_USE_FOLDER_STRUCTURE:true}
     default-artist: ${MUSIC_DEFAULT_ARTIST:}
   comic:
-    root-path: ${COMIC_ROOT_PATH:./media-library/comic}
+    root-paths: ${COMIC_ROOT_PATHS:./media-library/comic}
     supported-formats: cbz,cbr,zip,rar
     auto-scrape: ${COMIC_AUTO_SCRAPE:false}
   video:
-    root-path: ${VIDEO_ROOT_PATH:./media-library/video}
+    root-paths: ${VIDEO_ROOT_PATHS:./media-library/video}
     supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
   ebook:
-    root-path: ${EBOOK_ROOT_PATH:./media-library/ebook}
+    root-paths: ${EBOOK_ROOT_PATHS:./media-library/ebook}
     supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt
   tmdb:
     api-key: ${TMDB_API_KEY:}

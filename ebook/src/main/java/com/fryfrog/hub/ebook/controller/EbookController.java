@@ -26,7 +26,9 @@ import com.fryfrog.hub.ebook.util.EpubParser;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/ebook")
@@ -37,8 +39,15 @@ public class EbookController {
     private final EbookService service;
     private final EbookReadingProgressService readingProgressService;
 
-    @Value("${hub.ebook.root-path}")
-    private String rootPath;
+    @Value("${hub.ebook.root-paths:./media-library/ebook}")
+    private String rootPathsConfig;
+
+    private List<String> getRootPaths() {
+        return Arrays.stream(rootPathsConfig.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
 
     @GetMapping
     @Operation(summary = "获取所有电子书", description = "返回数据库中所有已索引的电子书列表")
@@ -281,9 +290,10 @@ public class EbookController {
 
     private void validatePath(String path) {
         Path requestedPath = Paths.get(path).toAbsolutePath();
-        Path allowedRoot = Paths.get(rootPath).toAbsolutePath();
-        if (!requestedPath.startsWith(allowedRoot)) {
-            throw new IllegalArgumentException("Path is outside allowed root: " + rootPath);
+        boolean allowed = getRootPaths().stream()
+                .anyMatch(root -> requestedPath.startsWith(Paths.get(root).toAbsolutePath()));
+        if (!allowed) {
+            throw new IllegalArgumentException("Path is outside allowed root paths");
         }
     }
 }
