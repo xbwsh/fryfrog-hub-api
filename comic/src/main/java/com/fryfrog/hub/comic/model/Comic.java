@@ -7,6 +7,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "comics")
 @Getter
@@ -65,4 +67,31 @@ public class Comic extends BaseEntity {
 
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
+
+    @Schema(description = "元数据来源（anilist）", example = "anilist")
+    private String metadataSource;
+
+    @Schema(description = "外部元数据 ID（AniList manga ID）", example = "104712")
+    private Integer metadataSourceId;
+
+    @Schema(description = "元数据最后更新时间")
+    private LocalDateTime metadataUpdatedAt;
+
+    @Schema(description = "原始标题", example = "進撃の巨人")
+    private String originalTitle;
+
+    @Schema(description = "评分", example = "8.3")
+    private Double rating;
+
+    @Schema(description = "封面图片URL")
+    private String posterUrl;
+
+    @Schema(description = "出版社", example = "集英社")
+    private String publisher;
+
+    @Schema(description = "ISBN", example = "9784088820118")
+    private String isbn;
+
+    @Schema(description = "发售日期", example = "2019-07-04")
+    private String releaseDate;
 }

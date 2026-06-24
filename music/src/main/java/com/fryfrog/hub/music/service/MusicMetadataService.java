@@ -144,10 +144,20 @@ public class MusicMetadataService {
             try {
                 org.jaudiotagger.tag.images.Artwork artwork = tag.getFirstArtwork();
                 if (artwork != null) {
-                    Path coverPath = targetDir.resolve("cover.jpg");
-                    Files.write(coverPath, artwork.getBinaryData());
+                    byte[] data = artwork.getBinaryData();
+                    String ext = guessImageExtension(data);
+                    Path coverPath = targetDir.resolve("cover" + ext);
+                    Files.write(coverPath, data);
                     track.setCoverArtPath(coverPath.toAbsolutePath().toString());
                     track.setCoverSource("embedded");
+                } else if (track.getCoverArtPath() == null) {
+                    for (String coverName : List.of("cover.jpg", "cover.jpeg", "cover.png", "cover.webp")) {
+                        Path coverFile = targetDir.resolve(coverName);
+                        if (Files.exists(coverFile)) {
+                            track.setCoverArtPath(coverFile.toAbsolutePath().toString());
+                            break;
+                        }
+                    }
                 }
             } catch (Exception e) {
                 log.warn("提取封面失败 / Failed to extract cover art from: {}", file.getName(), e);
@@ -223,14 +233,23 @@ public class MusicMetadataService {
                         .forEach(path -> {
                             try {
                                 String absolutePath = path.toAbsolutePath().toString();
-                                MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
 
-                                if (existing != null) {
+                                if (repository.findByFilePath(absolutePath).isPresent()) {
                                     log.debug("Skipping already indexed: {}", path.getFileName());
                                     return;
                                 }
 
-                                extractAndSaveMetadata(absolutePath);
+                                MusicTrack saved = extractAndSaveMetadata(absolutePath);
+
+                                if (saved.getFilePath() != null && !saved.getFilePath().equals(absolutePath)) {
+                                    repository.findByFilePath(saved.getFilePath()).ifPresent(existing -> {
+                                        if (!existing.getId().equals(saved.getId())) {
+                                            repository.delete(existing);
+                                            log.info("Removed duplicate record: {}", existing.getTitle());
+                                        }
+                                    });
+                                }
+
                                 log.info("Indexed: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index: {}", path.getFileName(), e);
@@ -316,13 +335,30 @@ public class MusicMetadataService {
     private String saveCoverFile(File audioFile, byte[] coverData) {
         try {
             Path coverDir = audioFile.toPath().getParent();
-            Path coverPath = coverDir.resolve("cover.jpg");
+            String ext = guessImageExtension(coverData);
+            Path coverPath = coverDir.resolve("cover" + ext);
             Files.write(coverPath, coverData);
             return coverPath.toAbsolutePath().toString();
         } catch (IOException e) {
             log.warn("Failed to save cover file for: {}", audioFile.getName(), e);
             return null;
         }
+    }
+
+    private String guessImageExtension(byte[] data) {
+        if (data == null || data.length < 4) {
+            return ".jpg";
+        }
+        if (data[0] == (byte) 0x89 && data[1] == (byte) 0x50 && data[2] == (byte) 0x4E && data[3] == (byte) 0x47) {
+            return ".png";
+        }
+        if (data[0] == (byte) 0x52 && data[1] == (byte) 0x49 && data[2] == (byte) 0x46 && data[3] == (byte) 0x46) {
+            return ".webp";
+        }
+        if (data[0] == (byte) 0x47 && data[1] == (byte) 0x49 && data[2] == (byte) 0x46) {
+            return ".gif";
+        }
+        return ".jpg";
     }
 
     private void writeMetadataToFile(File file, MusicTrack track) {

@@ -43,18 +43,40 @@ public class NfoService {
     }
 
     public Path getMetadataDir(Video video) {
-        String cleanedTitle = cleanTitle(video.getTitle());
-        Path videoDir = Paths.get(video.getFilePath()).getParent();
-        Path basePath = videoDir.resolve(cleanedTitle);
+        Path videoPath = Paths.get(video.getFilePath());
+        Path videoDir = videoPath.getParent();
 
-        // 对于电视剧，按"第 X 季/第 Y 集"创建子目录
+        // 对于电视剧，根据 seasonNumber 和 episodeNumber 确定目录
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
             int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
             int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
-            return basePath.resolve("第 " + season + " 季").resolve("第 " + episode + " 集");
+
+            // 构建正确的集目录名
+            String correctEpisodeDirName = "第 " + episode + " 集";
+
+            // 检查当前目录是否已经是正确的集目录
+            if (videoDir.getFileName().toString().equals(correctEpisodeDirName)) {
+                return videoDir;
+            }
+
+            // 向上查找季目录（以"第 X 季"命名）
+            Path parentDir = videoDir.getParent();
+            while (parentDir != null) {
+                String parentName = parentDir.getFileName().toString();
+                if (parentName.matches("第 \\d+ 季")) {
+                    // 找到季目录，返回对应的集子目录
+                    return parentDir.resolve(correctEpisodeDirName);
+                }
+                parentDir = parentDir.getParent();
+            }
+
+            // 没找到季目录，返回当前目录
+            return videoDir;
         }
 
-        return basePath;
+        // 对于电影，在视频目录下创建以清洗后标题命名的子目录
+        String cleanedTitle = cleanTitle(video.getTitle());
+        return videoDir.resolve(cleanedTitle);
     }
 
     private String cleanTitle(String title) {
@@ -99,7 +121,7 @@ public class NfoService {
         return baseName + ".nfo";
     }
 
-    private String getBaseName(String fileName) {
+    public String getBaseName(String fileName) {
         int lastDot = fileName.lastIndexOf('.');
         return lastDot >= 0 ? fileName.substring(0, lastDot) : fileName;
     }

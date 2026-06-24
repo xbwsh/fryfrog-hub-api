@@ -1,5 +1,7 @@
 package com.fryfrog.hub.music.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
@@ -13,15 +15,16 @@ import java.util.*;
 @Slf4j
 public class QQMusicService {
 
-    private static final String SEARCH_URL = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp";
+    private static final String SEARCH_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg";
     private static final String LYRICS_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
-    private static final String SONG_DETAIL_URL = "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg";
     private static final String COVER_BASE_URL = "https://y.gtimg.cn/music/photo_new/";
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
 
-    public QQMusicService(@Qualifier("scraperRestTemplate") RestTemplate restTemplate) {
+    public QQMusicService(@Qualifier("scraperRestTemplate") RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
     }
 
     public String searchLyrics(String artist, String title) {
@@ -40,30 +43,31 @@ public class QQMusicService {
     private String searchSongMid(String artist, String title) {
         String keywords = artist + " " + title;
 
-        String url = UriComponentsBuilder.fromHttpUrl(SEARCH_URL)
-                .queryParam("w", keywords)
-                .queryParam("p", "1")
-                .queryParam("n", "5")
-                .queryParam("format", "json")
-                .queryParam("cr", "1")
-                .toUriString();
-
         HttpHeaders headers = createHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        Map<String, Object> body = new HashMap<>();
+        body.put("comm", Map.of("ct", 19, "cv", 1859));
+        body.put("req", Map.of(
+                "method", "DoSearchForQQMusicDesktop",
+                "module", "music.search.SearchCgiService",
+                "param", Map.of(
+                        "num_per_page", 5,
+                        "page_num", 1,
+                        "query", keywords,
+                        "search_type", 0
+                )
+        ));
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
 
         try {
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            ResponseEntity<String> response = restTemplate.exchange(SEARCH_URL, HttpMethod.POST, entity, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map data = (Map) response.getBody().get("data");
-                if (data != null) {
-                    Map songlist = (Map) data.get("song");
-                    if (songlist != null) {
-                        List<Map> list = (List<Map>) songlist.get("list");
-                        if (list != null && !list.isEmpty()) {
-                            return (String) list.get(0).get("songmid");
-                        }
-                    }
+                JsonNode root = objectMapper.readTree(response.getBody());
+                JsonNode songList = root.path("req").path("data").path("body").path("song").path("list");
+                if (songList.isArray() && !songList.isEmpty()) {
+                    return songList.get(0).path("mid").asText(null);
                 }
             }
         } catch (Exception e) {
@@ -84,14 +88,12 @@ public class QQMusicService {
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
         try {
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map lrc = (Map) response.getBody().get("lrc");
-                if (lrc != null) {
-                    String lyrics = (String) lrc.get("lyric");
-                    if (lyrics != null && !lyrics.isBlank()) {
-                        return lyrics;
-                    }
+                JsonNode root = objectMapper.readTree(response.getBody());
+                String lyrics = root.path("lyric").asText(null);
+                if (lyrics != null && !lyrics.isBlank()) {
+                    return lyrics;
                 }
             }
         } catch (Exception e) {
@@ -102,85 +104,76 @@ public class QQMusicService {
 
     public String searchCoverUrl(String artist, String title) {
         try {
-            String songMid = searchSongMid(artist, title);
-            if (songMid == null) {
+            Map<String, Object> songInfo = searchSongInfoFull(artist, title);
+            if (songInfo == null) {
                 return null;
             }
-            return fetchAlbumCover(songMid);
-        } catch (Exception e) {
-            log.warn("Failed to search cover from QQ Music: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private String fetchAlbumCover(String songMid) {
-        String url = UriComponentsBuilder.fromHttpUrl(SONG_DETAIL_URL)
-                .queryParam("songmid", songMid)
-                .queryParam("format", "json")
-                .toUriString();
-
-        HttpHeaders headers = createHeaders();
-
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
-
-        try {
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map data = (Map) response.getBody().get("data");
-                if (data != null) {
-                    List<Map> trackInfo = (List<Map>) data.get("track_info");
-                    if (trackInfo != null && !trackInfo.isEmpty()) {
-                        Map album = (Map) trackInfo.get(0).get("album");
-                        if (album != null) {
-                            String albumMid = (String) album.get("mid");
-                            if (albumMid != null && !albumMid.isBlank()) {
-                                return COVER_BASE_URL + "T002R300x300M000" + albumMid + ".jpg";
-                            }
-                        }
-                    }
-                }
+            String albumMid = (String) songInfo.get("albumMid");
+            if (albumMid != null && !albumMid.isBlank()) {
+                return COVER_BASE_URL + "T002R300x300M000" + albumMid + ".jpg";
             }
         } catch (Exception e) {
-            log.warn("QQ Music cover fetch failed: {}", e.getMessage());
+            log.warn("Failed to search cover from QQ Music: {}", e.getMessage());
         }
         return null;
     }
 
     public Map<String, String> searchSongInfo(String artist, String title) {
+        Map<String, Object> fullInfo = searchSongInfoFull(artist, title);
+        if (fullInfo == null) {
+            return null;
+        }
+
+        Map<String, String> result = new HashMap<>();
+        result.put("songmid", (String) fullInfo.get("mid"));
+        result.put("songname", (String) fullInfo.get("name"));
+        result.put("singer", (String) fullInfo.get("singer"));
+        result.put("albumname", (String) fullInfo.get("albumName"));
+        result.put("albummid", (String) fullInfo.get("albumMid"));
+        result.put("interval", String.valueOf(fullInfo.get("interval")));
+        return result;
+    }
+
+    private Map<String, Object> searchSongInfoFull(String artist, String title) {
         String keywords = artist + " " + title;
 
-        String url = UriComponentsBuilder.fromHttpUrl(SEARCH_URL)
-                .queryParam("w", keywords)
-                .queryParam("p", "1")
-                .queryParam("n", "5")
-                .queryParam("format", "json")
-                .queryParam("cr", "1")
-                .toUriString();
-
         HttpHeaders headers = createHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        Map<String, Object> body = new HashMap<>();
+        body.put("comm", Map.of("ct", 19, "cv", 1859));
+        body.put("req", Map.of(
+                "method", "DoSearchForQQMusicDesktop",
+                "module", "music.search.SearchCgiService",
+                "param", Map.of(
+                        "num_per_page", 5,
+                        "page_num", 1,
+                        "query", keywords,
+                        "search_type", 0
+                )
+        ));
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
 
         try {
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            ResponseEntity<String> response = restTemplate.exchange(SEARCH_URL, HttpMethod.POST, entity, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map data = (Map) response.getBody().get("data");
-                if (data != null) {
-                    Map songlist = (Map) data.get("song");
-                    if (songlist != null) {
-                        List<Map> list = (List<Map>) songlist.get("list");
-                        if (list != null && !list.isEmpty()) {
-                            Map song = list.get(0);
-                            Map<String, String> result = new HashMap<>();
-                            result.put("songmid", (String) song.get("songmid"));
-                            result.put("songname", (String) song.get("songname"));
-                            result.put("singer", getSingerName(song));
-                            result.put("albumname", (String) song.get("albumname"));
-                            result.put("albummid", (String) song.get("albummid"));
-                            result.put("interval", String.valueOf(song.get("interval")));
-                            return result;
-                        }
+                JsonNode root = objectMapper.readTree(response.getBody());
+                JsonNode songList = root.path("req").path("data").path("body").path("song").path("list");
+                if (songList.isArray() && !songList.isEmpty()) {
+                    JsonNode songItem = songList.get(0);
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("mid", songItem.path("mid").asText(null));
+                    result.put("name", songItem.path("name").asText(null));
+                    result.put("singer", getSingerName(songItem));
+                    result.put("interval", songItem.path("interval").asInt(0));
+
+                    JsonNode album = songItem.path("album");
+                    if (album.isObject()) {
+                        result.put("albumName", album.path("name").asText(null));
+                        result.put("albumMid", album.path("mid").asText(null));
                     }
+                    return result;
                 }
             }
         } catch (Exception e) {
@@ -189,10 +182,10 @@ public class QQMusicService {
         return null;
     }
 
-    private String getSingerName(Map song) {
-        List<Map> singers = (List<Map>) song.get("singer");
-        if (singers != null && !singers.isEmpty()) {
-            return (String) singers.get(0).get("name");
+    private String getSingerName(JsonNode song) {
+        JsonNode singers = song.path("singer");
+        if (singers.isArray() && !singers.isEmpty()) {
+            return singers.get(0).path("name").asText(null);
         }
         return null;
     }

@@ -56,15 +56,21 @@ public class MusicScrapeService {
 
         log.info("开始刮削 / Scraping track: {} - {}", track.getArtist(), track.getTitle());
 
+        boolean needsWork = false;
+
         if (lyricsFallback && needsLyrics(track)) {
             scrapeLyrics(track);
+            needsWork = true;
         }
 
         if (coverFallback && needsCover(track)) {
             scrapeCover(track);
+            needsWork = true;
         }
 
-        enrichMetadata(track);
+        if (needsWork) {
+            enrichMetadata(track);
+        }
 
         track.setScrapeStatus("scraped");
         return repository.save(track);
@@ -113,17 +119,25 @@ public class MusicScrapeService {
     }
 
     private boolean needsScraping(MusicTrack track) {
-        return needsLyrics(track) || needsCover(track) || needsMetadata(track);
+        return needsLyrics(track) || needsCover(track);
     }
 
     private boolean needsLyrics(MusicTrack track) {
-        if (track.getLyrics() != null && !track.getLyrics().isBlank()) {
-            return false;
-        }
         Path audioPath = Paths.get(track.getFilePath());
         Path lrcPath = audioPath.getParent().resolve(
                 audioPath.getFileName().toString().replaceAll("\\.[^.]+$", ".lrc"));
-        return !Files.exists(lrcPath);
+
+        // 优先检查本地 .lrc 文件是否存在
+        if (Files.exists(lrcPath)) {
+            return false;
+        }
+
+        // 检查数据库中是否有歌词
+        if (track.getLyrics() != null && !track.getLyrics().isBlank()) {
+            return false;
+        }
+
+        return true;
     }
 
     private boolean needsCover(MusicTrack track) {
@@ -146,21 +160,7 @@ public class MusicScrapeService {
         String artist = track.getArtist();
         String title = track.getTitle();
 
-        // 优先从网易云获取歌词 / Try NetEase first
-        try {
-            String lyrics = netEaseLyricsService.searchLyrics(artist, title);
-            if (lyrics != null && !lyrics.isBlank()) {
-                track.setLyrics(lyrics);
-                track.setLyricsSource("netease");
-                saveLyricsFile(track, lyrics);
-                log.info("从网易云获取歌词成功 / Lyrics found from NetEase: {} - {}", artist, title);
-                return;
-            }
-        } catch (Exception e) {
-            log.warn("网易云歌词获取失败 / NetEase lyrics failed for {} - {}: {}", artist, title, e.getMessage());
-        }
-
-        // 回退到QQ音乐 / Fallback to QQ Music
+        // 优先从QQ音乐获取歌词 / Try QQ Music first
         try {
             String lyrics = qqMusicService.searchLyrics(artist, title);
             if (lyrics != null && !lyrics.isBlank()) {
@@ -172,6 +172,20 @@ public class MusicScrapeService {
             }
         } catch (Exception e) {
             log.warn("QQ音乐歌词获取失败 / QQ Music lyrics failed for {} - {}: {}", artist, title, e.getMessage());
+        }
+
+        // 回退到网易云 / Fallback to NetEase
+        try {
+            String lyrics = netEaseLyricsService.searchLyrics(artist, title);
+            if (lyrics != null && !lyrics.isBlank()) {
+                track.setLyrics(lyrics);
+                track.setLyricsSource("netease");
+                saveLyricsFile(track, lyrics);
+                log.info("从网易云获取歌词成功 / Lyrics found from NetEase: {} - {}", artist, title);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("网易云歌词获取失败 / NetEase lyrics failed for {} - {}: {}", artist, title, e.getMessage());
         }
 
         log.debug("未找到歌词 / No lyrics found for: {} - {}", artist, title);
@@ -193,23 +207,7 @@ public class MusicScrapeService {
         String artist = track.getArtist();
         String title = track.getTitle();
 
-        // 优先从网易云获取封面 / Try NetEase first
-        try {
-            String coverUrl = netEaseLyricsService.searchCoverUrl(artist, title);
-            if (coverUrl != null) {
-                String coverPath = downloadCover(coverUrl, track);
-                if (coverPath != null) {
-                    track.setCoverArtPath(coverPath);
-                    track.setCoverSource("netease");
-                    log.info("从网易云获取封面成功 / Cover found from NetEase: {} - {}", artist, title);
-                    return;
-                }
-            }
-        } catch (Exception e) {
-            log.warn("网易云封面获取失败 / NetEase cover failed for {} - {}: {}", artist, title, e.getMessage());
-        }
-
-        // 回退到QQ音乐 / Fallback to QQ Music
+        // 优先从QQ音乐获取封面 / Try QQ Music first
         try {
             String coverUrl = qqMusicService.searchCoverUrl(artist, title);
             if (coverUrl != null) {
@@ -223,6 +221,22 @@ public class MusicScrapeService {
             }
         } catch (Exception e) {
             log.warn("QQ音乐封面获取失败 / QQ Music cover failed for {} - {}: {}", artist, title, e.getMessage());
+        }
+
+        // 回退到网易云 / Fallback to NetEase
+        try {
+            String coverUrl = netEaseLyricsService.searchCoverUrl(artist, title);
+            if (coverUrl != null) {
+                String coverPath = downloadCover(coverUrl, track);
+                if (coverPath != null) {
+                    track.setCoverArtPath(coverPath);
+                    track.setCoverSource("netease");
+                    log.info("从网易云获取封面成功 / Cover found from NetEase: {} - {}", artist, title);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("网易云封面获取失败 / NetEase cover failed for {} - {}: {}", artist, title, e.getMessage());
         }
 
         log.debug("未找到封面 / No cover found for: {} - {}", artist, title);

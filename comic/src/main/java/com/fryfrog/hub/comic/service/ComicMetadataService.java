@@ -137,6 +137,13 @@ public class ComicMetadataService {
             comic.setFileSize(file.length());
             comic.setFormat(getFileExtension(fileName).toUpperCase());
 
+            if (comic.getSeries() == null || comic.getSeries().isBlank()) {
+                comic.setSeries(extractSeriesName(fileName));
+            }
+            if (comic.getVolume() == null) {
+                comic.setVolume(extractVolumeFromFileName(fileName));
+            }
+
             try {
                 int pageCount = countPages(file);
                 comic.setPageCount(pageCount);
@@ -249,16 +256,35 @@ public class ComicMetadataService {
         throw new UnsupportedOperationException("Unsupported format: " + ext);
     }
 
-    private void organizeComicFile(Comic comic) {
+    public void organizeAll() {
+        List<Comic> comics = repository.findAll();
+        int organized = 0;
+        for (Comic comic : comics) {
+            try {
+                if (organizeComicFile(comic)) {
+                    organized++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to organize comic {}: {}", comic.getFileName(), e.getMessage());
+            }
+        }
+        log.info("Organize completed: {}/{} files moved", organized, comics.size());
+    }
+
+    private boolean organizeComicFile(Comic comic) {
         try {
             File file = new File(comic.getFilePath());
-            if (!file.exists()) return;
+            if (!file.exists()) return false;
+
+            if (comic.getSeries() == null || comic.getSeries().isBlank()) {
+                comic.setSeries(extractSeriesName(comic.getFileName()));
+            }
+            if (comic.getVolume() == null) {
+                comic.setVolume(extractVolumeFromFileName(comic.getFileName()));
+            }
 
             String seriesName = comic.getSeries();
-            if (seriesName == null || seriesName.isBlank()) {
-                seriesName = comic.getTitle();
-            }
-            if (seriesName == null || seriesName.isBlank()) return;
+            if (seriesName == null || seriesName.isBlank()) return false;
 
             Path targetDir = Paths.get(getFirstRootPath(), sanitizeFileName(seriesName));
             Files.createDirectories(targetDir);
@@ -266,15 +292,19 @@ public class ComicMetadataService {
             String newName = buildComicFileName(comic);
             Path targetPath = targetDir.resolve(newName);
 
-            if (!file.toPath().toAbsolutePath().equals(targetPath.toAbsolutePath())) {
-                Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-                comic.setFilePath(targetPath.toAbsolutePath().toString());
-                comic.setFileName(newName);
-                repository.save(comic);
-                log.info("Organized comic to: {}", targetPath);
+            if (file.toPath().toAbsolutePath().equals(targetPath.toAbsolutePath())) {
+                return false;
             }
+
+            Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+            comic.setFilePath(targetPath.toAbsolutePath().toString());
+            comic.setFileName(newName);
+            repository.save(comic);
+            log.info("Organized: {} -> {}", file.getName(), targetPath);
+            return true;
         } catch (Exception e) {
-            log.warn("Failed to organize comic file for {}: {}", comic.getTitle(), e.getMessage());
+            log.warn("Failed to organize comic {}: {}", comic.getFileName(), e.getMessage());
+            return false;
         }
     }
 
@@ -287,7 +317,7 @@ public class ComicMetadataService {
             name.append(sanitizeFileName(comic.getTitle()));
         }
         if (comic.getVolume() != null) {
-            name.append(" Vol.").append(comic.getVolume());
+            name.append(" Vol.").append(String.format("%02d", comic.getVolume()));
         }
         String ext = comic.getFormat() != null ? comic.getFormat().toLowerCase() : "cbz";
         name.append(".").append(ext);
@@ -303,59 +333,58 @@ public class ComicMetadataService {
         String clean = title;
         clean = clean.replaceAll("[\\[\\]［］]", "").trim();
         clean = clean.replaceAll("[（(].*?[）)]", "").trim();
-        clean = clean.replaceAll("[Vv]ol\\.?\\s*\\d+", "").trim();
-        clean = clean.replaceAll("卷\\s*\\d+", "").trim();
-        clean = clean.replaceAll("#\\s*\\d+", "").trim();
+        clean = clean.replaceAll("\\s*[Vv]ol\\.?\\s*\\d+\\s*", " ").trim();
+        clean = clean.replaceAll("\\s*卷\\s*\\d+\\s*", " ").trim();
+        clean = clean.replaceAll("\\s*#\\s*\\d+\\s*", " ").trim();
         clean = clean.replaceAll("\\s+", " ").trim();
-        log.info("Title cleaned: '{}' -> '{}'", title, clean);
+        log.debug("Title cleaned: '{}' -> '{}'", title, clean);
         return clean.isEmpty() ? title : clean;
     }
 
     private String extractSeriesName(String fileName) {
-        String clean = fileName;
-        clean = clean.replaceAll("[\\[\\]［］]", "|").trim();
-        String[] parts = clean.split("\\|");
-        List<String> seriesParts = new ArrayList<>();
+        List<String> bracketContents = new ArrayList<>();
 
-        for (String part : parts) {
-            String trimmed = part.trim();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.matches("\\d+")) continue;
-            if (trimmed.matches("[台日港]版")) continue;
-            if (trimmed.toLowerCase().matches("(progressive|extra|online|alzation|unlasting|rainbow|clover|regret|mother|deepening|candid|calibur|divine|editorial|illustration|fanbox|doujin|dl版)")) continue;
-            if (trimmed.length() <= 4 && trimmed.matches("[\\p{IsHan}]+")) continue;
-            seriesParts.add(trimmed);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("[\\[\\[（(]([^\\]）)]+)[\\]）)]").matcher(fileName);
+        while (m.find()) {
+            bracketContents.add(m.group(1).trim());
         }
 
-        String result = String.join("", seriesParts).replaceAll("[\\s\\-_]+", "").trim();
-        if (result.isEmpty()) {
-            result = cleanTitleForSearch(fileName).replaceAll("[\\s\\-_]+", "").trim();
+        String withoutBrackets = fileName.replaceAll("[\\[\\]（）()［］]", " ").trim();
+
+        String series = null;
+        for (String content : bracketContents) {
+            if (content.matches("\\d+")) continue;
+            if (content.toLowerCase().matches("(progressive|extra|online|alzation|unlasting|rainbow|clover|regret|mother|deepening|candid|calibur|divine|editorial|illustration|fanbox|doujin|dl版|tl|翻)")) continue;
+            if (content.matches("[台日港]版")) continue;
+            if (content.length() > 1) {
+                series = content;
+            }
         }
-        return result;
+
+        if (series == null) {
+            series = cleanTitleForSearch(withoutBrackets).split("[\\s._-]")[0].trim();
+        }
+
+        return series.isEmpty() ? null : series;
     }
 
     private Integer extractVolumeFromFileName(String fileName) {
         if (fileName == null) return null;
 
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("卷(\\d+)").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("卷\\s*(\\d+)").matcher(fileName);
+        if (m.find()) return Integer.parseInt(m.group(1));
 
-        m = java.util.regex.Pattern.compile("[Vv]ol\\.?\\s*(\\d+)").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
+        m = java.util.regex.Pattern.compile("第\\s*(\\d+)\\s*卷").matcher(fileName);
+        if (m.find()) return Integer.parseInt(m.group(1));
 
-        m = java.util.regex.Pattern.compile("#(\\d+)").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
+        m = java.util.regex.Pattern.compile("(?i)[Vv]ol\\.?\\s*(\\d+)").matcher(fileName);
+        if (m.find()) return Integer.parseInt(m.group(1));
+
+        m = java.util.regex.Pattern.compile("#\\s*(\\d+)").matcher(fileName);
+        if (m.find()) return Integer.parseInt(m.group(1));
 
         m = java.util.regex.Pattern.compile("[(\\[]\\s*(\\d+)\\s*[)\\]]").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
+        if (m.find()) return Integer.parseInt(m.group(1));
 
         return null;
     }
@@ -437,6 +466,23 @@ public class ComicMetadataService {
             }
         }
         return null;
+    }
+
+    public String reExtractCover(Comic comic) {
+        if (comic.getFilePath() == null) return null;
+        File file = new File(comic.getFilePath());
+        if (!file.exists()) return null;
+        try {
+            String coverPath = extractCover(file);
+            if (coverPath != null) {
+                comic.setCoverArtPath(coverPath);
+                repository.save(comic);
+            }
+            return coverPath;
+        } catch (Exception e) {
+            log.warn("Failed to re-extract cover for {}: {}", comic.getFileName(), e.getMessage());
+            return null;
+        }
     }
 
     private int countPages(File file) throws IOException {

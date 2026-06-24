@@ -5,10 +5,13 @@ import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressRequest;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
+import com.fryfrog.hub.comic.dto.anilist.AnilistSearchResult;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.model.ComicReadingProgress;
+import com.fryfrog.hub.comic.service.BangumiService;
 import com.fryfrog.hub.comic.service.ComicMetadataService;
 import com.fryfrog.hub.comic.service.ComicReadingProgressService;
+import com.fryfrog.hub.comic.service.MangaScrapeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,6 +37,7 @@ public class ComicController {
 
     private final ComicMetadataService service;
     private final ComicReadingProgressService readingProgressService;
+    private final MangaScrapeService mangaScrapeService;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
     private String rootPathsConfig;
@@ -183,6 +187,52 @@ public class ComicController {
             @Parameter(description = "漫画ID") @PathVariable Long id) {
         readingProgressService.deleteProgress(id);
         return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @PostMapping("/organize")
+    @Operation(summary = "批量整理漫画", description = "将漫画按系列归类到文件夹，清洗文件名中的无用标签")
+    public ResponseEntity<ApiResponse<String>> organizeAll() {
+        service.organizeAll();
+        return ResponseEntity.ok(ApiResponse.success("Organize completed"));
+    }
+
+    @GetMapping("/bangumi/search")
+    @Operation(summary = "搜索 Bangumi 漫画", description = "在 Bangumi 上搜索日漫（中文数据最全）")
+    public ResponseEntity<ApiResponse<List<BangumiService.SearchResult>>> searchBangumi(
+            @Parameter(description = "搜索关键词") @RequestParam String q) {
+        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.searchFromBangumi(q)));
+    }
+
+    @PostMapping("/{id:\\d+}/bangumi/bind")
+    @Operation(summary = "绑定 Bangumi 元数据", description = "将指定 Bangumi 条目的元数据绑定到本地漫画。bindSeries=true 时同步系列级元数据到同系列所有卷")
+    public ResponseEntity<ApiResponse<Comic>> bindBangumi(
+            @Parameter(description = "漫画ID") @PathVariable Long id,
+            @Parameter(description = "Bangumi 条目ID") @RequestParam Integer bangumiId,
+            @Parameter(description = "是否同步到同系列所有卷") @RequestParam(defaultValue = "true") boolean bindSeries) {
+        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindBangumi(id, bangumiId, bindSeries)));
+    }
+
+    @GetMapping("/anilist/search")
+    @Operation(summary = "搜索 AniList 漫画", description = "在 AniList 上搜索日漫（兜底源）")
+    public ResponseEntity<ApiResponse<List<AnilistSearchResult.MediaItem>>> searchAnilist(
+            @Parameter(description = "搜索关键词（漫画标题）") @RequestParam String q) {
+        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.searchFromAnilist(q)));
+    }
+
+    @PostMapping("/{id:\\d+}/anilist/bind")
+    @Operation(summary = "绑定 AniList 元数据", description = "将指定 AniList 漫画的元数据绑定到本地漫画。bindSeries=true 时同步系列级元数据到同系列所有卷")
+    public ResponseEntity<ApiResponse<Comic>> bindAnilist(
+            @Parameter(description = "漫画ID") @PathVariable Long id,
+            @Parameter(description = "AniList 漫画ID") @RequestParam Integer anilistId,
+            @Parameter(description = "是否同步到同系列所有卷") @RequestParam(defaultValue = "true") boolean bindSeries) {
+        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindAnilist(id, anilistId, bindSeries)));
+    }
+
+    @PostMapping("/auto-scrape")
+    @Operation(summary = "自动刮削所有未绑定漫画", description = "Bangumi 优先，AniList 兜底")
+    public ResponseEntity<ApiResponse<String>> autoScrape() {
+        mangaScrapeService.autoScrapeAll();
+        return ResponseEntity.ok(ApiResponse.success("Auto-scrape started"));
     }
 
     private void validatePath(String path) {

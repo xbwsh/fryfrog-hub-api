@@ -137,6 +137,14 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success("Scan completed for " + scanned.size() + " directories", scanned));
     }
 
+    @PostMapping("/organize")
+    @Operation(summary = "整理视频文件", description = "将视频文件移动到正确的元数据目录（按季/集组织）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> organizeVideos(
+            @Parameter(description = "目录路径（可选，为空则整理所有）") @RequestParam(required = false) String path) {
+        Map<String, Object> result = service.organizeVideos(path);
+        return ResponseEntity.ok(ApiResponse.success("Organize completed", result));
+    }
+
     @PostMapping("/cleanup")
     @Operation(summary = "清理无效记录", description = "删除数据库中文件已不存在的视频记录")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> cleanupInvalidRecords() {
@@ -211,6 +219,24 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
     }
 
+    @PostMapping("/{id:\\d+}/tmdb/unbind")
+    @Operation(summary = "解绑TMDB元数据", description = "清除视频的TMDB元数据绑定")
+    public ResponseEntity<ApiResponse<VideoDTO>> unbindTmdb(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.unbindTmdb(id);
+        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+    }
+
+    @PostMapping("/{id:\\d+}/tmdb/rescrape")
+    @Operation(summary = "重新刮削TMDB元数据", description = "清除现有绑定并重新从TMDB刮削元数据")
+    public ResponseEntity<ApiResponse<VideoDTO>> rescrapeTmdb(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "TMDB ID") @RequestParam Long tmdbId,
+            @Parameter(description = "媒体类型（movie/tv）") @RequestParam String mediaType) {
+        Video video = service.rescrapeVideo(id, tmdbId, mediaType);
+        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+    }
+
     @PostMapping("/tmdb/auto-scrape")
     @Operation(summary = "自动刮削所有视频", description = "自动为所有未绑定TMDB的视频搜索并绑定元数据")
     public ResponseEntity<ApiResponse<List<VideoDTO>>> autoScrapeAll() {
@@ -255,7 +281,13 @@ public class VideoController {
     public ResponseEntity<Resource> getPoster(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
-        Path posterPath = nfoService.getPosterPath(video);
+        // 优先查找实际文件所在目录
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+        Path posterPath = videoDir.resolve(baseName + "-poster.jpg");
+        if (!Files.exists(posterPath)) {
+            posterPath = nfoService.getPosterPath(video);
+        }
         if (!Files.exists(posterPath)) {
             return ResponseEntity.notFound().build();
         }
@@ -265,11 +297,16 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/fanart")
-    @Operation(summary = "获取横屏背景图", description = "返回视频的横屏背景图片")
+    @Operation(summary = "获取横屏背景图", description = "返回视频的横屏背景图")
     public ResponseEntity<Resource> getFanart(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
-        Path fanartPath = nfoService.getFanartPath(video);
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+        Path fanartPath = videoDir.resolve(baseName + "-fanart.jpg");
+        if (!Files.exists(fanartPath)) {
+            fanartPath = nfoService.getFanartPath(video);
+        }
         if (!Files.exists(fanartPath)) {
             return ResponseEntity.notFound().build();
         }
@@ -325,9 +362,11 @@ public class VideoController {
     }
 
     private VideoDTO toDTO(Video video) {
-        Path nfoPath = nfoService.getNfoPath(video);
-        Path posterPath = nfoService.getPosterPath(video);
-        Path fanartPath = nfoService.getFanartPath(video);
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+        Path nfoPath = videoDir.resolve(baseName + ".nfo");
+        Path posterPath = videoDir.resolve(baseName + "-poster.jpg");
+        Path fanartPath = videoDir.resolve(baseName + "-fanart.jpg");
         Path metadataDir = nfoService.getMetadataDir(video);
 
         VideoDTO dto = VideoDTO.fromEntity(

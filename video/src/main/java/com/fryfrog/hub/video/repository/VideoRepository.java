@@ -34,4 +34,6 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     Optional<Video> findByFileName(String fileName);
 
     List<Video> findBySeries(com.fryfrog.hub.video.model.VideoSeries series);
+
+    List<Video> findByFilePathContaining(String path);
 }

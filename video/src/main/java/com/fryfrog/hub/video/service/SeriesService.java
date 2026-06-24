@@ -66,6 +66,8 @@ public class SeriesService {
         series.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
         series.setMetadataSource("tmdb");
         series.setTotalEpisodes(detail.getNumberOfEpisodes());
+        series.setNumberOfSeasons(detail.getNumberOfSeasons());
+        series.setStatus(detail.getStatus());
 
         return seriesRepository.save(series);
     }
@@ -100,6 +102,27 @@ public class SeriesService {
                 seriesRepository.delete(series);
             }
         }
+    }
+
+    @Transactional
+    public void unbindSeriesTmdb(Long seriesId) {
+        VideoSeries series = seriesRepository.findById(seriesId)
+                .orElseThrow(() -> new RuntimeException("Series not found: " + seriesId));
+
+        log.info("Unbinding TMDB from series: {} (tmdbId={})", series.getTitle(), series.getTmdbId());
+
+        series.setTmdbId(null);
+        series.setOriginalTitle(null);
+        series.setOverview(null);
+        series.setImdbId(null);
+        series.setRating(null);
+        series.setPosterUrl(null);
+        series.setBackdropUrl(null);
+        series.setMetadataSource(null);
+        series.setStatus(null);
+        series.setNumberOfSeasons(null);
+
+        seriesRepository.save(series);
     }
 
     public Map<String, List<Video>> groupVideosBySeries(List<Video> videos) {

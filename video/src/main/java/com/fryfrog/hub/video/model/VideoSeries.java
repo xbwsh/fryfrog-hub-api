@@ -52,6 +52,12 @@ public class VideoSeries extends BaseEntity {
     @Schema(description = "元数据来源")
     private String metadataSource;
 
+    @Schema(description = "播出状态", example = "Returning Series")
+    private String status;
+
+    @Schema(description = "总季数")
+    private Integer numberOfSeasons;
+
     @Schema(description = "季数", example = "1")
     private Integer seasonNumber = 1;
 

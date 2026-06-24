@@ -157,7 +157,7 @@ public class TmdbService {
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId)
                 .queryParam("language", language)
-                .queryParam("append_to_response", "created_by")
+                .queryParam("append_to_response", "created_by,credits")
                 .toUriString();
 
         try {

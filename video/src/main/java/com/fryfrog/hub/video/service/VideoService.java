@@ -74,6 +74,9 @@ public class VideoService {
     @Value("${hub.tmdb.auto-scrape:false}")
     private boolean autoScrape;
 
+    @Value("${hub.tmdb.min-score:0.0}")
+    private double minScore;
+
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
 
     public String getRootPath() {
@@ -105,6 +108,45 @@ public class VideoService {
         Video video = getVideoById(id);
         video.setFavorite(status);
         return repository.save(video);
+    }
+
+    @Transactional
+    public Video unbindTmdb(Long videoId) {
+        Video video = getVideoById(videoId);
+
+        if (video.getTmdbId() == null) {
+            throw new IllegalStateException("Video is not bound to TMDB");
+        }
+
+        log.info("Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), video.getTmdbId());
+
+        video.setTmdbId(null);
+        video.setMediaType(null);
+        video.setMetadataSource(null);
+        video.setOriginalTitle(null);
+        video.setOverview(null);
+        video.setPosterUrl(null);
+        video.setBackdropUrl(null);
+        video.setImdbId(null);
+        video.setRating(null);
+        video.setVoteCount(null);
+        video.setDirector(null);
+        video.setActors(null);
+        video.setGenre(null);
+        video.setStatus(null);
+        video.setMetadataUpdatedAt(null);
+
+        if (video.getSeries() != null) {
+            seriesService.removeVideoFromSeries(video);
+        }
+
+        return repository.save(video);
+    }
+
+    @Transactional
+    public Video rescrapeVideo(Long videoId, Long tmdbId, String mediaType) {
+        unbindTmdb(videoId);
+        return scrapeAndBindTmdb(videoId, tmdbId, mediaType);
     }
 
     @Transactional
@@ -175,6 +217,11 @@ public class VideoService {
                 log.info("Applied local NFO metadata: {}", fileName);
             }
 
+            // 从文件名解析集数，覆盖 NFO 中可能错误的值
+            int[] se = parseSeasonEpisode(fileName);
+            video.setSeasonNumber(se[0]);
+            video.setEpisodeNumber(se[1]);
+
             Video saved = repository.save(video);
 
             if (autoScrape && saved.getTmdbId() == null && nfoData == null) {
@@ -202,13 +249,19 @@ public class VideoService {
             }
 
             TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
+            double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
+
+            if (score < minScore) {
+                log.info("Skipping auto-scrape for {} - score {} below threshold {}", video.getTitle(), score, minScore);
+                return;
+            }
 
             transactionTemplate.executeWithoutResult(status -> {
                 scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
             });
 
-            log.info("Auto-scraped: {} -> TMDB {} ({})",
-                    video.getTitle(), bestMatch.getId(), bestMatch.getMediaType());
+            log.info("Auto-scraped: {} -> TMDB {} ({}) score={}",
+                    video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
         } catch (Exception e) {
             log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage(), e);
         }
@@ -404,6 +457,12 @@ public class VideoService {
             return new int[]{1, Integer.parseInt(hashMatch.group(1))};
         }
 
+        // 尝试匹配 - 02 或 – 02 格式（减号后跟数字，数字后可以有其他内容如标签）
+        var dashNumberMatch = java.util.regex.Pattern.compile("[-–—]\\s*(\\d{1,4})\\b").matcher(baseName);
+        if (dashNumberMatch.find()) {
+            return new int[]{1, Integer.parseInt(dashNumberMatch.group(1))};
+        }
+
         // 尝试匹配末尾数字，但要求前面有明确的分隔符
         // 分隔符：空格、点、下划线、减号、全角空格等
         var tailNumberMatch = java.util.regex.Pattern.compile("^(.*?)[\\s._\\-　](\\d{1,4})$").matcher(baseName);
@@ -575,9 +634,80 @@ public class VideoService {
         }
     }
 
+    @Transactional
+    public Map<String, Object> organizeVideos(String path) {
+        List<Video> videos;
+        if (path != null && !path.isBlank()) {
+            videos = repository.findByFilePathContaining(path);
+        } else {
+            videos = repository.findAll();
+        }
+
+        int moved = 0;
+        int skipped = 0;
+        int failed = 0;
+
+        for (Video video : videos) {
+            try {
+                Path oldDir = Paths.get(video.getFilePath()).getParent();
+                Path metadataDir = nfoService.getMetadataDir(video);
+
+                if (oldDir.equals(metadataDir)) {
+                    skipped++;
+                    continue;
+                }
+
+                Files.createDirectories(metadataDir);
+
+                Path videoPath = Paths.get(video.getFilePath());
+                Path newVideoPath = metadataDir.resolve(video.getFileName());
+
+                // 移动视频文件
+                if (Files.exists(videoPath) && !Files.exists(newVideoPath)) {
+                    Files.move(videoPath, newVideoPath);
+                    video.setFilePath(newVideoPath.toString());
+                    log.info("Moved video: {} -> {}", videoPath, newVideoPath);
+                }
+
+                // 移动关联的元数据文件（NFO、poster、fanart）
+                String baseName = nfoService.getBaseName(video.getFileName());
+                moveAssociatedFile(oldDir, metadataDir, baseName + ".nfo");
+                moveAssociatedFile(oldDir, metadataDir, baseName + "-poster.jpg");
+                moveAssociatedFile(oldDir, metadataDir, baseName + "-fanart.jpg");
+
+                repository.save(video);
+                moved++;
+            } catch (Exception e) {
+                failed++;
+                log.error("Failed to organize {}: {}", video.getFileName(), e.getMessage());
+            }
+        }
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("total", videos.size());
+        result.put("moved", moved);
+        result.put("skipped", skipped);
+        result.put("failed", failed);
+        return result;
+    }
+
+    private void moveAssociatedFile(Path oldDir, Path newDir, String fileName) {
+        try {
+            Path oldFile = oldDir.resolve(fileName);
+            Path newFile = newDir.resolve(fileName);
+            if (Files.exists(oldFile) && !Files.exists(newFile)) {
+                Files.move(oldFile, newFile);
+                log.info("Moved associated file: {}", fileName);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to move associated file {}: {}", fileName, e.getMessage());
+        }
+    }
+
     public List<Video> autoScrapeAll() {
         List<Video> videos = repository.findByTmdbIdIsNull();
         int scraped = 0;
+        int skipped = 0;
 
         for (Video video : videos) {
             try {
@@ -593,17 +723,25 @@ public class VideoService {
                 }
 
                 TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
+                double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
+
+                if (score < minScore) {
+                    log.info("Skipping {} - score {} below threshold {}", video.getTitle(), score, minScore);
+                    skipped++;
+                    continue;
+                }
+
                 scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
                 scraped++;
 
-                log.info("Auto-scraped: {} -> TMDB {} ({})",
-                        video.getTitle(), bestMatch.getId(), bestMatch.getMediaType());
+                log.info("Auto-scraped: {} -> TMDB {} ({}) score={}",
+                        video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
             } catch (Exception e) {
                 log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
             }
         }
 
-        log.info("Auto-scrape completed: {}/{} videos scraped", scraped, videos.size());
+        log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, minScore);
         return repository.findAll();
     }
 
@@ -632,9 +770,11 @@ public class VideoService {
         video.setOverview(detail.getOverview());
         video.setYear(detail.getYear());
         video.setDirector(detail.getDirector());
+        video.setActors(detail.getActors());
         video.setGenre(detail.getGenres());
         video.setRating(detail.getVoteAverage());
         video.setVoteCount(detail.getVoteCount());
+        video.setStatus(detail.getStatus());
         video.setPosterUrl(tmdbService.getPosterUrl(detail.getPosterPath()));
         video.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
     }

@@ -119,4 +119,7 @@ public class Video extends BaseEntity {
 
     @Schema(description = "系列名称（来自 NFO 或目录名）")
     private String seriesName;
+
+    @Schema(description = "播出状态", example = "Returning Series")
+    private String status;
 }

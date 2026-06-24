@@ -85,6 +85,9 @@ public class VideoDTO {
     @Schema(description = "评分人数", example = "12345")
     private Integer voteCount;
 
+    @Schema(description = "播出状态", example = "Returning Series")
+    private String status;
+
     @Schema(description = "元数据来源", example = "tmdb")
     private String metadataSource;
 
@@ -157,6 +160,7 @@ public class VideoDTO {
         dto.setImdbId(video.getImdbId());
         dto.setRating(video.getRating());
         dto.setVoteCount(video.getVoteCount());
+        dto.setStatus(video.getStatus());
         dto.setMetadataSource(video.getMetadataSource());
         dto.setMetadataUpdatedAt(video.getMetadataUpdatedAt());
         dto.setNfoPath(nfoPath);

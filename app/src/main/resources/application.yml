@@ -37,6 +37,11 @@ hub:
     language: ${TMDB_LANGUAGE:zh-CN}
     image-size: ${TMDB_IMAGE_SIZE:original}
     auto-scrape: ${TMDB_AUTO_SCRAPE:false}
+    min-score: ${TMDB_MIN_SCORE:0.0}
+  anilist:
+    language: ${ANILIST_LANGUAGE:zh-CN}
+    auto-scrape: ${ANILIST_AUTO_SCRAPE:false}
+    min-score: ${ANILIST_MIN_SCORE:0.0}
   proxy:
     host: ${PROXY_HOST:127.0.0.1}
     port: ${PROXY_PORT:7890}

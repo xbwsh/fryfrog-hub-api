@@ -43,8 +43,14 @@ public class SeriesDTO {
     @Schema(description = "季数")
     private Integer seasonNumber;
 
+    @Schema(description = "总季数")
+    private Integer numberOfSeasons;
+
     @Schema(description = "总集数")
     private Integer totalEpisodes;
+
+    @Schema(description = "播出状态", example = "Returning Series")
+    private String status;
 
     @Schema(description = "实际集数")
     private Integer episodeCount;
@@ -68,8 +74,10 @@ public class SeriesDTO {
         dto.setPosterUrl(series.getPosterUrl());
         dto.setBackdropUrl(series.getBackdropUrl());
         dto.setSeasonNumber(series.getSeasonNumber());
+        dto.setNumberOfSeasons(series.getNumberOfSeasons());
         dto.setTotalEpisodes(series.getTotalEpisodes());
         dto.setEpisodeCount(series.getEpisodeCount());
+        dto.setStatus(series.getStatus());
         dto.setMetadataDir(series.getMetadataDir());
         dto.setEpisodes(episodes);
         return dto;

@@ -19,4 +19,8 @@ public interface ComicRepository extends JpaRepository<Comic, Long> {
     Optional<Comic> findByFilePath(String filePath);
 
     List<Comic> findByFavoriteTrue();
+
+    List<Comic> findByMetadataSourceIdIsNull();
+
+    List<Comic> findBySeriesIgnoreCase(String series);
 }

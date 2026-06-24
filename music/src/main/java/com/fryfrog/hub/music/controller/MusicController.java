@@ -132,16 +132,35 @@ public class MusicController {
     public ResponseEntity<Resource> getCoverArt(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
         MusicTrack track = service.getTrackById(id);
-        if (track.getCoverArtPath() == null) {
+        File coverFile = findCoverFile(track);
+        if (coverFile == null) {
             return ResponseEntity.notFound().build();
         }
-        File coverFile = new File(track.getCoverArtPath());
-        if (!coverFile.exists()) {
-            return ResponseEntity.notFound().build();
-        }
+        MediaType mediaType = resolveImageMediaType(coverFile.getName());
         return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
+                .contentType(mediaType)
                 .body(new FileSystemResource(coverFile));
+    }
+
+    private File findCoverFile(MusicTrack track) {
+        if (track.getCoverArtPath() != null) {
+            File coverFile = new File(track.getCoverArtPath());
+            if (coverFile.exists()) {
+                return coverFile;
+            }
+        }
+        Path audioPath = Paths.get(track.getFilePath());
+        Path parentDir = audioPath.getParent();
+        if (parentDir == null) {
+            return null;
+        }
+        for (String ext : List.of("cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "cover.gif")) {
+            File fallback = parentDir.resolve(ext).toFile();
+            if (fallback.exists()) {
+                return fallback;
+            }
+        }
+        return null;
     }
 
     @GetMapping("/{id:\\d+}/stream")
@@ -228,6 +247,23 @@ public class MusicController {
     @Operation(summary = "刮削状态", description = "返回待刮削曲目数量")
     public ResponseEntity<ApiResponse<Long>> scrapeStatus() {
         return ResponseEntity.ok(ApiResponse.success(scrapeService.countPendingScrape()));
+    }
+
+    private MediaType resolveImageMediaType(String fileName) {
+        if (fileName == null) {
+            return MediaType.IMAGE_JPEG;
+        }
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".png")) {
+            return MediaType.IMAGE_PNG;
+        }
+        if (lower.endsWith(".webp")) {
+            return MediaType.parseMediaType("image/webp");
+        }
+        if (lower.endsWith(".gif")) {
+            return MediaType.IMAGE_GIF;
+        }
+        return MediaType.IMAGE_JPEG;
     }
 
     private void validatePath(String path) {
