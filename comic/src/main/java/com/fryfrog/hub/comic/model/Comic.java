@@ -38,9 +38,13 @@ public class Comic extends BaseEntity {
     @Schema(description = "类型/标签", example = "少年漫画")
     private String genre;
 
-    @Schema(description = "摘要描述")
+    @Schema(description = "摘要描述（单行本）")
     @Column(columnDefinition = "TEXT")
     private String summary;
+
+    @Schema(description = "系列简介（总览）")
+    @Column(columnDefinition = "TEXT")
+    private String seriesSummary;
 
     @Schema(description = "文件完整路径")
     @Column(unique = true)
@@ -92,6 +96,9 @@ public class Comic extends BaseEntity {
     @Schema(description = "ISBN", example = "9784088820118")
     private String isbn;
 
-    @Schema(description = "发售日期", example = "2019-07-04")
+    @Schema(description = "发售日期（单行本）", example = "2019-07-04")
     private String releaseDate;
+
+    @Schema(description = "连载开始日期", example = "2019-03-25")
+    private String serializationStart;
 }

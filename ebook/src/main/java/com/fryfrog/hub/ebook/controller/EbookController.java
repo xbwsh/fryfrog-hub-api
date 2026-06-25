@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -33,6 +34,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/ebook")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "电子书管理", description = "电子书元数据查询、扫描接口")
 public class EbookController {
 
@@ -103,6 +105,19 @@ public class EbookController {
         validatePath(path);
         service.scanDirectory(path);
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
+    }
+
+    @PostMapping("/rescan")
+    @Operation(summary = "一键刷新电子书库", description = "扫描所有根路径 → 整理文件夹")
+    public ResponseEntity<ApiResponse<String>> rescan() {
+        for (String rootPath : getRootPaths()) {
+            try {
+                service.scanDirectory(rootPath);
+            } catch (Exception e) {
+                log.error("Failed to scan ebook directory {}: {}", rootPath, e.getMessage());
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan completed"));
     }
 
     @GetMapping("/{id:\\d+}/cover")

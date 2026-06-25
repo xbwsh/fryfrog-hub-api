@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.dto.WatchProgressDTO;
+import com.fryfrog.hub.video.dto.WatchProgressRequest;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.service.CoverArtService;
@@ -150,6 +151,21 @@ public class VideoController {
     public ResponseEntity<ApiResponse<Map<String, Integer>>> cleanupInvalidRecords() {
         int removed = service.cleanupInvalidRecords();
         return ResponseEntity.ok(ApiResponse.success(Map.of("removed", removed)));
+    }
+
+    @PostMapping("/rescan")
+    @Operation(summary = "一键刷新视频库", description = "扫描所有根路径 → 整理文件夹 → 自动刮削未绑定视频")
+    public ResponseEntity<ApiResponse<String>> rescan() {
+        for (String rootPath : getRootPaths()) {
+            try {
+                service.scanDirectory(rootPath);
+            } catch (Exception e) {
+                log.error("Failed to scan video directory {}: {}", rootPath, e.getMessage());
+            }
+        }
+        service.organizeVideos(null);
+        service.autoScrapeAll();
+        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan → organize → scrape"));
     }
 
     @GetMapping("/{id:\\d+}/cover")
@@ -347,9 +363,8 @@ public class VideoController {
     @Operation(summary = "保存观看进度", description = "保存指定视频的观看进度")
     public ResponseEntity<ApiResponse<WatchProgressDTO>> saveProgress(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "播放位置（秒）") @RequestParam Double position,
-            @Parameter(description = "视频总时长（秒）") @RequestParam Double duration) {
-        WatchProgress progress = watchProgressService.saveProgress(id, position, duration);
+            @RequestBody WatchProgressRequest request) {
+        WatchProgress progress = watchProgressService.saveProgress(id, request.getPosition(), request.getDuration());
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 

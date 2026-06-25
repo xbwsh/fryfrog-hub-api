@@ -105,6 +105,39 @@ public class BangumiService {
         return List.of();
     }
 
+    public List<Character> getCharacters(Integer subjectId) {
+        if (subjectId == null) return List.of();
+
+        String url = org.springframework.web.util.UriComponentsBuilder.fromHttpUrl(BASE_URL + "/v0/subjects/" + subjectId + "/characters")
+                .queryParam("lang", "zh")
+                .toUriString();
+        String body = httpGetWithRetry(url);
+        if (body == null) return List.of();
+
+        try {
+            return objectMapper.readValue(body,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Character.class));
+        } catch (Exception e) {
+            log.error("Failed to parse Bangumi characters: subjectId={}: {}", subjectId, e.getMessage(), e);
+        }
+        return List.of();
+    }
+
+    public CharacterDetail getCharacterDetail(Integer characterId) {
+        if (characterId == null) return null;
+
+        String url = BASE_URL + "/v0/characters/" + characterId;
+        String body = httpGetWithRetry(url);
+        if (body == null) return null;
+
+        try {
+            return objectMapper.readValue(body, CharacterDetail.class);
+        } catch (Exception e) {
+            log.error("Failed to parse Bangumi character detail: id={}: {}", characterId, e.getMessage(), e);
+        }
+        return null;
+    }
+
     private String httpGetWithRetry(String url) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("User-Agent", "FryfrogHub/0.1.0");
@@ -330,6 +363,86 @@ public class BangumiService {
             String url = images.getLarge();
             if (url == null || url.isBlank()) url = images.getCommon();
             return url;
+        }
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Character {
+        @JsonProperty("id")
+        private Integer id;
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("name_cn")
+        private String nameCn;
+
+        @JsonProperty("summary")
+        private String summary;
+
+        @JsonProperty("images")
+        private SearchResult.Image images;
+
+        @JsonProperty("role")
+        private String role;
+
+        public String getDisplayName() {
+            if (nameCn != null && !nameCn.isBlank()) return nameCn;
+            return name;
+        }
+
+        public String getImageUrl() {
+            if (images == null) return null;
+            String url = images.getLarge();
+            if (url == null || url.isBlank()) url = images.getCommon();
+            return url;
+        }
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CharacterDetail {
+        @JsonProperty("id")
+        private Integer id;
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("summary")
+        private String summary;
+
+        @JsonProperty("images")
+        private SearchResult.Image images;
+
+        @JsonProperty("infobox")
+        private List<InfoboxEntry> infobox;
+
+        public String getChineseName() {
+            if (infobox == null) return null;
+            for (InfoboxEntry entry : infobox) {
+                if ("简体中文名".equals(entry.getKey()) || "中文名".equals(entry.getKey())) {
+                    String val = entry.getValueAsString();
+                    if (val != null && !val.isBlank()) return val;
+                }
+            }
+            return null;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class InfoboxEntry {
+            @JsonProperty("key")
+            private String key;
+
+            @JsonProperty("value")
+            private Object value;
+
+            public String getValueAsString() {
+                if (value == null) return null;
+                if (value instanceof String s) return s;
+                return value.toString();
+            }
         }
     }
 }

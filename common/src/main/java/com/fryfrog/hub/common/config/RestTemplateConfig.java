@@ -1,6 +1,6 @@
 package com.fryfrog.hub.common.config;
 
-import org.springframework.beans.factory.annotation.Value;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -16,11 +16,11 @@ import java.security.cert.X509Certificate;
 @Configuration
 public class RestTemplateConfig {
 
-    @Value("${hub.proxy.host:}")
-    private String proxyHost;
+    private final SystemSettingService settingService;
 
-    @Value("${hub.proxy.port:0}")
-    private int proxyPort;
+    public RestTemplateConfig(SystemSettingService settingService) {
+        this.settingService = settingService;
+    }
 
     @Bean
     public RestTemplate restTemplate() {
@@ -36,6 +36,9 @@ public class RestTemplateConfig {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectTimeout);
         factory.setReadTimeout(readTimeout);
+
+        String proxyHost = settingService.getValue("proxy.host", "");
+        int proxyPort = settingService.getInteger("proxy.port", 0);
 
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));

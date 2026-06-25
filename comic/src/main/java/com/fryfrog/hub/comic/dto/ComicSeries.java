@@ -26,6 +26,12 @@ public class ComicSeries {
     @Schema(description = "卷数")
     private Integer volumeCount;
 
+    @Schema(description = "系列简介（总览）")
+    private String seriesSummary;
+
+    @Schema(description = "连载开始日期", example = "2019-03-25")
+    private String serializationStart;
+
     @Schema(description = "该系列下的所有漫画")
     private List<Comic> comics;
 }

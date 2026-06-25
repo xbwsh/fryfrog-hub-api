@@ -1,13 +1,15 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.comic.dto.anilist.AnilistSearchResult;
 import com.fryfrog.hub.comic.model.Comic;
+import com.fryfrog.hub.comic.model.ComicCharacter;
+import com.fryfrog.hub.comic.repository.ComicCharacterRepository;
 import com.fryfrog.hub.comic.repository.ComicRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -32,14 +34,18 @@ public class MangaScrapeService {
     private final BangumiService bangumiService;
     private final AnilistService anilistService;
     private final ComicRepository repository;
+    private final ComicCharacterRepository characterRepository;
     private final ComicMetadataService comicMetadataService;
     private final RestTemplate scraperRestTemplate;
+    private final SystemSettingService settingService;
 
-    @Value("${hub.anilist.auto-scrape:false}")
-    private boolean autoScrape;
+    private boolean isAutoScrape() {
+        return settingService.getBoolean("anilist.auto-scrape", false);
+    }
 
-    @Value("${hub.anilist.min-score:0.0}")
-    private double minScore;
+    private double getMinScore() {
+        return settingService.getDouble("anilist.min-score", 0.0);
+    }
 
     public List<BangumiService.SearchResult> searchFromBangumi(String query) {
         String cleaned = cleanTitleForSearch(query);
@@ -48,7 +54,10 @@ public class MangaScrapeService {
             results = bangumiService.searchManga(query);
         }
         List<BangumiService.SearchResult> sorted = new ArrayList<>(results);
-        sorted.sort(Comparator.comparingDouble(r -> r.getScore() != null ? -r.getScore() : 0));
+        sorted.sort(Comparator.<BangumiService.SearchResult>comparingInt(r -> {
+            BangumiService.SearchResult.Rating rating = r.getRating();
+            return rating != null && rating.getTotal() != null ? rating.getTotal() : 0;
+        }).reversed());
         return sorted;
     }
 
@@ -76,6 +85,10 @@ public class MangaScrapeService {
 
         updateComicFromBangumiDetail(comic, detail);
 
+        if (detail.getSummary() != null && !detail.getSummary().isBlank()) {
+            comic.setSeriesSummary(detail.getSummary());
+        }
+
         comic.setMetadataSource("bangumi");
         comic.setMetadataSourceId(bangumiId);
         comic.setMetadataUpdatedAt(LocalDateTime.now());
@@ -84,6 +97,9 @@ public class MangaScrapeService {
 
         Comic saved = repository.save(comic);
         log.info("Bound comic '{}' to Bangumi subject id={}", saved.getTitle(), bangumiId);
+
+        downloadCoverFromBangumi(saved, detail);
+        saveBangumiCharacters(saved.getId(), bangumiId);
 
         if (bindSeries) {
             propagateSeriesMetadata(saved);
@@ -102,6 +118,10 @@ public class MangaScrapeService {
 
         updateComicFromAnilistDetail(comic, detail);
 
+        if (detail.getDescription() != null && !detail.getDescription().isBlank()) {
+            comic.setSeriesSummary(detail.getDescription());
+        }
+
         comic.setMetadataSource("anilist");
         comic.setMetadataSourceId(anilistId);
         comic.setMetadataUpdatedAt(LocalDateTime.now());
@@ -110,6 +130,9 @@ public class MangaScrapeService {
 
         Comic saved = repository.save(comic);
         log.info("Bound comic '{}' to AniList manga id={}", saved.getTitle(), anilistId);
+
+        downloadCoverFromAnilist(saved, detail);
+        saveAnilistCharacters(saved.getId(), detail);
 
         if (bindSeries) {
             propagateSeriesMetadata(saved);
@@ -140,12 +163,17 @@ public class MangaScrapeService {
                 comic.setSeries(source.getSeries());
                 comic.setYear(source.getYear());
                 comic.setGenre(source.getGenre());
-                comic.setRating(source.getRating());
                 comic.setOriginalTitle(source.getOriginalTitle());
                 comic.setTitle(source.getTitle());
                 comic.setMetadataSource(source.getMetadataSource());
                 comic.setMetadataSourceId(source.getMetadataSourceId());
                 comic.setMetadataUpdatedAt(LocalDateTime.now());
+                if (source.getSeriesSummary() != null) {
+                    comic.setSeriesSummary(source.getSeriesSummary());
+                }
+                if (source.getSerializationStart() != null) {
+                    comic.setSerializationStart(source.getSerializationStart());
+                }
             }
 
             if (comic.getVolume() != null && volumeSubjectMap.containsKey(comic.getVolume())) {
@@ -158,12 +186,13 @@ public class MangaScrapeService {
 
                 VolumeInfo volInfo = volumeInfoMap.get(comic.getVolume());
                 if (volInfo != null) {
-                    if (volInfo.summary != null && !volInfo.summary.isBlank()) {
-                        comic.setSummary(volInfo.summary);
+                    if (volInfo.summary() != null && !volInfo.summary().isBlank()) {
+                        comic.setSummary(volInfo.summary());
                     }
-                    if (volInfo.publisher != null) comic.setPublisher(volInfo.publisher);
-                    if (volInfo.isbn != null) comic.setIsbn(volInfo.isbn);
-                    if (volInfo.releaseDate != null) comic.setReleaseDate(volInfo.releaseDate);
+                    if (volInfo.publisher() != null) comic.setPublisher(volInfo.publisher());
+                    if (volInfo.isbn() != null) comic.setIsbn(volInfo.isbn());
+                    if (volInfo.releaseDate() != null) comic.setReleaseDate(volInfo.releaseDate());
+                    if (volInfo.rating() != null) comic.setRating(volInfo.rating());
                 }
             } else {
                 comicMetadataService.reExtractCover(comic);
@@ -180,7 +209,7 @@ public class MangaScrapeService {
                 source.getTitle(), seriesComics.size() - 1, source.getSeries());
     }
 
-    private record VolumeInfo(String summary, String publisher, String isbn, String releaseDate) {}
+    private record VolumeInfo(String summary, String publisher, String isbn, String releaseDate, Double rating) {}
 
     private Map<Integer, BangumiService.RelatedSubject> buildVolumeSubjectMap(Integer subjectId) {
         Map<Integer, BangumiService.RelatedSubject> map = new HashMap<>();
@@ -217,9 +246,10 @@ public class MangaScrapeService {
                 String publisher = extractInfoboxValue(detail, "出版社");
                 String isbn = extractInfoboxValue(detail, "ISBN");
                 String releaseDate = detail.getDate();
+                Double rating = detail.getScore();
 
-                map.put(volNum, new VolumeInfo(summary, publisher, isbn, releaseDate));
-                log.debug("Vol {}: publisher={}, isbn={}, date={}", volNum, publisher, isbn, releaseDate);
+                map.put(volNum, new VolumeInfo(summary, publisher, isbn, releaseDate, rating));
+                log.debug("Vol {}: publisher={}, isbn={}, date={}, rating={}", volNum, publisher, isbn, releaseDate, rating);
 
                 Thread.sleep(200);
             } catch (Exception e) {
@@ -259,7 +289,7 @@ public class MangaScrapeService {
 
     @Async
     public void autoScrapeAll() {
-        if (!autoScrape) {
+        if (!isAutoScrape()) {
             log.info("Auto-scrape is disabled");
             return;
         }
@@ -296,7 +326,7 @@ public class MangaScrapeService {
         List<AnilistSearchResult.MediaItem> aniResults = searchFromAnilist(query);
         if (!aniResults.isEmpty()) {
             AnilistSearchResult.MediaItem best = aniResults.get(0);
-            if (best.getMeanScore() != null && best.getMeanScore() >= minScore * 10) {
+            if (best.getMeanScore() != null && best.getMeanScore() >= getMinScore() * 10) {
                 return bindAnilist(comic.getId(), best.getId(), false);
             }
         }
@@ -332,14 +362,27 @@ public class MangaScrapeService {
 
         if (detail.getInfobox() != null) {
             for (BangumiService.SubjectDetail.InfoboxEntry entry : detail.getInfobox()) {
-                if ("作者".equals(entry.getKey()) || "作画".equals(entry.getKey())) {
-                    String val = entry.getValue() != null ? entry.getValue().toString() : null;
-                    if (val != null && !val.isBlank()) {
-                        if (comic.getAuthor() == null || comic.getAuthor().isBlank()) {
-                            comic.setAuthor(val);
-                        } else if (!comic.getAuthor().contains(val)) {
-                            comic.setAuthor(comic.getAuthor() + ", " + val);
-                        }
+                String key = entry.getKey();
+                String val = entry.getValue() != null ? entry.getValue().toString() : null;
+                if (val == null || val.isBlank()) continue;
+
+                if ("作者".equals(key) || "作画".equals(key)) {
+                    if (comic.getAuthor() == null || comic.getAuthor().isBlank()) {
+                        comic.setAuthor(val);
+                    } else if (!comic.getAuthor().contains(val)) {
+                        comic.setAuthor(comic.getAuthor() + ", " + val);
+                    }
+                } else if ("出版社".equals(key)) {
+                    if (comic.getPublisher() == null || comic.getPublisher().isBlank()) {
+                        comic.setPublisher(val);
+                    }
+                } else if ("发售日".equals(key)) {
+                    if (comic.getReleaseDate() == null || comic.getReleaseDate().isBlank()) {
+                        comic.setReleaseDate(val);
+                    }
+                } else if ("连载开始".equals(key)) {
+                    if (comic.getSerializationStart() == null || comic.getSerializationStart().isBlank()) {
+                        comic.setSerializationStart(val);
                     }
                 }
             }
@@ -366,8 +409,6 @@ public class MangaScrapeService {
         if (newSeriesName != null && !newSeriesName.isBlank()) {
             comic.setSeries(newSeriesName);
         }
-
-        downloadCoverFromBangumi(comic, detail);
     }
 
     private void updateComicFromAnilistDetail(Comic comic, AnilistSearchResult.MediaItem detail) {
@@ -429,8 +470,6 @@ public class MangaScrapeService {
                 comic.setSummary(desc);
             }
         }
-
-        downloadCoverFromAnilist(comic, detail);
     }
 
     private void downloadCoverFromBangumi(Comic comic, BangumiService.SubjectDetail detail) {
@@ -442,6 +481,7 @@ public class MangaScrapeService {
             }
         }
         downloadCover(comic, coverUrl, "bangumi_" + detail.getId());
+        downloadSeriesCover(comic, coverUrl);
     }
 
     private void downloadCoverFromAnilist(Comic comic, AnilistSearchResult.MediaItem detail) {
@@ -453,16 +493,19 @@ public class MangaScrapeService {
             }
         }
         downloadCover(comic, coverUrl, "anilist_" + detail.getId());
+        downloadSeriesCover(comic, coverUrl);
     }
 
     private void downloadCover(Comic comic, String coverUrl, String filePrefix) {
         if (coverUrl == null || coverUrl.isBlank()) return;
+        if (comic.getFilePath() == null || comic.getFilePath().isBlank()) return;
 
         try {
-            Path coverDir = Paths.get(comicMetadataService.getFirstRootPath(), ".cache", "covers");
-            Files.createDirectories(coverDir);
+            Path comicDir = Paths.get(comic.getFilePath()).getParent();
+            if (comicDir == null) return;
+            Files.createDirectories(comicDir);
 
-            Path coverPath = coverDir.resolve(filePrefix + ".jpg");
+            Path coverPath = comicDir.resolve(filePrefix + "_cover.jpg");
             if (Files.exists(coverPath)) {
                 comic.setCoverArtPath(coverPath.toAbsolutePath().toString());
                 return;
@@ -482,6 +525,67 @@ public class MangaScrapeService {
             }
         } catch (Exception e) {
             log.warn("Failed to download cover for '{}': {}", comic.getTitle(), e.getMessage());
+        }
+    }
+
+    private String downloadCharacterImage(Comic comic, String imageUrl, String characterName) {
+        if (imageUrl == null || imageUrl.isBlank() || comic.getFilePath() == null) return null;
+
+        try {
+            Path comicDir = Paths.get(comic.getFilePath()).getParent();
+            if (comicDir == null) return null;
+
+            Path charactersDir = comicDir.resolve("characters");
+            Files.createDirectories(charactersDir);
+
+            String safeName = characterName.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+            if (safeName.isBlank()) safeName = "character_" + System.currentTimeMillis();
+            Path imagePath = charactersDir.resolve(safeName + ".jpg");
+
+            if (Files.exists(imagePath)) {
+                return imagePath.toAbsolutePath().toString();
+            }
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent", "FryfrogHub/0.1.0");
+            HttpEntity<Void> request = new HttpEntity<>(headers);
+            ResponseEntity<byte[]> response = scraperRestTemplate.exchange(
+                    imageUrl, HttpMethod.GET, request, byte[].class);
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Files.write(imagePath, response.getBody());
+                log.info("Downloaded character image '{}' to {}", characterName, imagePath);
+                return imagePath.toAbsolutePath().toString();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to download character image '{}': {}", characterName, e.getMessage());
+        }
+        return null;
+    }
+
+    private void downloadSeriesCover(Comic comic, String coverUrl) {
+        if (coverUrl == null || coverUrl.isBlank()) return;
+        if (comic.getFilePath() == null || comic.getFilePath().isBlank()) return;
+
+        try {
+            Path comicDir = Paths.get(comic.getFilePath()).getParent();
+            if (comicDir == null) return;
+
+            Path seriesCoverPath = comicDir.resolve("series_cover.jpg");
+            if (Files.exists(seriesCoverPath)) return;
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent", "FryfrogHub/0.1.0");
+            HttpEntity<Void> request = new HttpEntity<>(headers);
+            ResponseEntity<byte[]> response = scraperRestTemplate.exchange(
+                    coverUrl, HttpMethod.GET, request, byte[].class);
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Files.write(seriesCoverPath, response.getBody());
+                log.info("Downloaded series cover to {}", seriesCoverPath);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to download series cover: {}", e.getMessage());
         }
     }
 
@@ -521,15 +625,27 @@ public class MangaScrapeService {
             comic.setFilePath(targetPath.toAbsolutePath().toString());
 
             updateCoverAndThumbnailPaths(comic, currentDir, seriesDir);
+            moveCharacterImages(currentDir, seriesDir);
 
-            if (Files.isDirectory(currentDir) && isDirEmpty(currentDir) && !currentDir.equals(rootDir)) {
-                Files.deleteIfExists(currentDir);
-                log.info("Removed empty old folder: {}", currentDir);
-            }
+            cleanupEmptyFolders(currentDir, rootDir);
 
             log.info("Moved comic '{}' to series folder: {}", comic.getTitle(), seriesDir);
         } catch (IOException e) {
-            log.error("Failed to move comic '{}': {}", comic.getTitle(), e.getMessage(), e);
+            log.error("Failed to move comic '{}': {}", comic.getTitle(), e.getMessage());
+        }
+    }
+
+    private void cleanupEmptyFolders(Path startDir, Path rootDir) throws IOException {
+        Path dir = startDir;
+        while (dir != null && !dir.equals(rootDir) && Files.isDirectory(dir)) {
+            if (isDirEmpty(dir)) {
+                Path parent = dir.getParent();
+                Files.deleteIfExists(dir);
+                log.info("Removed empty folder: {}", dir);
+                dir = parent;
+            } else {
+                break;
+            }
         }
     }
 
@@ -562,6 +678,27 @@ public class MangaScrapeService {
             }
         }
 
+        String comicBaseName = comic.getFileName().replaceAll("\\.[^.]+$", "");
+        try (var stream = Files.list(oldDir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String name = p.getFileName().toString();
+                        return name.endsWith("_cover.jpg") && name.startsWith(comicBaseName);
+                    })
+                    .forEach(oldCover -> {
+                        try {
+                            Path newCover = newDir.resolve(oldCover.getFileName());
+                            if (!Files.exists(newCover)) {
+                                Files.move(oldCover, newCover);
+                            }
+                        } catch (IOException e) {
+                            log.warn("Failed to move extracted cover {}: {}", oldCover.getFileName(), e.getMessage());
+                        }
+                    });
+        } catch (IOException e) {
+            log.warn("Failed to scan old dir for covers: {}", e.getMessage());
+        }
+
         if (comic.getThumbnailDirPath() != null && !comic.getThumbnailDirPath().isBlank()) {
             Path oldThumbDir = Paths.get(comic.getThumbnailDirPath());
             if (oldThumbDir.startsWith(oldDir)) {
@@ -575,6 +712,35 @@ public class MangaScrapeService {
                     }
                 }
             }
+        }
+    }
+
+    private void moveCharacterImages(Path oldDir, Path newDir) {
+        Path oldCharsDir = oldDir.resolve("characters");
+        if (!Files.isDirectory(oldCharsDir)) return;
+
+        try {
+            Path newCharsDir = newDir.resolve("characters");
+            Files.createDirectories(newCharsDir);
+
+            try (var stream = Files.list(oldCharsDir)) {
+                stream.filter(Files::isRegularFile).forEach(file -> {
+                    try {
+                        Path target = newCharsDir.resolve(file.getFileName());
+                        if (!Files.exists(target)) {
+                            Files.move(file, target);
+                        }
+                    } catch (IOException e) {
+                        log.warn("Failed to move character image {}: {}", file.getFileName(), e.getMessage());
+                    }
+                });
+            }
+
+            if (isDirEmpty(oldCharsDir)) {
+                Files.deleteIfExists(oldCharsDir);
+            }
+        } catch (IOException e) {
+            log.warn("Failed to move character images: {}", e.getMessage());
         }
     }
 
@@ -600,15 +766,16 @@ public class MangaScrapeService {
         if (title == null || title.isBlank()) return title;
 
         String cleaned = title;
-        cleaned = cleaned.replaceAll("\\[.*?\\]", " ");
-        cleaned = cleaned.replaceAll("【.*?】", " ");
-        cleaned = cleaned.replaceAll("\\(.*?\\)", " ");
-        cleaned = cleaned.replaceAll("（.*?）", " ");
+        cleaned = cleaned.replaceAll("(?i)\\[.*?(?:raw|scanned|digital|uncensored|hololive|moe|kmoe|ahoge|comic|magazine|tankoubon|bilibili|dmzj|包子漫画|拷贝漫画).*?\\]", " ");
+        cleaned = cleaned.replaceAll("(?i)【.*?(?:raw|scanned|digital|uncensored|moe|kmoe|ahoge|comic|magazine|bilibili|dmzj).*?】", " ");
+
+        cleaned = cleaned.replaceAll("\\[|\\]", " ");
+        cleaned = cleaned.replaceAll("【|】", " ");
 
         cleaned = cleaned.replaceAll("(?i)[Vv]ol\\.?\\s*\\d+", " ");
         cleaned = cleaned.replaceAll("卷\\s*\\d+", " ");
+        cleaned = cleaned.replaceAll("第\\s*\\d+\\s*卷", " ");
         cleaned = cleaned.replaceAll("#\\s*\\d+", " ");
-        cleaned = cleaned.replaceAll("(?i)第\\s*\\d+\\s*卷", " ");
 
         cleaned = cleaned.replaceAll("\\.(?:cbz|cbr|zip|rar|epub)$", "");
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
@@ -618,5 +785,133 @@ public class MangaScrapeService {
 
     public boolean isConfigured() {
         return true;
+    }
+
+    private void saveBangumiCharacters(Long comicId, Integer subjectId) {
+        try {
+            List<BangumiService.Character> characters = bangumiService.getCharacters(subjectId);
+
+            if (characters.isEmpty()) {
+                Integer seriesId = findBangumiSeriesSubjectId(subjectId);
+                if (seriesId != null && !seriesId.equals(subjectId)) {
+                    log.info("No characters for subject {}, trying series subject {}", subjectId, seriesId);
+                    characters = bangumiService.getCharacters(seriesId);
+                }
+            }
+
+            if (characters.isEmpty()) {
+                log.debug("No characters found for Bangumi subject {} or its series", subjectId);
+                return;
+            }
+
+            characterRepository.deleteByComicId(comicId);
+
+            Comic comic = repository.findById(comicId).orElse(null);
+
+            for (BangumiService.Character bgmChar : characters) {
+                ComicCharacter character = new ComicCharacter();
+                character.setComicId(comicId);
+
+                String chineseName = null;
+                if (bgmChar.getNameCn() == null || bgmChar.getNameCn().isBlank()) {
+                    BangumiService.CharacterDetail detail = bangumiService.getCharacterDetail(bgmChar.getId());
+                    if (detail != null) {
+                        chineseName = detail.getChineseName();
+                    }
+                    try { Thread.sleep(200); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                } else {
+                    chineseName = bgmChar.getNameCn();
+                }
+
+                if (chineseName != null && !chineseName.isBlank()) {
+                    character.setName(chineseName);
+                    character.setOriginalName(bgmChar.getName());
+                } else {
+                    character.setName(bgmChar.getName());
+                    character.setOriginalName(bgmChar.getName());
+                }
+
+                character.setDescription(bgmChar.getSummary());
+                character.setRole(bgmChar.getRole());
+                character.setSourceCharacterId(bgmChar.getId());
+                character.setSource("bangumi");
+
+                String imageUrl = bgmChar.getImageUrl();
+                if (imageUrl != null && !imageUrl.isBlank()) {
+                    character.setImageUrl(imageUrl);
+                    if (comic != null) {
+                        String localPath = downloadCharacterImage(comic, imageUrl, character.getName());
+                        if (localPath != null) {
+                            character.setImagePath(localPath);
+                        }
+                    }
+                }
+
+                characterRepository.save(character);
+            }
+            log.info("Saved {} characters for comic id={} from Bangumi", characters.size(), comicId);
+        } catch (Exception e) {
+            log.warn("Failed to save Bangumi characters for comic id={}: {}", comicId, e.getMessage());
+        }
+    }
+
+    private Integer findBangumiSeriesSubjectId(Integer subjectId) {
+        try {
+            List<BangumiService.RelatedSubject> related = bangumiService.getRelatedSubjects(subjectId);
+            for (BangumiService.RelatedSubject sub : related) {
+                if (sub.getType() != null && sub.getType() == 1) {
+                    return sub.getId();
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to find series subject for {}: {}", subjectId, e.getMessage());
+        }
+        return null;
+    }
+
+    private void saveAnilistCharacters(Long comicId, AnilistSearchResult.MediaItem detail) {
+        try {
+            if (detail.getCharacters() == null || detail.getCharacters().getEdges() == null) {
+                log.debug("No characters found for AniList manga {}", detail.getId());
+                return;
+            }
+
+            characterRepository.deleteByComicId(comicId);
+
+            Comic comic = repository.findById(comicId).orElse(null);
+
+            for (AnilistSearchResult.MediaItem.CharacterEdge edge : detail.getCharacters().getEdges()) {
+                AnilistSearchResult.MediaItem.CharacterNode node = edge.getNode();
+                if (node == null || node.getName() == null) continue;
+
+                ComicCharacter character = new ComicCharacter();
+                character.setComicId(comicId);
+                character.setName(node.getName().getFull());
+                character.setRole(edge.getRole());
+                character.setSourceCharacterId(node.getId());
+                character.setSource("anilist");
+
+                if (node.getImage() != null) {
+                    String imageUrl = node.getImage().getLarge();
+                    if (imageUrl == null || imageUrl.isBlank()) {
+                        imageUrl = node.getImage().getMedium();
+                    }
+                    if (imageUrl != null && !imageUrl.isBlank()) {
+                        character.setImageUrl(imageUrl);
+                        if (comic != null) {
+                            String localPath = downloadCharacterImage(comic, imageUrl, node.getName().getFull());
+                            if (localPath != null) {
+                                character.setImagePath(localPath);
+                            }
+                        }
+                    }
+                }
+
+                characterRepository.save(character);
+            }
+            log.info("Saved {} characters for comic id={} from AniList", detail.getCharacters().getEdges().size(), comicId);
+        } catch (Exception e) {
+            log.warn("Failed to save AniList characters for comic id={}: {}", comicId, e.getMessage());
+        }
     }
 }

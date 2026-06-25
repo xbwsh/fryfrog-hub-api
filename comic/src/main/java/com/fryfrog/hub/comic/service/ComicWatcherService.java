@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
 public class ComicWatcherService {
 
     private final ComicMetadataService metadataService;
+    private final MangaScrapeService mangaScrapeService;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
     private String rootPathsConfig;
@@ -115,8 +116,16 @@ public class ComicWatcherService {
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                             log.info("Detected comic file change: {}", fullPath);
                             try {
-                                metadataService.extractAndSaveMetadata(fullPath.toString());
+                                Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
                                 log.info("Auto-indexed comic: {}", fileName);
+                                if (comic != null && comic.getMetadataSourceId() == null) {
+                                    try {
+                                        mangaScrapeService.autoScrapeComic(comic);
+                                        log.info("Auto-scraped comic: {}", fileName);
+                                    } catch (Exception e) {
+                                        log.warn("Failed to auto-scrape comic: {}", fileName, e);
+                                    }
+                                }
                             } catch (Exception e) {
                                 log.warn("Failed to auto-index comic: {}", fileName, e);
                             }

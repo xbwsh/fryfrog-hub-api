@@ -107,6 +107,16 @@ public class ComicMetadataService {
                     .findFirst();
             series.setCoverArtPath(withCover.map(Comic::getCoverArtPath).orElse(null));
 
+            Optional<Comic> withSummary = entry.getValue().stream()
+                    .filter(c -> c.getSeriesSummary() != null && !c.getSeriesSummary().isBlank())
+                    .findFirst();
+            series.setSeriesSummary(withSummary.map(Comic::getSeriesSummary).orElse(null));
+
+            Optional<Comic> withSerialization = entry.getValue().stream()
+                    .filter(c -> c.getSerializationStart() != null && !c.getSerializationStart().isBlank())
+                    .findFirst();
+            series.setSerializationStart(withSerialization.map(Comic::getSerializationStart).orElse(null));
+
             seriesList.add(series);
         }
 
@@ -452,9 +462,8 @@ public class ComicMetadataService {
                 }
 
                 if (firstImage != null) {
-                    Path coverDir = Paths.get(getFirstRootPath(), ".cache", "covers");
-                    Files.createDirectories(coverDir);
-                    String coverFileName = file.getName().replaceAll("\\.[^.]+$", ".jpg");
+                    Path coverDir = file.toPath().getParent();
+                    String coverFileName = file.getName().replaceAll("\\.[^.]+$", "_cover.jpg");
                     Path coverPath = coverDir.resolve(coverFileName);
 
                     try (InputStream is = zipFile.getInputStream(firstImage)) {

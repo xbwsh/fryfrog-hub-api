@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/music")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "音乐管理", description = "音乐元数据查询、扫描和刮削接口")
 public class MusicController {
 
@@ -96,6 +98,19 @@ public class MusicController {
         validatePath(path);
         service.scanDirectory(path);
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
+    }
+
+    @PostMapping("/rescan")
+    @Operation(summary = "一键刷新音乐库", description = "扫描所有根路径 → 整理文件夹 → 自动刮削歌词/封面")
+    public ResponseEntity<ApiResponse<String>> rescan() {
+        for (String rootPath : getRootPaths()) {
+            try {
+                service.scanDirectory(rootPath);
+            } catch (Exception e) {
+                log.error("Failed to scan music directory {}: {}", rootPath, e.getMessage());
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan → scrape"));
     }
 
     @GetMapping("/{id:\\d+}/lyrics")

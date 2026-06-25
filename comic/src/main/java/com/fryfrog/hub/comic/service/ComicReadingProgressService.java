@@ -36,7 +36,7 @@ public class ComicReadingProgressService {
         }
 
         ComicReadingProgress saved = repository.save(progress);
-        log.debug("Saved reading progress for comic {}: page {} / {}", comicId, currentPage, totalPages);
+        log.info("Saved reading progress for comic {}: page {} / {}", comicId, currentPage, totalPages);
         return saved;
     }
 
