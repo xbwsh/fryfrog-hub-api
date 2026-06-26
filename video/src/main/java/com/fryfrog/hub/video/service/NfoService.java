@@ -45,6 +45,7 @@ public class NfoService {
     public Path getMetadataDir(Video video) {
         Path videoPath = Paths.get(video.getFilePath());
         Path videoDir = videoPath.getParent();
+        String showName = cleanTitle(selectShowName(video));
 
         // 对于电视剧，根据 seasonNumber 和 episodeNumber 确定目录
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
@@ -71,15 +72,31 @@ public class NfoService {
                 parentDir = parentDir.getParent();
             }
 
-            // 没找到季目录，按规范结构创建：showName/第 X 季/第 X 集/
-            String showName = cleanTitle(selectShowName(video));
+            // 向上查找是否已在 showName 目录下
+            Path checkDir = videoDir;
+            while (checkDir != null) {
+                if (checkDir.getFileName() != null && checkDir.getFileName().toString().equals(showName)) {
+                    // 已在 showName 目录下，直接构建季/集目录
+                    String seasonDirName = "第 " + season + " 季";
+                    return checkDir.resolve(seasonDirName).resolve(correctEpisodeDirName);
+                }
+                checkDir = checkDir.getParent();
+            }
+
+            // 没找到 showName 目录，按规范结构创建：showName/第 X 季/第 X 集/
             String seasonDirName = "第 " + season + " 季";
             return videoDir.resolve(showName).resolve(seasonDirName).resolve(correctEpisodeDirName);
         }
 
         // 对于电影，在视频目录下创建以清洗后标题命名的子目录
-        String cleanedTitle = cleanTitle(selectShowName(video));
-        return videoDir.resolve(cleanedTitle);
+        Path checkDir = videoDir;
+        while (checkDir != null) {
+            if (checkDir.getFileName() != null && checkDir.getFileName().toString().equals(showName)) {
+                return checkDir;
+            }
+            checkDir = checkDir.getParent();
+        }
+        return videoDir.resolve(showName);
     }
 
     private String selectShowName(Video video) {

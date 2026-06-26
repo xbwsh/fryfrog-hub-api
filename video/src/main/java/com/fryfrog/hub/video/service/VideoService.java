@@ -539,7 +539,7 @@ public class VideoService {
     }
 
     @Transactional
-    public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
+    public synchronized Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
         Video video = getVideoById(videoId);
 
         if ("movie".equalsIgnoreCase(mediaType)) {
@@ -575,10 +575,13 @@ public class VideoService {
                 if (episodeDetail.getYear() != null) {
                     video.setYear(episodeDetail.getYear());
                 }
-                log.info("Updated video with episode metadata: S{}E{} - {}", 
+                if (episodeDetail.getStillPath() != null && !episodeDetail.getStillPath().isBlank()) {
+                    video.setBackdropUrl(tmdbService.getBackdropUrl(episodeDetail.getStillPath()));
+                }
+                log.info("Updated video with episode metadata: S{}E{} - {}",
                         seasonEpisode[0], seasonEpisode[1], episodeDetail.getName());
             } else {
-                log.warn("Could not fetch episode metadata for S{}E{}, using show-level metadata", 
+                log.warn("Could not fetch episode metadata for S{}E{}, using show-level metadata",
                         seasonEpisode[0], seasonEpisode[1]);
             }
 
@@ -626,6 +629,31 @@ public class VideoService {
                 sibling.setSeasonNumber(seasonEpisode[0]);
                 sibling.setEpisodeNumber(seasonEpisode[1]);
                 sibling.setMetadataUpdatedAt(LocalDateTime.now());
+
+                try {
+                    TmdbEpisodeDetail episodeDetail = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1]);
+                    if (episodeDetail != null) {
+                        if (episodeDetail.getOverview() != null && !episodeDetail.getOverview().isBlank()) {
+                            sibling.setOverview(episodeDetail.getOverview());
+                        }
+                        if (episodeDetail.getVoteAverage() != null) {
+                            sibling.setRating(episodeDetail.getVoteAverage());
+                        }
+                        if (episodeDetail.getVoteCount() != null) {
+                            sibling.setVoteCount(episodeDetail.getVoteCount());
+                        }
+                        if (episodeDetail.getYear() != null) {
+                            sibling.setYear(episodeDetail.getYear());
+                        }
+                        if (episodeDetail.getStillPath() != null && !episodeDetail.getStillPath().isBlank()) {
+                            sibling.setBackdropUrl(tmdbService.getBackdropUrl(episodeDetail.getStillPath()));
+                        }
+                        log.info("Fetched episode metadata for sibling: S{}E{} - {}",
+                                seasonEpisode[0], seasonEpisode[1], episodeDetail.getName());
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to fetch episode detail for sibling S{}E{}: {}", seasonEpisode[0], seasonEpisode[1], e.getMessage());
+                }
 
                 VideoSeries series = seriesService.getOrCreateAndBindSeries(boundVideo.getTitle(), tmdbId);
                 seriesService.assignVideoToSeries(sibling, series);
@@ -797,54 +825,61 @@ public class VideoService {
 
     public List<Video> autoScrapeAll() {
         List<Video> videos = repository.findByTmdbIdIsNull();
-        int scraped = 0;
-        int skipped = 0;
+        if (videos.isEmpty()) {
+            log.info("No unbound videos to scrape");
+            return repository.findAll();
+        }
 
-        scrapeProgressService.start("video", videos.size());
+        scrapeExecutor.submit(() -> {
+            int scraped = 0;
+            int skipped = 0;
+            scrapeProgressService.start("video", videos.size());
 
-        for (Video video : videos) {
-            try {
-                String query = video.getTitle();
-                if (query == null || query.isBlank()) {
-                    scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
-                    continue;
+            for (Video video : videos) {
+                try {
+                    String query = video.getTitle();
+                    if (query == null || query.isBlank()) {
+                        scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
+                        continue;
+                    }
+
+                    scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
+
+                    List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
+                    if (results.isEmpty()) {
+                        log.info("No TMDB results for: {}", video.getTitle());
+                        scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
+                        continue;
+                    }
+
+                    TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
+                    double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
+
+                    if (score < getMinScore()) {
+                        log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
+                        scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
+                        skipped++;
+                        continue;
+                    }
+
+                    scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
+                    scraped++;
+                    scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
+
+                    log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
+                            video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
+                } catch (Exception e) {
+                    log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
+                    scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
                 }
-
-                scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
-
-                List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
-                if (results.isEmpty()) {
-                    log.info("No TMDB results for: {}", video.getTitle());
-                    scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
-                    continue;
-                }
-
-                TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
-                double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
-
-                if (score < getMinScore()) {
-                    log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
-                    scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
-                    skipped++;
-                    continue;
-                }
-
-                scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
-                scraped++;
-                scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
-
-                log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
-                        video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
-            } catch (Exception e) {
-                log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
-                scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
             }
-        }
 
-        scrapeProgressService.finish("video");
-        if (scraped > 0) {
-            log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
-        }
+            scrapeProgressService.finish("video");
+            if (scraped > 0) {
+                log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
+            }
+        });
+
         return repository.findAll();
     }
 

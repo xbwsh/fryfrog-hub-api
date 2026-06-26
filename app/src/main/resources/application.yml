@@ -7,6 +7,9 @@ spring:
   profiles:
     active: dev
 
+watcher:
+  periodic-scan: true
+
 hub:
   media:
     root-path: ${MEDIA_ROOT_PATH:./media-library}

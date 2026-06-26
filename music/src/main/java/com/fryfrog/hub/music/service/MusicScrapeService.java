@@ -109,7 +109,7 @@ public class MusicScrapeService {
         return repository.findAll();
     }
 
-    private boolean needsScraping(MusicTrack track) {
+    public boolean needsScraping(MusicTrack track) {
         return needsLyrics(track) || needsCover(track);
     }
 

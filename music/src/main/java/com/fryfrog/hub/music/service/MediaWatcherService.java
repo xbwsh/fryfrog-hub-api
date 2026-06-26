@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
 public class MediaWatcherService {
 
     private final MusicMetadataService metadataService;
+    private final MusicScrapeService scrapeService;
     private final SystemSettingService settingService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
@@ -148,8 +149,13 @@ public class MediaWatcherService {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
-                                        metadataService.extractAndSaveMetadata(fullPath.toString());
+                                        var saved = metadataService.extractAndSaveMetadata(fullPath.toString());
                                         log.debug("Auto-indexed: {}", fileName);
+
+                                        if (metadataService.isAutoScrape() && scrapeService.isScrapeEnabled() && scrapeService.needsScraping(saved)) {
+                                            log.debug("Auto-scraping new track: {}", fileName);
+                                            scrapeService.scrapeTrack(saved);
+                                        }
                                     }
                                 } catch (Exception e) {
                                     log.warn("Failed to auto-index: {}", fileName, e);
