@@ -221,7 +221,9 @@ public class SeriesService {
             }
         }
 
-        log.info("Empty series cleanup completed: removed {} series", removed);
+        if (removed > 0) {
+            log.info("Empty series cleanup completed: removed {} series", removed);
+        }
         return removed;
     }
 
@@ -257,7 +259,9 @@ public class SeriesService {
             }
         }
 
-        log.info("Cleanup completed: merged {} duplicate series", merged);
+        if (merged > 0) {
+            log.info("Cleanup completed: merged {} duplicate series", merged);
+        }
         return merged;
     }
 }

@@ -42,11 +42,11 @@ public class MangaScrapeService {
     private final ScrapeProgressService scrapeProgressService;
 
     private boolean isAutoScrape() {
-        return settingService.getBoolean("comic.auto-scrape", false);
+        return settingService.getBoolean("hub.comic.auto-scrape", false);
     }
 
     private double getMinScore() {
-        return settingService.getDouble("comic.min-score", 0.0);
+        return settingService.getDouble("hub.comic.min-score", 0.0);
     }
 
     public List<BangumiService.SearchResult> searchFromBangumi(String query) {
@@ -291,20 +291,24 @@ public class MangaScrapeService {
     @Async
     public void autoScrapeAll() {
         if (!isAutoScrape()) {
-            log.info("Auto-scrape is disabled");
+            log.debug("Auto-scrape is disabled");
             return;
         }
 
-        List<Comic> unboundComics = repository.findByMetadataSourceIdIsNull();
-        log.info("Found {} unbound comics, starting auto-scrape", unboundComics.size());
+        List<Comic> unboundComics = repository.findByMetadataSourceIdIsNullOrderByVolumeAsc();
+        log.debug("Found {} unbound comics, starting auto-scrape", unboundComics.size());
 
         scrapeProgressService.start("comic", unboundComics.size());
 
         for (Comic comic : unboundComics) {
             try {
-                scrapeProgressService.updateItem("comic", comic.getTitle(), "processing", null);
-                autoScrapeComic(comic);
-                scrapeProgressService.updateItem("comic", comic.getTitle(), "completed", null);
+                Comic fresh = repository.findById(comic.getId()).orElse(null);
+                if (fresh == null || fresh.getMetadataSourceId() != null) {
+                    continue;
+                }
+                scrapeProgressService.updateItem("comic", fresh.getTitle(), "processing", null);
+                autoScrapeComic(fresh);
+                scrapeProgressService.updateItem("comic", fresh.getTitle(), "completed", null);
                 Thread.sleep(500);
             } catch (Exception e) {
                 log.warn("Failed to auto-scrape comic '{}': {}", comic.getTitle(), e.getMessage());
@@ -312,7 +316,9 @@ public class MangaScrapeService {
             }
         }
         scrapeProgressService.finish("comic");
-        log.info("Auto-scrape completed");
+        if (!unboundComics.isEmpty()) {
+            log.info("Auto-scrape completed");
+        }
     }
 
     public Comic autoScrapeComic(Comic comic) {
@@ -608,7 +614,7 @@ public class MangaScrapeService {
 
             cleanupEmptyFolders(currentDir, rootDir);
 
-            log.info("Moved comic '{}' to series folder: {}", comic.getTitle(), seriesDir);
+            log.debug("Moved comic '{}' to series folder: {}", comic.getTitle(), seriesDir);
         } catch (IOException e) {
             log.error("Failed to move comic '{}': {}", comic.getTitle(), e.getMessage());
         }
@@ -620,7 +626,7 @@ public class MangaScrapeService {
             if (isDirEmpty(dir)) {
                 Path parent = dir.getParent();
                 Files.deleteIfExists(dir);
-                log.info("Removed empty folder: {}", dir);
+                log.debug("Removed empty folder: {}", dir);
                 dir = parent;
             } else {
                 break;
@@ -790,7 +796,8 @@ public class MangaScrapeService {
         return true;
     }
 
-    private void saveBangumiCharacters(Long comicId, Integer subjectId) {
+    @Transactional
+    public void saveBangumiCharacters(Long comicId, Integer subjectId) {
         try {
             List<BangumiService.Character> characters = bangumiService.getCharacters(subjectId);
 
@@ -807,7 +814,7 @@ public class MangaScrapeService {
                 return;
             }
 
-            characterRepository.deleteByComicId(comicId);
+            characterRepository.deleteAll(characterRepository.findByComicId(comicId));
 
             Comic comic = repository.findById(comicId).orElse(null);
 
@@ -872,14 +879,15 @@ public class MangaScrapeService {
         return null;
     }
 
-    private void saveAnilistCharacters(Long comicId, AnilistSearchResult.MediaItem detail) {
+    @Transactional
+    public void saveAnilistCharacters(Long comicId, AnilistSearchResult.MediaItem detail) {
         try {
             if (detail.getCharacters() == null || detail.getCharacters().getEdges() == null) {
                 log.debug("No characters found for AniList manga {}", detail.getId());
                 return;
             }
 
-            characterRepository.deleteByComicId(comicId);
+            characterRepository.deleteAll(characterRepository.findByComicId(comicId));
 
             Comic comic = repository.findById(comicId).orElse(null);
 

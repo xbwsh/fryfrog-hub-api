@@ -139,7 +139,7 @@ public class ComicWatcherService {
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);
-                                log.info("Registered new subdirectory: {}", fullPath);
+                                log.debug("Registered new subdirectory: {}", fullPath);
                             } catch (IOException e) {
                                 log.warn("Failed to register new subdirectory: {}", fullPath, e);
                             }
@@ -147,17 +147,17 @@ public class ComicWatcherService {
                         }
 
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
-                            log.info("Detected comic file change: {}", fullPath);
+                            log.debug("Detected comic file change: {}", fullPath);
                             executor.submit(() -> {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
                                         Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
-                                        log.info("Auto-indexed comic: {}", fileName);
+                                        log.debug("Auto-indexed comic: {}", fileName);
                                         if (comic != null && comic.getMetadataSourceId() == null) {
                                             try {
                                                 mangaScrapeService.autoScrapeComic(comic);
-                                                log.info("Auto-scraped comic: {}", fileName);
+                                                log.debug("Auto-scraped comic: {}", fileName);
                                             } catch (Exception e) {
                                                 log.warn("Failed to auto-scrape comic: {}", fileName, e);
                                             }

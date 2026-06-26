@@ -27,13 +27,24 @@ public class SettingController {
     @GetMapping
     @Operation(summary = "获取所有设置")
     public ResponseEntity<ApiResponse<List<SystemSetting>>> getAllSettings() {
-        return ResponseEntity.ok(ApiResponse.success(settingService.getAll()));
+        List<SystemSetting> settings = settingService.getAll().stream()
+                .map(s -> {
+                    SystemSetting dto = new SystemSetting();
+                    dto.setId(s.getId());
+                    dto.setKey(s.getKey().startsWith("hub.") ? s.getKey().substring(4) : s.getKey());
+                    dto.setValue(s.getValue());
+                    dto.setDescription(s.getDescription());
+                    return dto;
+                })
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(settings));
     }
 
     @GetMapping("/{key}")
     @Operation(summary = "获取单个设置")
     public ResponseEntity<ApiResponse<SystemSetting>> getSetting(@PathVariable String key) {
-        return settingService.getByKey(key)
+        String dbKey = key.startsWith("hub.") ? key : "hub." + key;
+        return settingService.getByKey(dbKey)
                 .map(s -> ResponseEntity.ok(ApiResponse.success(s)))
                 .orElse(ResponseEntity.ok(ApiResponse.error("Setting not found: " + key)));
     }
@@ -43,7 +54,8 @@ public class SettingController {
     public ResponseEntity<ApiResponse<SystemSetting>> updateSetting(
             @PathVariable String key,
             @RequestBody SettingUpdateRequest request) {
-        SystemSetting setting = settingService.setValue(key, request.getValue(), null);
+        String dbKey = key.startsWith("hub.") ? key : "hub." + key;
+        SystemSetting setting = settingService.setValue(dbKey, request.getValue(), null);
         return ResponseEntity.ok(ApiResponse.success("设置已更新", setting));
     }
 
@@ -51,12 +63,12 @@ public class SettingController {
     @Operation(summary = "检查 TMDB 配置状态")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getTmdbStatus() {
         Map<String, Object> status = new LinkedHashMap<>();
-        String apiKey = settingService.getValue("tmdb.api-key", "");
+        String apiKey = settingService.getValue("hub.tmdb.api-key", "");
         status.put("configured", !apiKey.isBlank());
-        status.put("language", settingService.getValue("tmdb.language", "zh-CN"));
-        status.put("image-size", settingService.getValue("tmdb.image-size", "original"));
-        status.put("auto-scrape", settingService.getBoolean("tmdb.auto-scrape", false));
-        status.put("include-adult", settingService.getBoolean("tmdb.include-adult", true));
+        status.put("language", settingService.getValue("hub.tmdb.language", "zh-CN"));
+        status.put("image-size", settingService.getValue("hub.tmdb.image-size", "original"));
+        status.put("auto-scrape", settingService.getBoolean("hub.tmdb.auto-scrape", false));
+        status.put("include-adult", settingService.getBoolean("hub.tmdb.include-adult", true));
         return ResponseEntity.ok(ApiResponse.success(status));
     }
 }

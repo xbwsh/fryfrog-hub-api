@@ -90,19 +90,6 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
     }
 
-    @PostMapping("/scan")
-    @Operation(summary = "扫描媒体目录", description = "递归扫描指定目录，提取所有支持格式的音频文件元数据并入库")
-    @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "扫描完成"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "路径不在允许的根目录内")
-    })
-    public ResponseEntity<ApiResponse<String>> scanDirectory(
-            @Parameter(description = "要扫描的目录路径（必须在配置的根目录内）") @RequestParam String path) {
-        validatePath(path);
-        service.scanDirectory(path);
-        return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
-    }
-
     @PostMapping("/rescan")
     @Operation(summary = "一键刷新音乐库", description = "扫描所有根路径 → 整理文件夹 → 自动刮削歌词/封面")
     public ResponseEntity<ApiResponse<String>> rescan() {
@@ -248,24 +235,6 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeTrack(id)));
     }
 
-    @PostMapping("/scrape/all")
-    @Operation(summary = "批量刮削", description = "刮削所有或指定艺术家的曲目元数据")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeAll(
-            @Parameter(description = "艺术家名称（可选，为空则刮削所有）") @RequestParam(required = false) String artist) {
-        if (artist != null && !artist.isBlank()) {
-            return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeByArtist(artist)));
-        }
-        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAll()));
-    }
-
-    @Deprecated
-    @PostMapping("/scrape/artist")
-    @Operation(summary = "[已废弃] 使用 POST /scrape/all?artist=xx 替代", description = "刮削指定艺术家的所有曲目元数据")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeByArtist(
-            @Parameter(description = "艺术家名称") @RequestParam String artist) {
-        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeByArtist(artist)));
-    }
-
     @GetMapping("/scrape/status")
     @Operation(summary = "刮削状态", description = "返回待刮削曲目数量")
     public ResponseEntity<ApiResponse<Long>> scrapeStatus() {
@@ -293,14 +262,5 @@ public class MusicController {
             return MediaType.IMAGE_GIF;
         }
         return MediaType.IMAGE_JPEG;
-    }
-
-    private void validatePath(String path) {
-        Path requestedPath = Paths.get(path).toAbsolutePath().normalize();
-        boolean allowed = getRootPaths().stream()
-                .anyMatch(root -> requestedPath.startsWith(Paths.get(root).toAbsolutePath().normalize()));
-        if (!allowed) {
-            throw new IllegalArgumentException("Path is outside allowed root paths");
-        }
     }
 }

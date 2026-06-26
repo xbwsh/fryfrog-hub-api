@@ -29,19 +29,19 @@ public class TmdbService {
     }
 
     private String getApiKey() {
-        return settingService.getValue("tmdb.api-key", "");
+        return settingService.getValue("hub.tmdb.api-key", "");
     }
 
     private String getLanguage() {
-        return settingService.getValue("tmdb.language", "zh-CN");
+        return settingService.getValue("hub.tmdb.language", "zh-CN");
     }
 
     private String getImageSize() {
-        return settingService.getValue("tmdb.image-size", "original");
+        return settingService.getValue("hub.tmdb.image-size", "original");
     }
 
     private boolean isIncludeAdult() {
-        return settingService.getBoolean("tmdb.include-adult", true);
+        return settingService.getBoolean("hub.tmdb.include-adult", true);
     }
 
     public boolean isConfigured() {

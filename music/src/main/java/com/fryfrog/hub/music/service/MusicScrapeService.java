@@ -33,15 +33,15 @@ public class MusicScrapeService {
     private String rootPathsConfig;
 
     public boolean isScrapeEnabled() {
-        return settingService.getBoolean("music.scrape.enabled", true);
+        return settingService.getBoolean("hub.music.scrape.enabled", true);
     }
 
     private boolean isLyricsFallback() {
-        return settingService.getBoolean("music.scrape.lyrics-fallback", true);
+        return settingService.getBoolean("hub.music.scrape.lyrics-fallback", true);
     }
 
     private boolean isCoverFallback() {
-        return settingService.getBoolean("music.scrape.cover-fallback", true);
+        return settingService.getBoolean("hub.music.scrape.cover-fallback", true);
     }
 
     public MusicTrack scrapeTrack(Long trackId) {
@@ -57,7 +57,7 @@ public class MusicScrapeService {
             return track;
         }
 
-        log.info("开始刮削 / Scraping track: {} - {}", track.getArtist(), track.getTitle());
+        log.debug("开始刮削 / Scraping track: {} - {}", track.getArtist(), track.getTitle());
 
         boolean needsWork = false;
 
@@ -101,34 +101,12 @@ public class MusicScrapeService {
         }
 
         scrapeProgressService.finish("music");
-        log.info("批量刮削完成 / Scrape completed: {}/{} tracks scraped", scraped, tracks.size());
-        return repository.findAll();
-    }
-
-    @Transactional
-    public List<MusicTrack> scrapeByArtist(String artist) {
-        List<MusicTrack> tracks = repository.findByArtistContainingIgnoreCase(artist);
-        List<MusicTrack> needScrape = tracks.stream().filter(this::needsScraping).toList();
-        int scraped = 0;
-
-        scrapeProgressService.start("music", needScrape.size());
-
-        for (MusicTrack track : needScrape) {
-            try {
-                scrapeProgressService.updateItem("music", track.getTitle(), "processing", null);
-                scrapeTrack(track);
-                scraped++;
-                scrapeProgressService.updateItem("music", track.getTitle(), "completed", null);
-                Thread.sleep(500);
-            } catch (Exception e) {
-                log.warn("刮削失败 / Failed to scrape track {}: {}", track.getTitle(), e.getMessage());
-                scrapeProgressService.updateItem("music", track.getTitle(), "failed", e.getMessage());
-            }
+        if (scraped > 0) {
+            log.info("批量刮削完成 / Scrape completed: {}/{} tracks scraped", scraped, tracks.size());
+        } else {
+            log.debug("批量刮削完成，无需刮削 / Scrape completed: 0/{} tracks need scraping", tracks.size());
         }
-
-        scrapeProgressService.finish("music");
-        log.info("艺术家刮削完成 / Artist scrape completed: {}/{} tracks scraped for {}", scraped, tracks.size(), artist);
-        return tracks;
+        return repository.findAll();
     }
 
     private boolean needsScraping(MusicTrack track) {
@@ -278,7 +256,7 @@ public class MusicScrapeService {
             if (!audioPath.equals(targetFile) && Files.exists(audioPath) && !Files.exists(targetFile)) {
                 Files.move(audioPath, targetFile);
                 track.setFilePath(targetFile.toAbsolutePath().toString());
-                log.info("移动歌曲文件到 / Moved audio to: {}", targetDir);
+                log.debug("移动歌曲文件到 / Moved audio to: {}", targetDir);
             }
 
             return targetDir;

@@ -135,7 +135,7 @@ public class MediaWatcherService {
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);
-                                log.info("Registered new subdirectory: {}", fullPath);
+                                log.debug("Registered new subdirectory: {}", fullPath);
                             } catch (IOException e) {
                                 log.warn("Failed to register new subdirectory: {}", fullPath, e);
                             }
@@ -143,13 +143,13 @@ public class MediaWatcherService {
                         }
 
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
-                            log.info("Detected media file change: {}", fullPath);
+                            log.debug("Detected media file change: {}", fullPath);
                             executor.submit(() -> {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
                                         metadataService.extractAndSaveMetadata(fullPath.toString());
-                                        log.info("Auto-indexed: {}", fileName);
+                                        log.debug("Auto-indexed: {}", fileName);
                                     }
                                 } catch (Exception e) {
                                     log.warn("Failed to auto-index: {}", fileName, e);

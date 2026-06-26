@@ -62,6 +62,7 @@ public class NfoService {
             // 向上查找季目录（以"第 X 季"命名）
             Path parentDir = videoDir.getParent();
             while (parentDir != null) {
+                if (parentDir.getFileName() == null) break;
                 String parentName = parentDir.getFileName().toString();
                 if (parentName.matches("第 \\d+ 季")) {
                     // 找到季目录，返回对应的集子目录
@@ -70,13 +71,33 @@ public class NfoService {
                 parentDir = parentDir.getParent();
             }
 
-            // 没找到季目录，返回当前目录
-            return videoDir;
+            // 没找到季目录，按规范结构创建：showName/第 X 季/第 X 集/
+            String showName = cleanTitle(selectShowName(video));
+            String seasonDirName = "第 " + season + " 季";
+            return videoDir.resolve(showName).resolve(seasonDirName).resolve(correctEpisodeDirName);
         }
 
         // 对于电影，在视频目录下创建以清洗后标题命名的子目录
-        String cleanedTitle = cleanTitle(video.getTitle());
+        String cleanedTitle = cleanTitle(selectShowName(video));
         return videoDir.resolve(cleanedTitle);
+    }
+
+    private String selectShowName(Video video) {
+        String title = video.getTitle();
+        String originalTitle = video.getOriginalTitle();
+
+        // title 包含中文字符就用 title
+        if (title != null && title.codePoints().anyMatch(cp ->
+                (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF))) {
+            return title;
+        }
+        // originalTitle 包含中文字符就用 originalTitle
+        if (originalTitle != null && originalTitle.codePoints().anyMatch(cp ->
+                (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF))) {
+            return originalTitle;
+        }
+        // 都没有中文，用 title
+        return title != null ? title : (originalTitle != null ? originalTitle : "Unknown");
     }
 
     private String cleanTitle(String title) {
@@ -287,7 +308,7 @@ public class NfoService {
 
         for (Path nfoPath : searchPaths) {
             if (Files.exists(nfoPath)) {
-                log.info("Found NFO file: {}", nfoPath);
+                log.debug("Found NFO file: {}", nfoPath);
                 NfoData data = parseNfoFile(nfoPath);
                 if (data != null && data.isTvShow) {
                     if ("tvshow.nfo".equals(nfoPath.getFileName().toString())) {

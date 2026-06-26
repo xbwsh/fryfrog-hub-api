@@ -26,6 +26,7 @@ hub:
     root-paths: ${COMIC_ROOT_PATHS:./media-library/comic}
     supported-formats: cbz,cbr,zip,rar
     auto-scrape: ${COMIC_AUTO_SCRAPE:false}
+    min-score: ${COMIC_MIN_SCORE:0.0}
   video:
     root-paths: ${VIDEO_ROOT_PATHS:./media-library/video}
     supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
@@ -38,6 +39,7 @@ hub:
     image-size: ${TMDB_IMAGE_SIZE:original}
     auto-scrape: ${TMDB_AUTO_SCRAPE:false}
     min-score: ${TMDB_MIN_SCORE:0.0}
+    include-adult: ${TMDB_INCLUDE_ADULT:true}
   anilist:
     language: ${ANILIST_LANGUAGE:zh-CN}
     auto-scrape: ${ANILIST_AUTO_SCRAPE:false}

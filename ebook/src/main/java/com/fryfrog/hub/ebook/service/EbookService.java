@@ -196,7 +196,9 @@ public class EbookService {
             }
         }
 
-        log.info("Ebook cleanup completed: removed {} invalid records", removed);
+        if (removed > 0) {
+            log.info("Ebook cleanup completed: removed {} invalid records", removed);
+        }
         return removed;
     }
 

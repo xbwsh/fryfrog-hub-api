@@ -111,7 +111,10 @@ public class ComicMetadataService {
                 Path seriesDir = Paths.get(coverPath).getParent();
                 try (var stream = java.nio.file.Files.list(seriesDir)) {
                     String bangumiCover = stream
-                            .filter(p -> p.getFileName().toString().startsWith("bangumi_") && p.getFileName().toString().endsWith("_cover.jpg"))
+                            .filter(p -> {
+                                String name = p.getFileName().toString();
+                                return name.startsWith("bangumi_") && name.endsWith("_cover.jpg") && !name.contains("_vol_");
+                            })
                             .map(p -> p.toAbsolutePath().toString())
                             .findFirst()
                             .orElse(null);
@@ -121,6 +124,12 @@ public class ComicMetadataService {
                 } catch (Exception ignored) {}
             }
             series.setCoverArtPath(coverPath);
+            if (coverPath != null) {
+                try {
+                    series.setCoverUrl("/api/v1/comic/series/cover?series=" +
+                            java.net.URLEncoder.encode(entry.getKey(), "UTF-8"));
+                } catch (Exception ignored) {}
+            }
 
             Optional<Comic> withSummary = entry.getValue().stream()
                     .filter(c -> c.getSeriesSummary() != null && !c.getSeriesSummary().isBlank())
@@ -200,7 +209,9 @@ public class ComicMetadataService {
             }
         }
 
-        log.info("Comic cleanup completed: removed {} invalid records", removed);
+        if (removed > 0) {
+            log.info("Comic cleanup completed: removed {} invalid records", removed);
+        }
         return removed;
     }
 
@@ -226,7 +237,7 @@ public class ComicMetadataService {
                         .forEach(path -> {
                             try {
                                 extractAndSaveMetadata(path.toString());
-                                log.info("Indexed comic: {}", path.getFileName());
+                                log.debug("Indexed comic: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index comic: {}", path.getFileName(), e);
                             }
@@ -286,7 +297,9 @@ public class ComicMetadataService {
                 log.warn("Failed to organize comic {}: {}", comic.getFileName(), e.getMessage());
             }
         }
-        log.info("Organize completed: {}/{} files moved", organized, comics.size());
+        if (organized > 0) {
+            log.info("Organize completed: {}/{} files moved", organized, comics.size());
+        }
     }
 
     private boolean organizeComicFile(Comic comic) {

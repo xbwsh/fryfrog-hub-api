@@ -88,11 +88,11 @@ public class VideoService {
     }
 
     private boolean isAutoScrape() {
-        return settingService.getBoolean("tmdb.auto-scrape", false);
+        return settingService.getBoolean("hub.tmdb.auto-scrape", false);
     }
 
     private double getMinScore() {
-        return settingService.getDouble("tmdb.min-score", 0.0);
+        return settingService.getDouble("hub.tmdb.min-score", 0.0);
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
@@ -167,6 +167,17 @@ public class VideoService {
         return scrapeAndBindTmdb(videoId, tmdbId, mediaType);
     }
 
+    public Video rescrapeVideo(Long videoId) {
+        Video video = getVideoById(videoId);
+        if (video.getTmdbId() == null || video.getMediaType() == null) {
+            throw new IllegalArgumentException("Video has no TMDB binding: " + videoId);
+        }
+        Long tmdbId = video.getTmdbId();
+        String mediaType = video.getMediaType();
+        unbindTmdb(videoId);
+        return scrapeAndBindTmdb(videoId, tmdbId, mediaType);
+    }
+
     @Transactional
     public int cleanupInvalidRecords() {
         List<Video> allVideos = repository.findAll();
@@ -185,7 +196,9 @@ public class VideoService {
 
         seriesService.cleanupEmptySeries();
 
-        log.info("Cleanup completed: removed {} invalid records", removed);
+        if (removed > 0) {
+            log.info("Cleanup completed: removed {} invalid records", removed);
+        }
         return removed;
     }
 
@@ -270,7 +283,7 @@ public class VideoService {
             double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
 
             if (score < getMinScore()) {
-                log.info("Skipping auto-scrape for {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
+                log.debug("Skipping auto-scrape for {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
                 return;
             }
 
@@ -278,7 +291,7 @@ public class VideoService {
                 scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
             });
 
-            log.info("Auto-scraped: {} -> TMDB {} ({}) score={}",
+            log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
                     video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
         } catch (Exception e) {
             log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage(), e);
@@ -590,7 +603,41 @@ public class VideoService {
         moveVideoToMetadataDir(saved);
         saveActors(saved, mediaType, tmdbId);
 
+        if ("tv".equalsIgnoreCase(mediaType)) {
+            bindSiblingVideos(saved, tmdbId);
+        }
+
         return saved;
+    }
+
+    private void bindSiblingVideos(Video boundVideo, Long tmdbId) {
+        String dirPath = Paths.get(boundVideo.getFilePath()).getParent().toString();
+        String dirPattern = dirPath + "/%";
+        List<Video> siblings = repository.findUnboundInDirectory(dirPattern);
+        for (Video sibling : siblings) {
+            if (sibling.getId().equals(boundVideo.getId())) {
+                continue;
+            }
+            try {
+                int[] seasonEpisode = parseSeasonEpisode(sibling.getFileName());
+                sibling.setTmdbId(tmdbId);
+                sibling.setMediaType("tv");
+                sibling.setMetadataSource("tmdb");
+                sibling.setSeasonNumber(seasonEpisode[0]);
+                sibling.setEpisodeNumber(seasonEpisode[1]);
+                sibling.setMetadataUpdatedAt(LocalDateTime.now());
+
+                VideoSeries series = seriesService.getOrCreateAndBindSeries(boundVideo.getTitle(), tmdbId);
+                seriesService.assignVideoToSeries(sibling, series);
+
+                repository.save(sibling);
+                generateNfoAndCovers(sibling);
+                saveActors(sibling, "tv", tmdbId);
+                log.info("Auto-bound sibling video: {} -> TMDB {}", sibling.getFileName(), tmdbId);
+            } catch (Exception e) {
+                log.warn("Failed to auto-bind sibling video {}: {}", sibling.getFileName(), e.getMessage());
+            }
+        }
     }
 
     private void moveVideoToMetadataDir(Video video) {
@@ -614,7 +661,7 @@ public class VideoService {
             }
 
             if (Files.exists(targetPath)) {
-                log.info("Target video already exists, updating path: {}", targetPath);
+                log.debug("Target video already exists, updating path: {}", targetPath);
                 video.setFilePath(targetPath.toString());
                 repository.save(video);
                 return;
@@ -624,7 +671,7 @@ public class VideoService {
             watcherService.addScrapingPath(targetPath.toString());
             try {
                 Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-                log.info("Successfully moved video: {} -> {}", videoPath, targetPath);
+                log.debug("Successfully moved video: {} -> {}", videoPath, targetPath);
             } finally {
                 watcherService.removeScrapingPath(videoPath.toString());
                 watcherService.removeScrapingPath(targetPath.toString());
@@ -685,7 +732,7 @@ public class VideoService {
                 if (Files.exists(videoPath) && !Files.exists(newVideoPath)) {
                     Files.move(videoPath, newVideoPath);
                     video.setFilePath(newVideoPath.toString());
-                    log.info("Moved video: {} -> {}", videoPath, newVideoPath);
+                    log.debug("Moved video: {} -> {}", videoPath, newVideoPath);
                 }
 
                 // 移动关联的元数据文件（NFO、poster、fanart）
@@ -693,6 +740,15 @@ public class VideoService {
                 moveAssociatedFile(oldDir, metadataDir, baseName + ".nfo");
                 moveAssociatedFile(oldDir, metadataDir, baseName + "-poster.jpg");
                 moveAssociatedFile(oldDir, metadataDir, baseName + "-fanart.jpg");
+
+                // 移动actors目录（电视剧在季目录下，电影在视频目录下）
+                Path oldActorsDir = findOldActorsDir(oldDir);
+                Path newActorsDir = metadataDir.resolve("actors");
+                if (oldActorsDir != null && !Files.exists(newActorsDir)) {
+                    Files.createDirectories(newActorsDir.getParent());
+                    Files.move(oldActorsDir, newActorsDir);
+                    log.debug("Moved actors dir: {} -> {}", oldActorsDir, newActorsDir);
+                }
 
                 repository.save(video);
                 moved++;
@@ -716,11 +772,27 @@ public class VideoService {
             Path newFile = newDir.resolve(fileName);
             if (Files.exists(oldFile) && !Files.exists(newFile)) {
                 Files.move(oldFile, newFile);
-                log.info("Moved associated file: {}", fileName);
+                log.debug("Moved associated file: {}", fileName);
             }
         } catch (Exception e) {
             log.warn("Failed to move associated file {}: {}", fileName, e.getMessage());
         }
+    }
+
+    private Path findOldActorsDir(Path videoDir) {
+        // 先检查当前目录
+        Path direct = videoDir.resolve("actors");
+        if (Files.isDirectory(direct)) return direct;
+
+        // 向上查找（电视剧actors可能在季目录下）
+        Path current = videoDir.getParent();
+        while (current != null) {
+            if (current.getFileName() == null) break;
+            Path actorsPath = current.resolve("actors");
+            if (Files.isDirectory(actorsPath)) return actorsPath;
+            current = current.getParent();
+        }
+        return null;
     }
 
     public List<Video> autoScrapeAll() {
@@ -751,7 +823,7 @@ public class VideoService {
                 double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
 
                 if (score < getMinScore()) {
-                    log.info("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
+                    log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
                     scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
                     skipped++;
                     continue;
@@ -761,7 +833,7 @@ public class VideoService {
                 scraped++;
                 scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
 
-                log.info("Auto-scraped: {} -> TMDB {} ({}) score={}",
+                log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
                         video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
             } catch (Exception e) {
                 log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
@@ -770,7 +842,9 @@ public class VideoService {
         }
 
         scrapeProgressService.finish("video");
-        log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
+        if (scraped > 0) {
+            log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
+        }
         return repository.findAll();
     }
 
@@ -810,11 +884,10 @@ public class VideoService {
 
     private void saveActors(Video video, String mediaType, Long tmdbId) {
         try {
-            actorRepository.deleteByVideoId(video.getId());
+            actorRepository.deleteAll(actorRepository.findByVideoId(video.getId()));
 
-            Path videoDir = Paths.get(video.getFilePath()).getParent();
-            if (videoDir == null) return;
-            Path actorsDir = videoDir.resolve("actors");
+            Path actorsDir = getActorsDir(video, mediaType);
+            if (actorsDir == null) return;
             Files.createDirectories(actorsDir);
 
             int count = 0;
@@ -841,6 +914,32 @@ public class VideoService {
         } catch (Exception e) {
             log.warn("Failed to save actors for video id={}: {}", video.getId(), e.getMessage());
         }
+    }
+
+    private Path getActorsDir(Video video, String mediaType) {
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        if (videoDir == null) return null;
+
+        if ("tv".equalsIgnoreCase(mediaType)) {
+            Path seasonDir = findSeasonDir(videoDir);
+            if (seasonDir != null) {
+                return seasonDir.resolve("actors");
+            }
+        }
+        return videoDir.resolve("actors");
+    }
+
+    private Path findSeasonDir(Path episodeOrVideoDir) {
+        Path current = episodeOrVideoDir;
+        while (current != null) {
+            if (current.getFileName() == null) break;
+            String name = current.getFileName().toString();
+            if (name.matches("第 \\d+ 季")) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return null;
     }
 
     private int saveOneActor(Video video, Path actorsDir, int count,

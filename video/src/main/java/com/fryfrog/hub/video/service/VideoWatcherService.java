@@ -153,7 +153,7 @@ public class VideoWatcherService {
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);
-                                log.info("Registered new subdirectory: {}", fullPath);
+                                log.debug("Registered new subdirectory: {}", fullPath);
                             } catch (IOException e) {
                                 log.warn("Failed to register new subdirectory: {}", fullPath, e);
                             }
@@ -161,13 +161,13 @@ public class VideoWatcherService {
                         }
 
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
-                            log.info("Detected video file change: {}", fullPath);
+                            log.debug("Detected video file change: {}", fullPath);
                             executor.submit(() -> {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
                                         metadataService.extractAndSaveMetadata(fullPath.toString());
-                                        log.info("Auto-indexed video: {}", fileName);
+                                        log.debug("Auto-indexed video: {}", fileName);
                                     }
                                 } catch (Exception e) {
                                     log.warn("Failed to auto-index video: {}", fileName, e);

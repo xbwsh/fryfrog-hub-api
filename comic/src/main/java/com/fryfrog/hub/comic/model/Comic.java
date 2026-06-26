@@ -1,5 +1,7 @@
 package com.fryfrog.hub.comic.model;
 
+import com.fasterxml.jackson.annotation.JsonGetter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fryfrog.hub.common.model.BaseEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.Column;
@@ -47,6 +49,8 @@ public class Comic extends BaseEntity {
     private String seriesSummary;
 
     @Schema(description = "文件完整路径")
+    @JsonIgnore
+    @Getter(AccessLevel.NONE)
     @Column(unique = true)
     private String filePath;
 
@@ -64,6 +68,8 @@ public class Comic extends BaseEntity {
     private String format;
 
     @Schema(description = "封面图片缓存路径")
+    @JsonIgnore
+    @Getter(AccessLevel.NONE)
     private String coverArtPath;
 
     @Schema(description = "缩略图缓存目录")
@@ -101,4 +107,24 @@ public class Comic extends BaseEntity {
 
     @Schema(description = "连载开始日期", example = "2019-03-25")
     private String serializationStart;
+
+    @JsonIgnore
+    public String getCoverArtPath() {
+        return coverArtPath;
+    }
+
+    @JsonIgnore
+    public String getFilePath() {
+        return filePath;
+    }
+
+    @JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        if (coverArtPath == null) return null;
+        try {
+            return "/api/v1/comic/" + getId() + "/cover";
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }

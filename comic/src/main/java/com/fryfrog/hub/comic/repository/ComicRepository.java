@@ -20,7 +20,7 @@ public interface ComicRepository extends JpaRepository<Comic, Long> {
 
     List<Comic> findByFavoriteTrue();
 
-    List<Comic> findByMetadataSourceIdIsNull();
+    List<Comic> findByMetadataSourceIdIsNullOrderByVolumeAsc();
 
     List<Comic> findBySeriesIgnoreCase(String series);
 }

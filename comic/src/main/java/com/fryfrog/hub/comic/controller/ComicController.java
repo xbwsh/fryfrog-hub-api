@@ -92,15 +92,6 @@ public class ComicController {
         return ResponseEntity.ok(ApiResponse.success(service.searchByAuthor(q)));
     }
 
-    @PostMapping("/scan")
-    @Operation(summary = "扫描漫画目录", description = "递归扫描指定目录，提取所有支持格式的漫画文件元数据并入库")
-    public ResponseEntity<ApiResponse<String>> scanDirectory(
-            @Parameter(description = "要扫描的目录路径（必须在配置的根目录内）") @RequestParam String path) {
-        validatePath(path);
-        service.scanDirectory(path);
-        return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
-    }
-
     @GetMapping("/favorites")
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的漫画")
     public ResponseEntity<ApiResponse<List<Comic>>> getFavorites() {
@@ -138,7 +129,7 @@ public class ComicController {
     public ResponseEntity<Resource> getCoverArt(
             @Parameter(description = "漫画ID") @PathVariable Long id) {
         Comic comic = service.getComicById(id);
-        if (comic.getCoverArtPath() == null) {
+        if (comic == null || comic.getCoverArtPath() == null) {
             return ResponseEntity.notFound().build();
         }
         File coverFile = new File(comic.getCoverArtPath());
@@ -146,15 +137,46 @@ public class ComicController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
+                .contentType(resolveImageMediaType(coverFile.getName()))
+                .body(new FileSystemResource(coverFile));
+    }
+
+    @GetMapping("/series/cover")
+    @Operation(summary = "获取系列封面", description = "根据系列名返回系列封面图片")
+    public ResponseEntity<Resource> getSeriesCover(
+            @Parameter(description = "系列名") @RequestParam String series) {
+        List<ComicSeries> seriesList = service.getComicsBySeries();
+        ComicSeries target = seriesList.stream()
+                .filter(s -> series.equals(s.getName()))
+                .findFirst()
+                .orElse(null);
+        if (target == null || target.getCoverArtPath() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        File coverFile = new File(target.getCoverArtPath());
+        if (!coverFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .contentType(resolveImageMediaType(coverFile.getName()))
                 .body(new FileSystemResource(coverFile));
     }
 
     @GetMapping("/{id:\\d+}/characters")
-    @Operation(summary = "获取漫画角色列表", description = "返回指定漫画的角色信息列表")
+    @Operation(summary = "获取漫画角色列表", description = "返回同系列所有漫画的角色信息（去重）")
     public ResponseEntity<ApiResponse<List<ComicCharacter>>> getCharacters(
             @Parameter(description = "漫画ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(characterRepository.findByComicId(id)));
+        Comic comic = service.getComicById(id);
+        if (comic == null) {
+            return ResponseEntity.notFound().build();
+        }
+        List<ComicCharacter> characters;
+        if (comic.getSeries() != null && !comic.getSeries().isBlank()) {
+            characters = characterRepository.findBySeries(comic.getSeries());
+        } else {
+            characters = characterRepository.findByComicId(id);
+        }
+        return ResponseEntity.ok(ApiResponse.success(characters));
     }
 
     @GetMapping("/character/{id:\\d+}/image")
@@ -170,7 +192,7 @@ public class ComicController {
             File localFile = new File(character.getImagePath());
             if (localFile.exists()) {
                 return ResponseEntity.ok()
-                        .contentType(MediaType.IMAGE_JPEG)
+                        .contentType(resolveImageMediaType(localFile.getName()))
                         .body(new FileSystemResource(localFile));
             }
         }
@@ -234,13 +256,6 @@ public class ComicController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    @PostMapping("/organize")
-    @Operation(summary = "批量整理漫画", description = "将漫画按系列归类到文件夹，清洗文件名中的无用标签")
-    public ResponseEntity<ApiResponse<String>> organizeAll() {
-        service.organizeAll();
-        return ResponseEntity.ok(ApiResponse.success("Organize completed"));
-    }
-
     @PostMapping("/rescan")
     @Operation(summary = "一键刷新漫画库", description = "扫描所有根路径 → 整理文件夹 → 自动刮削未绑定漫画")
     public ResponseEntity<ApiResponse<String>> rescan() {
@@ -286,25 +301,18 @@ public class ComicController {
         return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindAnilist(id, request.getAnilistId(), request.isBindSeries())));
     }
 
-    @PostMapping("/auto-scrape")
-    @Operation(summary = "自动刮削所有未绑定漫画", description = "Bangumi 优先，AniList 兜底")
-    public ResponseEntity<ApiResponse<String>> autoScrape() {
-        mangaScrapeService.autoScrapeAll();
-        return ResponseEntity.ok(ApiResponse.success("Auto-scrape started"));
-    }
-
     @GetMapping("/scrape/progress")
     @Operation(summary = "刮削进度", description = "返回当前漫画刮削任务的进度")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("comic")));
     }
 
-    private void validatePath(String path) {
-        Path requestedPath = Paths.get(path).toAbsolutePath();
-        boolean allowed = getRootPaths().stream()
-                .anyMatch(root -> requestedPath.startsWith(Paths.get(root).toAbsolutePath()));
-        if (!allowed) {
-            throw new IllegalArgumentException("Path is outside allowed root paths");
-        }
+    private MediaType resolveImageMediaType(String fileName) {
+        if (fileName == null) return MediaType.IMAGE_JPEG;
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
+        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
+        return MediaType.IMAGE_JPEG;
     }
 }

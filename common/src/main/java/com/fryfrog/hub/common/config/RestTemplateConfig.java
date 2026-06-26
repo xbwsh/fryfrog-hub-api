@@ -37,8 +37,8 @@ public class RestTemplateConfig {
         factory.setConnectTimeout(connectTimeout);
         factory.setReadTimeout(readTimeout);
 
-        String proxyHost = settingService.getValue("proxy.host", "");
-        int proxyPort = settingService.getInteger("proxy.port", 0);
+        String proxyHost = settingService.getValue("hub.proxy.host", "");
+        int proxyPort = settingService.getInteger("hub.proxy.port", 0);
 
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));

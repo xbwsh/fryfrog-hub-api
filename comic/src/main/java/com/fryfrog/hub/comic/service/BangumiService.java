@@ -143,18 +143,18 @@ public class BangumiService {
         headers.set("User-Agent", "FryfrogHub/0.1.0");
         HttpEntity<Void> request = new HttpEntity<>(headers);
 
-        for (int attempt = 1; attempt <= 3; attempt++) {
+        for (int attempt = 1; attempt <= 5; attempt++) {
             try {
                 ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
                 if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                     return response.getBody();
                 }
-                log.warn("Bangumi returned status {} for {}, attempt {}/3", response.getStatusCode(), url, attempt);
+                log.warn("Bangumi returned status {} for {}, attempt {}/5", response.getStatusCode(), url, attempt);
             } catch (Exception e) {
-                log.warn("Bangumi request failed: {}, attempt {}/3: {}", url, attempt, e.getMessage());
+                log.warn("Bangumi request failed: {}, attempt {}/5: {}", url, attempt, e.getMessage());
             }
-            if (attempt < 3) {
-                try { Thread.sleep(500 * attempt); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
+            if (attempt < 5) {
+                try { Thread.sleep(1000L * attempt); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
             }
         }
         return null;

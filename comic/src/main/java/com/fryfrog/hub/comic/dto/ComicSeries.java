@@ -1,5 +1,6 @@
 package com.fryfrog.hub.comic.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fryfrog.hub.comic.model.Comic;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -20,8 +21,11 @@ public class ComicSeries {
     @Schema(description = "作者")
     private String author;
 
-    @Schema(description = "封面图片路径")
+    @JsonIgnore
     private String coverArtPath;
+
+    @Schema(description = "封面图片URL（API地址）")
+    private String coverUrl;
 
     @Schema(description = "卷数")
     private Integer volumeCount;

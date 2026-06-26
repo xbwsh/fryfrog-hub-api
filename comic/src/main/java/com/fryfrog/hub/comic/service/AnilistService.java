@@ -72,7 +72,7 @@ public class AnilistService {
     }
 
     private String getLanguage() {
-        return settingService.getValue("anilist.language", "zh-CN");
+        return settingService.getValue("hub.anilist.language", "zh-CN");
     }
 
     public boolean isConfigured() {
@@ -104,6 +104,10 @@ public class AnilistService {
                         return items;
                     }
                 }
+                log.warn("AniList search for '{}' returned unexpected structure: {}", query,
+                        response.getBody().length() > 500 ? response.getBody().substring(0, 500) + "..." : response.getBody());
+            } else {
+                log.warn("AniList search for '{}' failed: status={}", query, response.getStatusCode());
             }
         } catch (Exception e) {
             log.error("Failed to search manga on AniList: {}", e.getMessage(), e);

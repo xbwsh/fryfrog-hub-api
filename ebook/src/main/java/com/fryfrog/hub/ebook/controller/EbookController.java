@@ -98,15 +98,6 @@ public class EbookController {
         return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
     }
 
-    @PostMapping("/scan")
-    @Operation(summary = "扫描电子书目录", description = "递归扫描指定目录，提取所有支持格式的电子书文件元数据并入库")
-    public ResponseEntity<ApiResponse<String>> scanDirectory(
-            @Parameter(description = "要扫描的目录路径（必须在配置的根目录内）") @RequestParam String path) {
-        validatePath(path);
-        service.scanDirectory(path);
-        return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
-    }
-
     @PostMapping("/rescan")
     @Operation(summary = "一键刷新电子书库", description = "扫描所有根路径 → 整理文件夹")
     public ResponseEntity<ApiResponse<String>> rescan() {

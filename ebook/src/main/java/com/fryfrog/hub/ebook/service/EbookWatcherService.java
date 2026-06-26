@@ -136,7 +136,7 @@ public class EbookWatcherService {
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);
-                                log.info("Registered new subdirectory: {}", fullPath);
+                                log.debug("Registered new subdirectory: {}", fullPath);
                             } catch (IOException e) {
                                 log.warn("Failed to register new subdirectory: {}", fullPath, e);
                             }
@@ -144,13 +144,13 @@ public class EbookWatcherService {
                         }
 
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
-                            log.info("Detected ebook file change: {}", fullPath);
+                            log.debug("Detected ebook file change: {}", fullPath);
                             executor.submit(() -> {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
                                         metadataService.extractAndSaveMetadata(fullPath.toString());
-                                        log.info("Auto-indexed ebook: {}", fileName);
+                                        log.debug("Auto-indexed ebook: {}", fileName);
                                     }
                                 } catch (Exception e) {
                                     log.warn("Failed to auto-index ebook: {}", fileName, e);

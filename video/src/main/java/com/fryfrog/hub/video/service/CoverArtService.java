@@ -61,13 +61,13 @@ public class CoverArtService {
     private boolean downloadImage(String imageUrl, Path targetPath) {
         try {
             if (Files.exists(targetPath)) {
-                log.info("Cover already exists: {}", targetPath);
+                log.debug("Cover already exists: {}", targetPath);
                 return true;
             }
 
             String fullUrl = imageUrl.startsWith("http") ? imageUrl : IMAGE_BASE_URL + "/" + imageSize + imageUrl;
 
-            log.info("Downloading cover: {} -> {}", fullUrl, targetPath);
+            log.debug("Downloading cover: {} -> {}", fullUrl, targetPath);
 
             Resource resource = restTemplate.getForObject(fullUrl, Resource.class);
             if (resource == null) {

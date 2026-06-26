@@ -43,19 +43,19 @@ public class MusicMetadataService {
     }
 
     public boolean isAutoWriteback() {
-        return settingService.getBoolean("music.auto-writeback", true);
+        return settingService.getBoolean("hub.music.auto-writeback", true);
     }
 
     public boolean isUseFolderStructure() {
-        return settingService.getBoolean("music.use-folder-structure", true);
+        return settingService.getBoolean("hub.music.use-folder-structure", true);
     }
 
     public String getDefaultArtist() {
-        return settingService.getValue("music.default-artist", "");
+        return settingService.getValue("hub.music.default-artist", "");
     }
 
     public boolean isAutoScrape() {
-        return settingService.getBoolean("music.auto-scrape", false);
+        return settingService.getBoolean("hub.music.scrape.auto-scrape", false);
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
@@ -96,77 +96,90 @@ public class MusicMetadataService {
 
             String absolutePath = file.getAbsolutePath();
             MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
-
-            org.jaudiotagger.audio.AudioFile audioFile = org.jaudiotagger.audio.AudioFileIO.read(file);
-            org.jaudiotagger.tag.Tag tag = audioFile.getTagOrCreateDefault();
-
             MusicTrack track = existing != null ? existing : new MusicTrack();
 
-            track.setTitle(tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE));
-            track.setArtist(tag.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST));
-            track.setAlbum(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM));
-            track.setAlbumArtist(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST));
-            track.setTrackNumber(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.TRACK)));
-            track.setDiscNumber(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.DISC_NO)));
-            track.setYear(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.YEAR)));
-            track.setGenre(tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE));
             track.setFilePath(absolutePath);
             track.setFileName(file.getName());
             track.setFileSize(file.length());
+
+            String fileName = file.getName().replaceAll("\\.[^.]+$", "");
+            track.setTitle(parseTitleFromFileName(fileName));
+            track.setArtist(parseArtistFromFileName(fileName));
+
+            org.jaudiotagger.audio.AudioFile audioFile = org.jaudiotagger.audio.AudioFileIO.read(file);
             track.setDurationSeconds((long) audioFile.getAudioHeader().getTrackLength());
             track.setBitrateKbps(parseInteger(audioFile.getAudioHeader().getBitRate()));
             track.setFormat(audioFile.getAudioHeader().getFormat());
 
-            String fileName = file.getName().replaceAll("\\.[^.]+$", "");
-            if (track.getTitle() == null || track.getTitle().isBlank() || isGarbled(track.getTitle())) {
-                track.setTitle(parseTitleFromFileName(fileName));
+            try {
+                org.jaudiotagger.tag.Tag tag = audioFile.getTagOrCreateDefault();
+
+                String tagTitle = tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE);
+                String tagArtist = tag.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST);
+                if (tagTitle != null && !tagTitle.isBlank() && !isGarbled(tagTitle)) {
+                    track.setTitle(tagTitle);
+                }
+                if (tagArtist != null && !tagArtist.isBlank() && !isGarbled(tagArtist)) {
+                    track.setArtist(tagArtist);
+                }
+
+                track.setAlbum(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM));
+                track.setAlbumArtist(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST));
+                track.setTrackNumber(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.TRACK)));
+                track.setDiscNumber(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.DISC_NO)));
+                track.setYear(parseInteger(tag.getFirst(org.jaudiotagger.tag.FieldKey.YEAR)));
+                track.setGenre(tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE));
+
+                String lyrics = tag.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS);
+                if (lyrics == null || lyrics.isEmpty()) {
+                    lyrics = tag.getFirst("USLT");
+                }
+                if (lyrics != null && (lyrics.startsWith("krc1") || lyrics.contains("\ufffd"))) {
+                    lyrics = null;
+                }
+                track.setLyrics(lyrics);
+
+                try {
+                    org.jaudiotagger.tag.images.Artwork artwork = tag.getFirstArtwork();
+                    if (artwork != null) {
+                        byte[] data = artwork.getBinaryData();
+                        String ext = guessImageExtension(data);
+                        Path coverPath = Paths.get(absolutePath).getParent().resolve("cover" + ext);
+                        Files.write(coverPath, data);
+                        track.setCoverArtPath(coverPath.toAbsolutePath().toString());
+                        track.setCoverSource("embedded");
+                    }
+                } catch (Exception e) {
+                    log.warn("提取封面失败 / Failed to extract cover art from: {}", file.getName(), e);
+                }
+            } catch (Exception e) {
+                log.debug("标签读取失败，仅从文件名解析 / Tag read failed for {}, parsing from filename: {}", file.getName(), e.getMessage());
             }
-            if (track.getArtist() == null || track.getArtist().isBlank() || isGarbled(track.getArtist())) {
-                track.setArtist(parseArtistFromFileName(fileName));
+
+            if (track.getCoverArtPath() == null) {
+                Path parentDir = Paths.get(absolutePath).getParent();
+                for (String coverName : List.of("cover.jpg", "cover.jpeg", "cover.png", "cover.webp")) {
+                    Path coverFile = parentDir.resolve(coverName);
+                    if (Files.exists(coverFile)) {
+                        track.setCoverArtPath(coverFile.toAbsolutePath().toString());
+                        break;
+                    }
+                }
             }
 
             inferFromFolderStructure(track, file);
 
-            String lyrics = tag.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS);
-            if (lyrics == null || lyrics.isEmpty()) {
-                lyrics = tag.getFirst("USLT");
-            }
-            if (lyrics != null && (lyrics.startsWith("krc1") || lyrics.contains("\ufffd"))) {
-                lyrics = null;
-            }
-            track.setLyrics(lyrics);
-
             Path targetDir = organizeTrackFolder(track);
 
-            if (lyrics != null && !lyrics.isBlank()) {
-                track.setLyricsSource("embedded");
+            if (track.getLyrics() != null && !track.getLyrics().isBlank()) {
+                if (track.getLyricsSource() == null) {
+                    track.setLyricsSource("embedded");
+                }
                 Path lrcPath = targetDir.resolve(
                         track.getFileName().replaceAll("\\.[^.]+$", ".lrc"));
                 if (!Files.exists(lrcPath)) {
-                    Files.writeString(lrcPath, lyrics);
+                    Files.writeString(lrcPath, track.getLyrics());
                 }
-            }
-
-            try {
-                org.jaudiotagger.tag.images.Artwork artwork = tag.getFirstArtwork();
-                if (artwork != null) {
-                    byte[] data = artwork.getBinaryData();
-                    String ext = guessImageExtension(data);
-                    Path coverPath = targetDir.resolve("cover" + ext);
-                    Files.write(coverPath, data);
-                    track.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                    track.setCoverSource("embedded");
-                } else if (track.getCoverArtPath() == null) {
-                    for (String coverName : List.of("cover.jpg", "cover.jpeg", "cover.png", "cover.webp")) {
-                        Path coverFile = targetDir.resolve(coverName);
-                        if (Files.exists(coverFile)) {
-                            track.setCoverArtPath(coverFile.toAbsolutePath().toString());
-                            break;
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("提取封面失败 / Failed to extract cover art from: {}", file.getName(), e);
             }
 
             return repository.save(track);
@@ -213,7 +226,9 @@ public class MusicMetadataService {
             }
         }
 
-        log.info("Music cleanup completed: removed {} invalid records", removed);
+        if (removed > 0) {
+            log.info("Music cleanup completed: removed {} invalid records", removed);
+        }
         return removed;
     }
 
@@ -264,7 +279,7 @@ public class MusicMetadataService {
             }
 
             if (isAutoScrape() && scrapeService.isScrapeEnabled()) {
-                log.info("Auto-scrape enabled, starting scrape after scan...");
+                log.debug("Auto-scrape enabled, starting scrape after scan...");
                 scrapeService.scrapeAll();
             }
         } catch (Exception e) {
@@ -274,12 +289,12 @@ public class MusicMetadataService {
     }
 
     private String parseTitleFromFileName(String fileName) {
-        String[] parts = fileName.split(" - ", 2);
+        String[] parts = fileName.split("\\s*-\\s*", 2);
         return parts.length > 1 ? parts[1].trim() : fileName.trim();
     }
 
     private String parseArtistFromFileName(String fileName) {
-        String[] parts = fileName.split(" - ", 2);
+        String[] parts = fileName.split("\\s*-\\s*", 2);
         return parts.length > 1 ? parts[0].trim() : "";
     }
 
