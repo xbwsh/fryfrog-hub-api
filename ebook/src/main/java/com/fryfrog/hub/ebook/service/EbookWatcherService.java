@@ -1,5 +1,6 @@
 package com.fryfrog.hub.ebook.service;
 
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.ebook.model.Ebook;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -21,6 +22,7 @@ import java.util.stream.Collectors;
 public class EbookWatcherService {
 
     private final EbookService metadataService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
     private String rootPathsConfig;
@@ -30,6 +32,7 @@ public class EbookWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
+    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private List<String> getRootPaths() {
@@ -74,7 +77,25 @@ public class EbookWatcherService {
                 return t;
             });
             executor.execute(this::watch);
+            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ebook-periodic-scan");
+                t.setDaemon(true);
+                return t;
+            });
+            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
+            log.info("Periodic scan scheduler started for ebook (check watcher.periodic-scan to enable)");
             log.info("Initial ebook scan completed, watching {} directories", watchServices.size());
+        }
+    }
+
+    private void periodicScan() {
+        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
+        try {
+            for (String rootPath : getRootPaths()) {
+                metadataService.scanDirectory(rootPath);
+            }
+        } catch (Exception e) {
+            log.warn("Periodic ebook scan failed: {}", e.getMessage());
         }
     }
 
@@ -112,14 +133,29 @@ public class EbookWatcherService {
                         Path parentDir = (Path) key.watchable();
                         Path fullPath = parentDir.resolve(fileName);
 
+                        if (Files.isDirectory(fullPath)) {
+                            try {
+                                registerDirectory(fullPath, ws);
+                                log.info("Registered new subdirectory: {}", fullPath);
+                            } catch (IOException e) {
+                                log.warn("Failed to register new subdirectory: {}", fullPath, e);
+                            }
+                            continue;
+                        }
+
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                             log.info("Detected ebook file change: {}", fullPath);
-                            try {
-                                metadataService.extractAndSaveMetadata(fullPath.toString());
-                                log.info("Auto-indexed ebook: {}", fileName);
-                            } catch (Exception e) {
-                                log.warn("Failed to auto-index ebook: {}", fileName, e);
-                            }
+                            executor.submit(() -> {
+                                try {
+                                    Thread.sleep(3000);
+                                    if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
+                                        metadataService.extractAndSaveMetadata(fullPath.toString());
+                                        log.info("Auto-indexed ebook: {}", fileName);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to auto-index ebook: {}", fileName, e);
+                                }
+                            });
                         }
                     }
                     key.reset();
@@ -154,6 +190,9 @@ public class EbookWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
+        }
+        if (scheduledExecutor != null) {
+            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching ebook directories");
     }

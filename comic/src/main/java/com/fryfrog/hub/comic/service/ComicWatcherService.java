@@ -1,6 +1,7 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.comic.model.Comic;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class ComicWatcherService {
 
     private final ComicMetadataService metadataService;
     private final MangaScrapeService mangaScrapeService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
     private String rootPathsConfig;
@@ -31,6 +33,7 @@ public class ComicWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
+    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private List<String> getRootPaths() {
@@ -75,7 +78,25 @@ public class ComicWatcherService {
                 return t;
             });
             executor.execute(this::watch);
+            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "comic-periodic-scan");
+                t.setDaemon(true);
+                return t;
+            });
+            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
+            log.info("Periodic scan scheduler started (check watcher.periodic-scan to enable)");
             log.info("Initial comic scan completed, watching {} directories", watchServices.size());
+        }
+    }
+
+    private void periodicScan() {
+        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
+        try {
+            for (String rootPath : getRootPaths()) {
+                metadataService.scanDirectory(rootPath);
+            }
+        } catch (Exception e) {
+            log.warn("Periodic comic scan failed: {}", e.getMessage());
         }
     }
 
@@ -113,22 +134,37 @@ public class ComicWatcherService {
                         Path parentDir = (Path) key.watchable();
                         Path fullPath = parentDir.resolve(fileName);
 
+                        if (Files.isDirectory(fullPath)) {
+                            try {
+                                registerDirectory(fullPath, ws);
+                                log.info("Registered new subdirectory: {}", fullPath);
+                            } catch (IOException e) {
+                                log.warn("Failed to register new subdirectory: {}", fullPath, e);
+                            }
+                            continue;
+                        }
+
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                             log.info("Detected comic file change: {}", fullPath);
-                            try {
-                                Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
-                                log.info("Auto-indexed comic: {}", fileName);
-                                if (comic != null && comic.getMetadataSourceId() == null) {
-                                    try {
-                                        mangaScrapeService.autoScrapeComic(comic);
-                                        log.info("Auto-scraped comic: {}", fileName);
-                                    } catch (Exception e) {
-                                        log.warn("Failed to auto-scrape comic: {}", fileName, e);
+                            executor.submit(() -> {
+                                try {
+                                    Thread.sleep(3000);
+                                    if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
+                                        Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
+                                        log.info("Auto-indexed comic: {}", fileName);
+                                        if (comic != null && comic.getMetadataSourceId() == null) {
+                                            try {
+                                                mangaScrapeService.autoScrapeComic(comic);
+                                                log.info("Auto-scraped comic: {}", fileName);
+                                            } catch (Exception e) {
+                                                log.warn("Failed to auto-scrape comic: {}", fileName, e);
+                                            }
+                                        }
                                     }
+                                } catch (Exception e) {
+                                    log.warn("Failed to auto-index comic: {}", fileName, e);
                                 }
-                            } catch (Exception e) {
-                                log.warn("Failed to auto-index comic: {}", fileName, e);
-                            }
+                            });
                         }
                     }
                     key.reset();
@@ -163,6 +199,9 @@ public class ComicWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
+        }
+        if (scheduledExecutor != null) {
+            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching comic directories");
     }

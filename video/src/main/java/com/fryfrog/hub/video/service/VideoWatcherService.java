@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ import java.util.stream.Collectors;
 public class VideoWatcherService {
 
     private final VideoService metadataService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
@@ -30,6 +32,7 @@ public class VideoWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
+    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private final Set<String> scrapingPaths = ConcurrentHashMap.newKeySet();
@@ -84,7 +87,25 @@ public class VideoWatcherService {
                 return t;
             });
             executor.execute(this::watch);
+            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "video-periodic-scan");
+                t.setDaemon(true);
+                return t;
+            });
+            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
+            log.info("Periodic scan scheduler started for video (check watcher.periodic-scan to enable)");
             log.info("Initial video scan completed, watching {} directories", watchServices.size());
+        }
+    }
+
+    private void periodicScan() {
+        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
+        try {
+            for (String rootPath : getRootPaths()) {
+                metadataService.scanDirectory(rootPath);
+            }
+        } catch (Exception e) {
+            log.warn("Periodic video scan failed: {}", e.getMessage());
         }
     }
 
@@ -127,14 +148,29 @@ public class VideoWatcherService {
                             continue;
                         }
 
+                        if (Files.isDirectory(fullPath)) {
+                            try {
+                                registerDirectory(fullPath, ws);
+                                log.info("Registered new subdirectory: {}", fullPath);
+                            } catch (IOException e) {
+                                log.warn("Failed to register new subdirectory: {}", fullPath, e);
+                            }
+                            continue;
+                        }
+
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                             log.info("Detected video file change: {}", fullPath);
-                            try {
-                                metadataService.extractAndSaveMetadata(fullPath.toString());
-                                log.info("Auto-indexed video: {}", fileName);
-                            } catch (Exception e) {
-                                log.warn("Failed to auto-index video: {}", fileName, e);
-                            }
+                            executor.submit(() -> {
+                                try {
+                                    Thread.sleep(3000);
+                                    if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
+                                        metadataService.extractAndSaveMetadata(fullPath.toString());
+                                        log.info("Auto-indexed video: {}", fileName);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to auto-index video: {}", fileName, e);
+                                }
+                            });
                         }
                     }
                     key.reset();
@@ -169,6 +205,9 @@ public class VideoWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
+        }
+        if (scheduledExecutor != null) {
+            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching video directories");
     }

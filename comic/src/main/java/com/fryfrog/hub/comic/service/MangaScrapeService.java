@@ -319,7 +319,7 @@ public class MangaScrapeService {
         List<BangumiService.SearchResult> bgmResults = searchFromBangumi(query);
         if (!bgmResults.isEmpty()) {
             BangumiService.SearchResult best = bgmResults.get(0);
-            return bindBangumi(comic.getId(), best.getId(), false);
+            return bindBangumi(comic.getId(), best.getId(), true);
         }
 
         log.info("Bangumi returned no results for '{}', trying AniList", query);
@@ -327,11 +327,11 @@ public class MangaScrapeService {
         if (!aniResults.isEmpty()) {
             AnilistSearchResult.MediaItem best = aniResults.get(0);
             if (best.getMeanScore() != null && best.getMeanScore() >= getMinScore() * 10) {
-                return bindAnilist(comic.getId(), best.getId(), false);
+                return bindAnilist(comic.getId(), best.getId(), true);
             }
         }
 
-        log.info("No results for comic '{}' from any source", comic.getTitle());
+        log.info("No results for comic '{}' from any source", query);
         return comic;
     }
 
@@ -481,7 +481,6 @@ public class MangaScrapeService {
             }
         }
         downloadCover(comic, coverUrl, "bangumi_" + detail.getId());
-        downloadSeriesCover(comic, coverUrl);
     }
 
     private void downloadCoverFromAnilist(Comic comic, AnilistSearchResult.MediaItem detail) {
@@ -493,7 +492,6 @@ public class MangaScrapeService {
             }
         }
         downloadCover(comic, coverUrl, "anilist_" + detail.getId());
-        downloadSeriesCover(comic, coverUrl);
     }
 
     private void downloadCover(Comic comic, String coverUrl, String filePrefix) {
@@ -563,32 +561,6 @@ public class MangaScrapeService {
         return null;
     }
 
-    private void downloadSeriesCover(Comic comic, String coverUrl) {
-        if (coverUrl == null || coverUrl.isBlank()) return;
-        if (comic.getFilePath() == null || comic.getFilePath().isBlank()) return;
-
-        try {
-            Path comicDir = Paths.get(comic.getFilePath()).getParent();
-            if (comicDir == null) return;
-
-            Path seriesCoverPath = comicDir.resolve("series_cover.jpg");
-            if (Files.exists(seriesCoverPath)) return;
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "FryfrogHub/0.1.0");
-            HttpEntity<Void> request = new HttpEntity<>(headers);
-            ResponseEntity<byte[]> response = scraperRestTemplate.exchange(
-                    coverUrl, HttpMethod.GET, request, byte[].class);
-
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Files.write(seriesCoverPath, response.getBody());
-                log.info("Downloaded series cover to {}", seriesCoverPath);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to download series cover: {}", e.getMessage());
-        }
-    }
-
     private void moveComicToSeriesFolder(Comic comic) {
         if (comic.getSeries() == null || comic.getSeries().isBlank()) return;
         if (comic.getFilePath() == null || comic.getFilePath().isBlank()) return;
@@ -603,7 +575,7 @@ public class MangaScrapeService {
             Path currentDir = currentPath.getParent();
             if (currentDir == null) return;
 
-            Path rootDir = currentDir.getParent();
+            Path rootDir = findRootDir(currentDir);
             if (rootDir == null) return;
 
             String seriesName = sanitizeFolderName(comic.getSeries());
@@ -661,6 +633,16 @@ public class MangaScrapeService {
         return sanitized.isBlank() ? "Unknown" : sanitized;
     }
 
+    private Path findRootDir(Path currentDir) {
+        for (String rootPath : comicMetadataService.getRootPaths()) {
+            Path root = Paths.get(rootPath).toAbsolutePath().normalize();
+            if (currentDir.toAbsolutePath().normalize().startsWith(root)) {
+                return root;
+            }
+        }
+        return currentDir.getParent();
+    }
+
     private void updateCoverAndThumbnailPaths(Comic comic, Path oldDir, Path newDir) {
         if (comic.getCoverArtPath() != null && !comic.getCoverArtPath().isBlank()) {
             Path oldCover = Paths.get(comic.getCoverArtPath());
@@ -691,12 +673,26 @@ public class MangaScrapeService {
                             if (!Files.exists(newCover)) {
                                 Files.move(oldCover, newCover);
                             }
+                            if (comic.getCoverArtPath() == null || !comic.getCoverArtPath().isBlank()
+                                    && Paths.get(comic.getCoverArtPath()).equals(oldCover)) {
+                                comic.setCoverArtPath(newCover.toAbsolutePath().toString());
+                            }
                         } catch (IOException e) {
                             log.warn("Failed to move extracted cover {}: {}", oldCover.getFileName(), e.getMessage());
                         }
                     });
         } catch (IOException e) {
             log.warn("Failed to scan old dir for covers: {}", e.getMessage());
+        }
+
+        if (comic.getCoverArtPath() != null && !Files.exists(Paths.get(comic.getCoverArtPath()))) {
+            try (var stream = Files.list(newDir)) {
+                stream.filter(Files::isRegularFile)
+                        .filter(p -> p.getFileName().toString().startsWith(comicBaseName)
+                                && p.getFileName().toString().endsWith("_cover.jpg"))
+                        .findFirst()
+                        .ifPresent(p -> comic.setCoverArtPath(p.toAbsolutePath().toString()));
+            } catch (IOException ignored) {}
         }
 
         if (comic.getThumbnailDirPath() != null && !comic.getThumbnailDirPath().isBlank()) {

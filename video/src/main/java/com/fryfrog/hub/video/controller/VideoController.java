@@ -3,11 +3,14 @@ package com.fryfrog.hub.video.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
+import com.fryfrog.hub.video.dto.VideoBindRequest;
 import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.dto.WatchProgressDTO;
 import com.fryfrog.hub.video.dto.WatchProgressRequest;
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.WatchProgress;
+import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.TmdbService;
@@ -47,6 +50,7 @@ public class VideoController {
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
     private final WatchProgressService watchProgressService;
+    private final VideoActorRepository actorRepository;
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
@@ -169,6 +173,13 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success("Rescan started: scan → organize → scrape"));
     }
 
+    @GetMapping("/{id:\\d+}/actors")
+    @Operation(summary = "获取视频演员列表", description = "返回指定视频的演员信息列表")
+    public ResponseEntity<ApiResponse<List<VideoActor>>> getActors(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(actorRepository.findByVideoId(id)));
+    }
+
     @GetMapping("/{id:\\d+}/cover")
     @Operation(summary = "获取封面图片", description = "返回视频的封面图片（竖屏海报），无封面时返回标题占位图")
     public ResponseEntity<Resource> getCoverArt(
@@ -230,9 +241,8 @@ public class VideoController {
     @Operation(summary = "绑定TMDB元数据", description = "将TMDB上的元数据绑定到指定视频，同时生成NFO和下载封面")
     public ResponseEntity<ApiResponse<VideoDTO>> bindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "TMDB ID") @RequestParam Long tmdbId,
-            @Parameter(description = "媒体类型（movie/tv）") @RequestParam String mediaType) {
-        Video video = service.scrapeAndBindTmdb(id, tmdbId, mediaType);
+            @RequestBody VideoBindRequest request) {
+        Video video = service.scrapeAndBindTmdb(id, request.getTmdbId(), request.getMediaType());
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
     }
 
@@ -248,9 +258,8 @@ public class VideoController {
     @Operation(summary = "刷新TMDB元数据", description = "清除现有绑定并重新从TMDB刮削元数据")
     public ResponseEntity<ApiResponse<VideoDTO>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "TMDB ID") @RequestParam Long tmdbId,
-            @Parameter(description = "媒体类型（movie/tv）") @RequestParam String mediaType) {
-        Video video = service.rescrapeVideo(id, tmdbId, mediaType);
+            @RequestBody VideoBindRequest request) {
+        Video video = service.rescrapeVideo(id, request.getTmdbId(), request.getMediaType());
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
     }
 

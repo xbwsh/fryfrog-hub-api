@@ -1,5 +1,6 @@
 package com.fryfrog.hub.music.service;
 
+import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 public class MediaWatcherService {
 
     private final MusicMetadataService metadataService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -29,6 +31,7 @@ public class MediaWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
+    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private List<String> getRootPaths() {
@@ -73,7 +76,25 @@ public class MediaWatcherService {
                 return t;
             });
             executor.execute(this::watch);
+            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "music-periodic-scan");
+                t.setDaemon(true);
+                return t;
+            });
+            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
+            log.info("Periodic scan scheduler started for music (check watcher.periodic-scan to enable)");
             log.info("Initial media scan completed, watching {} directories", watchServices.size());
+        }
+    }
+
+    private void periodicScan() {
+        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
+        try {
+            for (String rootPath : getRootPaths()) {
+                metadataService.scanDirectory(rootPath);
+            }
+        } catch (Exception e) {
+            log.warn("Periodic music scan failed: {}", e.getMessage());
         }
     }
 
@@ -111,14 +132,29 @@ public class MediaWatcherService {
                         Path parentDir = (Path) key.watchable();
                         Path fullPath = parentDir.resolve(fileName);
 
+                        if (Files.isDirectory(fullPath)) {
+                            try {
+                                registerDirectory(fullPath, ws);
+                                log.info("Registered new subdirectory: {}", fullPath);
+                            } catch (IOException e) {
+                                log.warn("Failed to register new subdirectory: {}", fullPath, e);
+                            }
+                            continue;
+                        }
+
                         if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
                             log.info("Detected media file change: {}", fullPath);
-                            try {
-                                metadataService.extractAndSaveMetadata(fullPath.toString());
-                                log.info("Auto-indexed: {}", fileName);
-                            } catch (Exception e) {
-                                log.warn("Failed to auto-index: {}", fileName, e);
-                            }
+                            executor.submit(() -> {
+                                try {
+                                    Thread.sleep(3000);
+                                    if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
+                                        metadataService.extractAndSaveMetadata(fullPath.toString());
+                                        log.info("Auto-indexed: {}", fileName);
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to auto-index: {}", fileName, e);
+                                }
+                            });
                         }
                     }
                     key.reset();
@@ -153,6 +189,9 @@ public class MediaWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
+        }
+        if (scheduledExecutor != null) {
+            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching media directories");
     }

@@ -7,7 +7,9 @@ import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.VideoSeries;
+import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +17,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestTemplate;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,6 +41,8 @@ public class VideoService {
     private final SeriesService seriesService;
     private final TransactionTemplate transactionTemplate;
     private final SystemSettingService settingService;
+    private final VideoActorRepository actorRepository;
+    private final RestTemplate scraperRestTemplate;
 
     private final ExecutorService scrapeExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "tmdb-scraper");
@@ -48,7 +53,9 @@ public class VideoService {
     public VideoService(VideoRepository repository, TmdbService tmdbService,
                        NfoService nfoService, CoverArtService coverArtService,
                        @Lazy VideoWatcherService watcherService, SeriesService seriesService,
-                       TransactionTemplate transactionTemplate, SystemSettingService settingService) {
+                       TransactionTemplate transactionTemplate, SystemSettingService settingService,
+                       VideoActorRepository actorRepository,
+                       @org.springframework.beans.factory.annotation.Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate) {
         this.repository = repository;
         this.tmdbService = tmdbService;
         this.nfoService = nfoService;
@@ -57,6 +64,8 @@ public class VideoService {
         this.seriesService = seriesService;
         this.transactionTemplate = transactionTemplate;
         this.settingService = settingService;
+        this.actorRepository = actorRepository;
+        this.scraperRestTemplate = scraperRestTemplate;
     }
 
     @Value("${hub.video.root-paths:./media-library/video}")
@@ -575,6 +584,7 @@ public class VideoService {
 
         generateNfoAndCovers(saved);
         moveVideoToMetadataDir(saved);
+        saveActors(saved, mediaType, tmdbId);
 
         return saved;
     }
@@ -782,5 +792,80 @@ public class VideoService {
         video.setStatus(detail.getStatus());
         video.setPosterUrl(tmdbService.getPosterUrl(detail.getPosterPath()));
         video.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
+    }
+
+    private void saveActors(Video video, String mediaType, Long tmdbId) {
+        try {
+            actorRepository.deleteByVideoId(video.getId());
+
+            Path videoDir = Paths.get(video.getFilePath()).getParent();
+            if (videoDir == null) return;
+            Path actorsDir = videoDir.resolve("actors");
+            Files.createDirectories(actorsDir);
+
+            int count = 0;
+            if ("movie".equalsIgnoreCase(mediaType)) {
+                TmdbMovieDetail detail = tmdbService.getMovieDetail(tmdbId);
+                if (detail != null && detail.getCredits() != null && detail.getCredits().getCast() != null) {
+                    for (TmdbMovieDetail.CastMember member : detail.getCredits().getCast()) {
+                        if (count >= 10) break;
+                        count = saveOneActor(video, actorsDir, count,
+                                member.getName(), member.getCharacter(), member.getId(), member.getProfilePath());
+                    }
+                }
+            } else if ("tv".equalsIgnoreCase(mediaType)) {
+                TmdbTvDetail detail = tmdbService.getTvDetail(tmdbId);
+                if (detail != null && detail.getCredits() != null && detail.getCredits().getCast() != null) {
+                    for (TmdbTvDetail.CastMember member : detail.getCredits().getCast()) {
+                        if (count >= 10) break;
+                        count = saveOneActor(video, actorsDir, count,
+                                member.getName(), member.getCharacter(), member.getId(), member.getProfilePath());
+                    }
+                }
+            }
+            log.info("Saved {} actors for video id={}", count, video.getId());
+        } catch (Exception e) {
+            log.warn("Failed to save actors for video id={}: {}", video.getId(), e.getMessage());
+        }
+    }
+
+    private int saveOneActor(Video video, Path actorsDir, int count,
+                              String name, String character, Long sourceId, String profilePath) throws IOException {
+        if (name == null) return count;
+
+        VideoActor actor = new VideoActor();
+        actor.setVideoId(video.getId());
+        actor.setName(name);
+        actor.setCharacter(character);
+        actor.setSourceActorId(sourceId);
+
+        String imageUrl = null;
+        if (profilePath != null && !profilePath.isBlank()) {
+            imageUrl = "https://image.tmdb.org/t/p/w185" + profilePath;
+            actor.setImageUrl(imageUrl);
+        }
+
+        String safeName = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        if (!safeName.isBlank() && imageUrl != null) {
+            Path actorPath = actorsDir.resolve(safeName + ".jpg");
+            if (!Files.exists(actorPath)) {
+                try {
+                    org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                    headers.set("User-Agent", "FryfrogHub/0.1.0");
+                    org.springframework.http.HttpEntity<Void> req = new org.springframework.http.HttpEntity<>(headers);
+                    org.springframework.http.ResponseEntity<byte[]> resp = scraperRestTemplate.exchange(
+                            imageUrl, org.springframework.http.HttpMethod.GET, req, byte[].class);
+                    if (resp.getStatusCode().is2xxSuccessful() && resp.getBody() != null) {
+                        Files.write(actorPath, resp.getBody());
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to download actor image '{}': {}", safeName, e.getMessage());
+                }
+            }
+            actor.setImagePath(actorPath.toAbsolutePath().toString());
+        }
+
+        actorRepository.save(actor);
+        return count + 1;
     }
 }

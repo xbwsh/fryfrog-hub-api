@@ -105,7 +105,22 @@ public class ComicMetadataService {
             Optional<Comic> withCover = entry.getValue().stream()
                     .filter(c -> c.getCoverArtPath() != null)
                     .findFirst();
-            series.setCoverArtPath(withCover.map(Comic::getCoverArtPath).orElse(null));
+            String coverPath = withCover.map(Comic::getCoverArtPath).orElse(null);
+
+            if (coverPath != null) {
+                Path seriesDir = Paths.get(coverPath).getParent();
+                try (var stream = java.nio.file.Files.list(seriesDir)) {
+                    String bangumiCover = stream
+                            .filter(p -> p.getFileName().toString().startsWith("bangumi_") && p.getFileName().toString().endsWith("_cover.jpg"))
+                            .map(p -> p.toAbsolutePath().toString())
+                            .findFirst()
+                            .orElse(null);
+                    if (bangumiCover != null) {
+                        coverPath = bangumiCover;
+                    }
+                } catch (Exception ignored) {}
+            }
+            series.setCoverArtPath(coverPath);
 
             Optional<Comic> withSummary = entry.getValue().stream()
                     .filter(c -> c.getSeriesSummary() != null && !c.getSeriesSummary().isBlank())

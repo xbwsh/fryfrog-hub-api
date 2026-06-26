@@ -80,6 +80,9 @@ public class TmdbTvDetail {
         @JsonProperty("character")
         private String character;
 
+        @JsonProperty("profile_path")
+        private String profilePath;
+
         @JsonProperty("order")
         private Integer order;
     }
