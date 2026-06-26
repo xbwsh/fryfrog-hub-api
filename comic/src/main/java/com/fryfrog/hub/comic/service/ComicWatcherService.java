@@ -95,6 +95,8 @@ public class ComicWatcherService {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
             }
+            metadataService.organizeAll();
+            mangaScrapeService.autoScrapeAll();
         } catch (Exception e) {
             log.warn("Periodic comic scan failed: {}", e.getMessage());
         }

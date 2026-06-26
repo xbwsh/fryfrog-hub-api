@@ -207,7 +207,7 @@ public class MusicMetadataService {
 
         for (MusicTrack track : allTracks) {
             if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
-                log.info("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
+                log.debug("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
                 repository.deleteById(track.getId());
                 removed++;
             }
@@ -256,7 +256,7 @@ public class MusicMetadataService {
                                     });
                                 }
 
-                                log.info("Indexed: {}", path.getFileName());
+                                log.debug("Indexed: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index: {}", path.getFileName(), e);
                             }

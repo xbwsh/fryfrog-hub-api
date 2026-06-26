@@ -1,6 +1,7 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.comic.dto.anilist.AnilistSearchResult;
 import com.fryfrog.hub.comic.model.Comic;
@@ -38,6 +39,7 @@ public class MangaScrapeService {
     private final ComicMetadataService comicMetadataService;
     private final RestTemplate scraperRestTemplate;
     private final SystemSettingService settingService;
+    private final ScrapeProgressService scrapeProgressService;
 
     private boolean isAutoScrape() {
         return settingService.getBoolean("comic.auto-scrape", false);
@@ -195,7 +197,6 @@ public class MangaScrapeService {
                     if (volInfo.rating() != null) comic.setRating(volInfo.rating());
                 }
             } else {
-                comicMetadataService.reExtractCover(comic);
                 if (comic.getSummary() == null || comic.getSummary().isBlank()) {
                     comic.setSummary(source.getSummary());
                 }
@@ -297,14 +298,20 @@ public class MangaScrapeService {
         List<Comic> unboundComics = repository.findByMetadataSourceIdIsNull();
         log.info("Found {} unbound comics, starting auto-scrape", unboundComics.size());
 
+        scrapeProgressService.start("comic", unboundComics.size());
+
         for (Comic comic : unboundComics) {
             try {
+                scrapeProgressService.updateItem("comic", comic.getTitle(), "processing", null);
                 autoScrapeComic(comic);
+                scrapeProgressService.updateItem("comic", comic.getTitle(), "completed", null);
                 Thread.sleep(500);
             } catch (Exception e) {
                 log.warn("Failed to auto-scrape comic '{}': {}", comic.getTitle(), e.getMessage());
+                scrapeProgressService.updateItem("comic", comic.getTitle(), "failed", e.getMessage());
             }
         }
+        scrapeProgressService.finish("comic");
         log.info("Auto-scrape completed");
     }
 

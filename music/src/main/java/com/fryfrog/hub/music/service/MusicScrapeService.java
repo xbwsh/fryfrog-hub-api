@@ -1,5 +1,6 @@
 package com.fryfrog.hub.music.service;
 
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.repository.MusicTrackRepository;
@@ -26,6 +27,7 @@ public class MusicScrapeService {
     private final QQMusicService qqMusicService;
     private final MusicBrainzService musicBrainzService;
     private final SystemSettingService settingService;
+    private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -80,20 +82,25 @@ public class MusicScrapeService {
     @Transactional
     public List<MusicTrack> scrapeAll() {
         List<MusicTrack> tracks = repository.findAll();
+        List<MusicTrack> needScrape = tracks.stream().filter(this::needsScraping).toList();
         int scraped = 0;
 
-        for (MusicTrack track : tracks) {
-            if (needsScraping(track)) {
-                try {
-                    scrapeTrack(track);
-                    scraped++;
-                    Thread.sleep(500); // Rate limiting
-                } catch (Exception e) {
-                    log.warn("刮削失败 / Failed to scrape track {}: {}", track.getTitle(), e.getMessage());
-                }
+        scrapeProgressService.start("music", needScrape.size());
+
+        for (MusicTrack track : needScrape) {
+            try {
+                scrapeProgressService.updateItem("music", track.getTitle(), "processing", null);
+                scrapeTrack(track);
+                scraped++;
+                scrapeProgressService.updateItem("music", track.getTitle(), "completed", null);
+                Thread.sleep(500);
+            } catch (Exception e) {
+                log.warn("刮削失败 / Failed to scrape track {}: {}", track.getTitle(), e.getMessage());
+                scrapeProgressService.updateItem("music", track.getTitle(), "failed", e.getMessage());
             }
         }
 
+        scrapeProgressService.finish("music");
         log.info("批量刮削完成 / Scrape completed: {}/{} tracks scraped", scraped, tracks.size());
         return repository.findAll();
     }
@@ -101,20 +108,25 @@ public class MusicScrapeService {
     @Transactional
     public List<MusicTrack> scrapeByArtist(String artist) {
         List<MusicTrack> tracks = repository.findByArtistContainingIgnoreCase(artist);
+        List<MusicTrack> needScrape = tracks.stream().filter(this::needsScraping).toList();
         int scraped = 0;
 
-        for (MusicTrack track : tracks) {
-            if (needsScraping(track)) {
-                try {
-                    scrapeTrack(track);
-                    scraped++;
-                    Thread.sleep(500);
-                } catch (Exception e) {
-                    log.warn("刮削失败 / Failed to scrape track {}: {}", track.getTitle(), e.getMessage());
-                }
+        scrapeProgressService.start("music", needScrape.size());
+
+        for (MusicTrack track : needScrape) {
+            try {
+                scrapeProgressService.updateItem("music", track.getTitle(), "processing", null);
+                scrapeTrack(track);
+                scraped++;
+                scrapeProgressService.updateItem("music", track.getTitle(), "completed", null);
+                Thread.sleep(500);
+            } catch (Exception e) {
+                log.warn("刮削失败 / Failed to scrape track {}: {}", track.getTitle(), e.getMessage());
+                scrapeProgressService.updateItem("music", track.getTitle(), "failed", e.getMessage());
             }
         }
 
+        scrapeProgressService.finish("music");
         log.info("艺术家刮削完成 / Artist scrape completed: {}/{} tracks scraped for {}", scraped, tracks.size(), artist);
         return tracks;
     }

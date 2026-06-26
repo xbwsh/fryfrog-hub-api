@@ -104,6 +104,8 @@ public class VideoWatcherService {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
             }
+            metadataService.organizeVideos(null);
+            metadataService.autoScrapeAll();
         } catch (Exception e) {
             log.warn("Periodic video scan failed: {}", e.getMessage());
         }

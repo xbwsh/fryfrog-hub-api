@@ -21,9 +21,36 @@
 | 视频 | `POST /api/v1/video/rescan` | 扫描 → 整理 → 刮削 |
 | 电子书 | `POST /api/v1/ebook/rescan` | 扫描 |
 
-无需传参，异步执行，立即返回。
+### 2. 刮削进度查询
 
-### 2. 获取角色/演员图片
+| 模块 | 路径 |
+|------|------|
+| 漫画 | `GET /api/v1/comic/scrape/progress` |
+| 音乐 | `GET /api/v1/music/scrape/progress` |
+| 视频 | `GET /api/v1/video/scrape/progress` |
+
+返回格式：
+```json
+{
+  "module": "comic",
+  "running": true,
+  "total": 10,
+  "completed": 3,
+  "failed": 1,
+  "skipped": 2,
+  "currentItem": "间谍过家家 Vol.02",
+  "percent": 30.0,
+  "items": [
+    { "name": "间谍过家家 Vol.01", "status": "completed" },
+    { "name": "间谍过家家 Vol.02", "status": "processing" },
+    { "name": "偷星九月天 Vol.01", "status": "failed", "error": "no results" }
+  ]
+}
+```
+
+状态值：`pending` / `processing` / `completed` / `failed` / `skipped`
+
+### 3. 获取角色/演员图片
 
 | 模块 | 路径 | 说明 |
 |------|------|------|

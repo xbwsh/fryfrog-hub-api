@@ -1,6 +1,8 @@
 package com.fryfrog.hub.comic.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.comic.dto.ComicBindRequest;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressRequest;
@@ -45,6 +47,7 @@ public class ComicController {
     private final ComicReadingProgressService readingProgressService;
     private final MangaScrapeService mangaScrapeService;
     private final ComicCharacterRepository characterRepository;
+    private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
     private String rootPathsConfig;
@@ -288,6 +291,12 @@ public class ComicController {
     public ResponseEntity<ApiResponse<String>> autoScrape() {
         mangaScrapeService.autoScrapeAll();
         return ResponseEntity.ok(ApiResponse.success("Auto-scrape started"));
+    }
+
+    @GetMapping("/scrape/progress")
+    @Operation(summary = "刮削进度", description = "返回当前漫画刮削任务的进度")
+    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
+        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("comic")));
     }
 
     private void validatePath(String path) {

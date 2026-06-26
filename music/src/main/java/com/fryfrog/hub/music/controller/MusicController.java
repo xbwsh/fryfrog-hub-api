@@ -1,6 +1,8 @@
 package com.fryfrog.hub.music.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
 import com.fryfrog.hub.music.service.MusicScrapeService;
@@ -35,6 +37,7 @@ public class MusicController {
 
     private final MusicMetadataService service;
     private final MusicScrapeService scrapeService;
+    private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -267,6 +270,12 @@ public class MusicController {
     @Operation(summary = "刮削状态", description = "返回待刮削曲目数量")
     public ResponseEntity<ApiResponse<Long>> scrapeStatus() {
         return ResponseEntity.ok(ApiResponse.success(scrapeService.countPendingScrape()));
+    }
+
+    @GetMapping("/scrape/progress")
+    @Operation(summary = "刮削进度", description = "返回当前音乐刮削任务的进度")
+    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
+        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("music")));
     }
 
     private MediaType resolveImageMediaType(String fileName) {

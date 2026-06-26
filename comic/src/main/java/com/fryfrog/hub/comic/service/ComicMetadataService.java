@@ -177,14 +177,7 @@ public class ComicMetadataService {
             }
 
             if (comic.getCoverArtPath() == null) {
-                try {
-                    String coverPath = extractCover(file);
-                    if (coverPath != null) {
-                        comic.setCoverArtPath(coverPath);
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to extract cover for: {}", fileName, e);
-                }
+                log.debug("Skipping cover extraction for: {}", fileName);
             }
 
             return repository.save(comic);
@@ -201,7 +194,7 @@ public class ComicMetadataService {
 
         for (Comic comic : allComics) {
             if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
-                log.info("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
+                log.debug("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
                 repository.deleteById(comic.getId());
                 removed++;
             }

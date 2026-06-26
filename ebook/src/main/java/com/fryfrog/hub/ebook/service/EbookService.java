@@ -154,19 +154,7 @@ public class EbookService {
                         ebook.setYear(meta.year());
 
                         if (meta.coverEntryName() != null) {
-                            try {
-                                byte[] coverData = EpubParser.readCover(filePath, meta);
-                                if (coverData != null && coverData.length > 0) {
-                                    Path coverDir = Paths.get(getFirstRootPath(), ".cache", "covers");
-                                    Files.createDirectories(coverDir);
-                                    String coverFileName = baseName + ".jpg";
-                                    Path coverPath = coverDir.resolve(coverFileName);
-                                    Files.write(coverPath, coverData);
-                                    ebook.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                                }
-                            } catch (Exception e) {
-                                log.warn("Failed to extract cover from epub: {}", fileName, e);
-                            }
+                            log.debug("Skipping cover extraction for epub: {}", fileName);
                         }
 
                         try {
@@ -234,7 +222,7 @@ public class EbookService {
                         .forEach(path -> {
                             try {
                                 extractAndSaveMetadata(path.toString());
-                                log.info("Indexed ebook: {}", path.getFileName());
+                                log.debug("Indexed ebook: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index ebook: {}", path.getFileName(), e);
                             }

@@ -1,6 +1,8 @@
 package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.VideoBindRequest;
@@ -51,6 +53,7 @@ public class VideoController {
     private final CoverArtService coverArtService;
     private final WatchProgressService watchProgressService;
     private final VideoActorRepository actorRepository;
+    private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
@@ -270,6 +273,12 @@ public class VideoController {
                 .map(this::toDTO)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(dtos));
+    }
+
+    @GetMapping("/scrape/progress")
+    @Operation(summary = "刮削进度", description = "返回当前视频刮削任务的进度")
+    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
+        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("video")));
     }
 
     @GetMapping("/tmdb/status")

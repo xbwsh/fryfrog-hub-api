@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
@@ -43,6 +44,7 @@ public class VideoService {
     private final SystemSettingService settingService;
     private final VideoActorRepository actorRepository;
     private final RestTemplate scraperRestTemplate;
+    private final ScrapeProgressService scrapeProgressService;
 
     private final ExecutorService scrapeExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "tmdb-scraper");
@@ -55,7 +57,8 @@ public class VideoService {
                        @Lazy VideoWatcherService watcherService, SeriesService seriesService,
                        TransactionTemplate transactionTemplate, SystemSettingService settingService,
                        VideoActorRepository actorRepository,
-                       @org.springframework.beans.factory.annotation.Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate) {
+                       @org.springframework.beans.factory.annotation.Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate,
+                       ScrapeProgressService scrapeProgressService) {
         this.repository = repository;
         this.tmdbService = tmdbService;
         this.nfoService = nfoService;
@@ -66,6 +69,7 @@ public class VideoService {
         this.settingService = settingService;
         this.actorRepository = actorRepository;
         this.scraperRestTemplate = scraperRestTemplate;
+        this.scrapeProgressService = scrapeProgressService;
     }
 
     @Value("${hub.video.root-paths:./media-library/video}")
@@ -228,7 +232,7 @@ public class VideoService {
             NfoService.NfoData nfoData = nfoService.readNfoForVideo(file.toPath());
             if (nfoData != null) {
                 nfoService.applyNfoData(video, nfoData);
-                log.info("Applied local NFO metadata: {}", fileName);
+                log.debug("Applied local NFO metadata: {}", fileName);
             }
 
             // 从文件名解析集数，覆盖 NFO 中可能错误的值
@@ -301,7 +305,7 @@ public class VideoService {
                         .forEach(path -> {
                             try {
                                 extractAndSaveMetadata(path.toString());
-                                log.info("Indexed video: {}", path.getFileName());
+                                log.debug("Indexed video: {}", path.getFileName());
                             } catch (Exception e) {
                                 log.warn("Failed to index video: {}", path.getFileName(), e);
                             }
@@ -724,16 +728,22 @@ public class VideoService {
         int scraped = 0;
         int skipped = 0;
 
+        scrapeProgressService.start("video", videos.size());
+
         for (Video video : videos) {
             try {
                 String query = video.getTitle();
                 if (query == null || query.isBlank()) {
+                    scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
                     continue;
                 }
+
+                scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
 
                 List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
                 if (results.isEmpty()) {
                     log.info("No TMDB results for: {}", video.getTitle());
+                    scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                     continue;
                 }
 
@@ -742,20 +752,24 @@ public class VideoService {
 
                 if (score < getMinScore()) {
                     log.info("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
+                    scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
                     skipped++;
                     continue;
                 }
 
                 scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
                 scraped++;
+                scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
 
                 log.info("Auto-scraped: {} -> TMDB {} ({}) score={}",
                         video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
             } catch (Exception e) {
                 log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
+                scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
             }
         }
 
+        scrapeProgressService.finish("video");
         log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
         return repository.findAll();
     }
