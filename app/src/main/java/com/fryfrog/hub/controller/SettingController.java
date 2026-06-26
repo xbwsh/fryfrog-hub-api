@@ -3,6 +3,7 @@ package com.fryfrog.hub.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.SettingUpdateRequest;
 import com.fryfrog.hub.common.model.SystemSetting;
+import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -19,9 +20,11 @@ import java.util.Map;
 public class SettingController {
 
     private final SystemSettingService settingService;
+    private final PeriodicScanScheduler scanScheduler;
 
-    public SettingController(SystemSettingService settingService) {
+    public SettingController(SystemSettingService settingService, PeriodicScanScheduler scanScheduler) {
         this.settingService = settingService;
+        this.scanScheduler = scanScheduler;
     }
 
     @GetMapping
@@ -56,6 +59,14 @@ public class SettingController {
             @RequestBody SettingUpdateRequest request) {
         String dbKey = key.startsWith("hub.") ? key : "hub." + key;
         SystemSetting setting = settingService.setValue(dbKey, request.getValue(), null);
+
+        if ("watcher.periodic-scan-interval".equals(dbKey)) {
+            try {
+                int interval = Integer.parseInt(request.getValue());
+                scanScheduler.updateInterval(interval);
+            } catch (NumberFormatException ignored) {}
+        }
+
         return ResponseEntity.ok(ApiResponse.success("设置已更新", setting));
     }
 
@@ -70,5 +81,15 @@ public class SettingController {
         status.put("auto-scrape", settingService.getBoolean("hub.tmdb.auto-scrape", false));
         status.put("include-adult", settingService.getBoolean("hub.tmdb.include-adult", true));
         return ResponseEntity.ok(ApiResponse.success(status));
+    }
+
+    @GetMapping("/performance")
+    @Operation(summary = "获取性能相关设置")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getPerformanceSettings() {
+        Map<String, Object> settings = new LinkedHashMap<>();
+        settings.put("watcher.periodic-scan", settingService.getBoolean("watcher.periodic-scan", true));
+        settings.put("watcher.periodic-scan-interval", settingService.getInteger("watcher.periodic-scan-interval", 300));
+        settings.put("hub.tmdb.scraper-threads", settingService.getInteger("hub.tmdb.scraper-threads", 1));
+        return ResponseEntity.ok(ApiResponse.success(settings));
     }
 }

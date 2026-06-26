@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -23,6 +24,7 @@ public class VideoWatcherService {
 
     private final VideoService metadataService;
     private final SystemSettingService settingService;
+    private final PeriodicScanScheduler scanScheduler;
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
@@ -32,10 +34,10 @@ public class VideoWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
-    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private final Set<String> scrapingPaths = ConcurrentHashMap.newKeySet();
+    private Set<String> supportedFormatSet;
 
     public void addScrapingPath(String path) {
         scrapingPaths.add(path);
@@ -54,6 +56,7 @@ public class VideoWatcherService {
 
     @PostConstruct
     public void startWatching() {
+        supportedFormatSet = Set.of(supportedFormats.split(","));
         List<String> rootPaths = getRootPaths();
 
         for (String rootPath : rootPaths) {
@@ -61,13 +64,6 @@ public class VideoWatcherService {
             if (!Files.isDirectory(dir)) {
                 log.warn("Video directory does not exist: {}", rootPath);
                 continue;
-            }
-
-            log.info("Initial scan of video directory: {}", rootPath);
-            try {
-                metadataService.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to initial scan videos from {}", rootPath, e);
             }
 
             try {
@@ -87,19 +83,12 @@ public class VideoWatcherService {
                 return t;
             });
             executor.execute(this::watch);
-            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "video-periodic-scan");
-                t.setDaemon(true);
-                return t;
-            });
-            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
-            log.info("Periodic scan scheduler started for video (check watcher.periodic-scan to enable)");
-            log.info("Initial video scan completed, watching {} directories", watchServices.size());
+            scanScheduler.registerTask(this::periodicScan);
+            log.info("Video watcher registered, watching {} directories", watchServices.size());
         }
     }
 
     private void periodicScan() {
-        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
         try {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
@@ -191,8 +180,7 @@ public class VideoWatcherService {
 
     private boolean isSupportedFormat(String fileName) {
         String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
-        Set<String> formats = Set.of(supportedFormats.split(","));
-        return formats.contains(ext);
+        return supportedFormatSet.contains(ext);
     }
 
     @PreDestroy
@@ -207,9 +195,6 @@ public class VideoWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
-        }
-        if (scheduledExecutor != null) {
-            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching video directories");
     }

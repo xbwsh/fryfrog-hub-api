@@ -12,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Slf4j
@@ -19,13 +20,29 @@ public class TmdbService {
 
     private static final String BASE_URL = "https://api.themoviedb.org/3";
     private static final String IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
+    private static final long CACHE_TTL_MS = 5 * 60 * 1000;
 
     private final RestTemplate restTemplate;
     private final SystemSettingService settingService;
+    private final ConcurrentHashMap<String, CacheEntry<TmdbSearchResult>> searchCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CacheEntry<TmdbMovieDetail>> movieDetailCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, CacheEntry<TmdbTvDetail>> tvDetailCache = new ConcurrentHashMap<>();
 
     public TmdbService(RestTemplate restTemplate, SystemSettingService settingService) {
         this.restTemplate = restTemplate;
         this.settingService = settingService;
+    }
+
+    private static class CacheEntry<T> {
+        final T value;
+        final long timestamp;
+        CacheEntry(T value) {
+            this.value = value;
+            this.timestamp = System.currentTimeMillis();
+        }
+        boolean isExpired() {
+            return System.currentTimeMillis() - timestamp > CACHE_TTL_MS;
+        }
     }
 
     private String getApiKey() {
@@ -65,6 +82,12 @@ public class TmdbService {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
+        String cacheKey = "movie:" + query;
+        CacheEntry<TmdbSearchResult> cached = searchCache.get(cacheKey);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value.getResults() != null ? cached.value.getResults() : List.of();
+        }
+
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/movie")
                 .queryParam("language", getLanguage())
                 .queryParam("query", query)
@@ -75,7 +98,9 @@ public class TmdbService {
             ResponseEntity<TmdbSearchResult> response = getForEntity(url, TmdbSearchResult.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                List<TmdbSearchResult.TmdbSearchItem> results = response.getBody().getResults();
+                TmdbSearchResult result = response.getBody();
+                searchCache.put(cacheKey, new CacheEntry<>(result));
+                List<TmdbSearchResult.TmdbSearchItem> results = result.getResults();
                 if (results != null) {
                     results.forEach(item -> item.setMediaType("movie"));
                 }
@@ -92,6 +117,12 @@ public class TmdbService {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
+        String cacheKey = "tv:" + query;
+        CacheEntry<TmdbSearchResult> cached = searchCache.get(cacheKey);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value.getResults() != null ? cached.value.getResults() : List.of();
+        }
+
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/tv")
                 .queryParam("language", getLanguage())
                 .queryParam("query", query)
@@ -102,7 +133,9 @@ public class TmdbService {
             ResponseEntity<TmdbSearchResult> response = getForEntity(url, TmdbSearchResult.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                List<TmdbSearchResult.TmdbSearchItem> results = response.getBody().getResults();
+                TmdbSearchResult result = response.getBody();
+                searchCache.put(cacheKey, new CacheEntry<>(result));
+                List<TmdbSearchResult.TmdbSearchItem> results = result.getResults();
                 if (results != null) {
                     results.forEach(item -> item.setMediaType("tv"));
                 }
@@ -143,6 +176,11 @@ public class TmdbService {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
+        CacheEntry<TmdbMovieDetail> cached = movieDetailCache.get(movieId);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value;
+        }
+
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/movie/" + movieId)
                 .queryParam("language", getLanguage())
                 .queryParam("append_to_response", "credits")
@@ -152,7 +190,9 @@ public class TmdbService {
             ResponseEntity<TmdbMovieDetail> response = getForEntity(url, TmdbMovieDetail.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return response.getBody();
+                TmdbMovieDetail detail = response.getBody();
+                movieDetailCache.put(movieId, new CacheEntry<>(detail));
+                return detail;
             }
         } catch (Exception e) {
             log.error("Failed to get movie detail from TMDB: {}", e.getMessage(), e);
@@ -165,6 +205,11 @@ public class TmdbService {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
+        CacheEntry<TmdbTvDetail> cached = tvDetailCache.get(tvId);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value;
+        }
+
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId)
                 .queryParam("language", getLanguage())
                 .queryParam("append_to_response", "created_by,credits")
@@ -174,7 +219,9 @@ public class TmdbService {
             ResponseEntity<TmdbTvDetail> response = getForEntity(url, TmdbTvDetail.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return response.getBody();
+                TmdbTvDetail detail = response.getBody();
+                tvDetailCache.put(tvId, new CacheEntry<>(detail));
+                return detail;
             }
         } catch (Exception e) {
             log.error("Failed to get TV detail from TMDB: {}", e.getMessage(), e);

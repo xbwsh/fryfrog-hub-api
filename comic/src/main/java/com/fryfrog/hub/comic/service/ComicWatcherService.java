@@ -1,6 +1,7 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.comic.model.Comic;
+import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -24,6 +25,7 @@ public class ComicWatcherService {
     private final ComicMetadataService metadataService;
     private final MangaScrapeService mangaScrapeService;
     private final SystemSettingService settingService;
+    private final PeriodicScanScheduler scanScheduler;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
     private String rootPathsConfig;
@@ -33,7 +35,6 @@ public class ComicWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
-    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private List<String> getRootPaths() {
@@ -54,13 +55,6 @@ public class ComicWatcherService {
                 continue;
             }
 
-            log.info("Initial scan of comic directory: {}", rootPath);
-            try {
-                metadataService.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to initial scan comics from {}", rootPath, e);
-            }
-
             try {
                 WatchService ws = FileSystems.getDefault().newWatchService();
                 watchServices.add(ws);
@@ -78,19 +72,12 @@ public class ComicWatcherService {
                 return t;
             });
             executor.execute(this::watch);
-            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "comic-periodic-scan");
-                t.setDaemon(true);
-                return t;
-            });
-            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
-            log.info("Periodic scan scheduler started (check watcher.periodic-scan to enable)");
-            log.info("Initial comic scan completed, watching {} directories", watchServices.size());
+            scanScheduler.registerTask(this::periodicScan);
+            log.info("Comic watcher registered, watching {} directories", watchServices.size());
         }
     }
 
     private void periodicScan() {
-        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
         try {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
@@ -201,9 +188,6 @@ public class ComicWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
-        }
-        if (scheduledExecutor != null) {
-            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching comic directories");
     }

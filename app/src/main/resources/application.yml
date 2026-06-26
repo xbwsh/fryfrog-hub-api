@@ -9,6 +9,7 @@ spring:
 
 watcher:
   periodic-scan: true
+  periodic-scan-interval: ${PERIODIC_SCAN_INTERVAL:300}
 
 hub:
   media:
@@ -43,6 +44,7 @@ hub:
     auto-scrape: ${TMDB_AUTO_SCRAPE:false}
     min-score: ${TMDB_MIN_SCORE:0.0}
     include-adult: ${TMDB_INCLUDE_ADULT:true}
+    scraper-threads: ${TMDB_SCRAPER_THREADS:1}
   anilist:
     language: ${ANILIST_LANGUAGE:zh-CN}
     auto-scrape: ${ANILIST_AUTO_SCRAPE:false}

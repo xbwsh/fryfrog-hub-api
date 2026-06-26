@@ -215,16 +215,25 @@ public class MusicMetadataService {
 
     @Transactional
     public int cleanupInvalidRecords() {
-        List<MusicTrack> allTracks = repository.findAll();
         int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<MusicTrack> page;
 
-        for (MusicTrack track : allTracks) {
-            if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
-                log.debug("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
-                repository.deleteById(track.getId());
-                removed++;
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = new ArrayList<>();
+            for (MusicTrack track : page.getContent()) {
+                if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
+                    log.debug("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
+                    idsToDelete.add(track.getId());
+                }
             }
-        }
+            if (!idsToDelete.isEmpty()) {
+                repository.deleteAllByIdInBatch(idsToDelete);
+                removed += idsToDelete.size();
+            }
+        } while (page.hasNext());
 
         if (removed > 0) {
             log.info("Music cleanup completed: removed {} invalid records", removed);

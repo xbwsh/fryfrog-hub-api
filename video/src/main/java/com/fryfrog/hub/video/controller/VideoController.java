@@ -68,8 +68,11 @@ public class VideoController {
     @GetMapping
     @Operation(summary = "获取所有视频", description = "返回数据库中所有已索引的视频列表")
     public ResponseEntity<ApiResponse<List<VideoDTO>>> getAllVideos() {
-        List<VideoDTO> dtos = service.getAllVideos().stream()
-                .map(this::toDTO)
+        List<Video> videos = service.getAllVideos();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
+                videos.stream().map(Video::getId).toList());
+        List<VideoDTO> dtos = videos.stream()
+                .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(dtos));
     }
@@ -86,8 +89,11 @@ public class VideoController {
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索视频")
     public ResponseEntity<ApiResponse<List<VideoDTO>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q) {
-        List<VideoDTO> dtos = service.searchByTitle(q).stream()
-                .map(this::toDTO)
+        List<Video> videos = service.searchByTitle(q);
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
+                videos.stream().map(Video::getId).toList());
+        List<VideoDTO> dtos = videos.stream()
+                .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(dtos));
     }
@@ -96,8 +102,11 @@ public class VideoController {
     @Operation(summary = "按导演搜索", description = "根据导演名称模糊搜索视频")
     public ResponseEntity<ApiResponse<List<VideoDTO>>> searchByDirector(
             @Parameter(description = "导演名称关键词") @RequestParam String q) {
-        List<VideoDTO> dtos = service.searchByDirector(q).stream()
-                .map(this::toDTO)
+        List<Video> videos = service.searchByDirector(q);
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
+                videos.stream().map(Video::getId).toList());
+        List<VideoDTO> dtos = videos.stream()
+                .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(dtos));
     }
@@ -105,8 +114,11 @@ public class VideoController {
     @GetMapping("/favorites")
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的视频")
     public ResponseEntity<ApiResponse<List<VideoDTO>>> getFavorites() {
-        List<VideoDTO> dtos = service.getFavorites().stream()
-                .map(this::toDTO)
+        List<Video> videos = service.getFavorites();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
+                videos.stream().map(Video::getId).toList());
+        List<VideoDTO> dtos = videos.stream()
+                .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(dtos));
     }
@@ -212,6 +224,21 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.unbindTmdb(id);
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+    }
+
+    @PostMapping("/{id:\\d+}/tmdb/unbind-series")
+    @Operation(summary = "批量解绑同系列TMDB", description = "解绑同一TMDB ID下的所有视频（电视剧多集场景）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> unbindSeriesTmdb(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        if (video.getTmdbId() == null) {
+            return ResponseEntity.ok(ApiResponse.success(Map.of("unbound", 0)));
+        }
+        int count = service.unbindByTmdbId(video.getTmdbId());
+        return ResponseEntity.ok(ApiResponse.success(Map.of(
+                "tmdbId", video.getTmdbId(),
+                "unbound", count
+        )));
     }
 
     @PostMapping("/{id:\\d+}/tmdb/refresh")
@@ -342,7 +369,7 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    private VideoDTO toDTO(Video video) {
+    private VideoDTO toDTO(Video video, WatchProgress progress) {
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         String baseName = nfoService.getBaseName(video.getFileName());
         Path nfoPath = videoDir.resolve(baseName + ".nfo");
@@ -358,7 +385,6 @@ public class VideoController {
                 Files.exists(metadataDir) ? metadataDir.toString() : null
         );
 
-        WatchProgress progress = watchProgressService.getProgress(video.getId());
         if (progress != null) {
             dto.setWatchPosition(progress.getPositionSeconds());
             dto.setWatched(progress.getCompleted());
@@ -368,5 +394,9 @@ public class VideoController {
         }
 
         return dto;
+    }
+
+    private VideoDTO toDTO(Video video) {
+        return toDTO(video, watchProgressService.getProgress(video.getId()));
     }
 }

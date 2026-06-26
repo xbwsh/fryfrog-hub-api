@@ -8,6 +8,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -20,6 +24,14 @@ public class WatchProgressService {
 
     public WatchProgress getProgress(Long videoId) {
         return repository.findByVideoId(videoId).orElse(null);
+    }
+
+    public Map<Long, WatchProgress> getProgressByVideoIds(Collection<Long> videoIds) {
+        if (videoIds == null || videoIds.isEmpty()) {
+            return Map.of();
+        }
+        return repository.findByVideoIdIn(videoIds).stream()
+                .collect(Collectors.toMap(wp -> wp.getVideo().getId(), wp -> wp));
     }
 
     @Transactional

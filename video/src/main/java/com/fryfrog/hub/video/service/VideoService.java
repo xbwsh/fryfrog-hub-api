@@ -46,11 +46,34 @@ public class VideoService {
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
 
-    private final ExecutorService scrapeExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "tmdb-scraper");
-        t.setDaemon(true);
-        return t;
-    });
+    private volatile ExecutorService scrapeExecutor = createScraperPool(1);
+
+    private ExecutorService createScraperPool(int threads) {
+        return Executors.newFixedThreadPool(threads, r -> {
+            Thread t = new Thread(r, "tmdb-scraper");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    private ExecutorService getScraperExecutor() {
+        int configured = settingService.getInteger("hub.tmdb.scraper-threads", 1);
+        configured = Math.max(1, Math.min(configured, 4));
+        ExecutorService current = scrapeExecutor;
+        if (current instanceof java.util.concurrent.ThreadPoolExecutor tpe) {
+            if (tpe.getCorePoolSize() != configured) {
+                synchronized (this) {
+                    if (tpe.getCorePoolSize() != configured) {
+                        log.info("Resizing scraper thread pool: {} -> {}", tpe.getCorePoolSize(), configured);
+                        current.shutdown();
+                        scrapeExecutor = createScraperPool(configured);
+                        return scrapeExecutor;
+                    }
+                }
+            }
+        }
+        return current;
+    }
 
     public VideoService(VideoRepository repository, TmdbService tmdbService,
                        NfoService nfoService, CoverArtService coverArtService,
@@ -138,6 +161,9 @@ public class VideoService {
 
         log.info("Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), video.getTmdbId());
 
+        cleanupUnboundFiles(video);
+        cleanupUnboundActors(video);
+
         video.setTmdbId(null);
         video.setMediaType(null);
         video.setMetadataSource(null);
@@ -161,6 +187,74 @@ public class VideoService {
         return repository.save(video);
     }
 
+    private void cleanupUnboundFiles(Video video) {
+        try {
+            Path nfoPath = nfoService.getNfoPath(video);
+            Files.deleteIfExists(nfoPath);
+        } catch (Exception e) {
+            log.debug("Failed to delete NFO for video {}: {}", video.getId(), e.getMessage());
+        }
+        try {
+            Path posterPath = nfoService.getPosterPath(video);
+            Files.deleteIfExists(posterPath);
+        } catch (Exception e) {
+            log.debug("Failed to delete poster for video {}: {}", video.getId(), e.getMessage());
+        }
+        try {
+            Path fanartPath = nfoService.getFanartPath(video);
+            Files.deleteIfExists(fanartPath);
+        } catch (Exception e) {
+            log.debug("Failed to delete fanart for video {}: {}", video.getId(), e.getMessage());
+        }
+    }
+
+    private void cleanupUnboundActors(Video video) {
+        try {
+            List<VideoActor> actors = actorRepository.findByVideoId(video.getId());
+            if (!actors.isEmpty()) {
+                actorRepository.deleteAll(actors);
+                log.debug("Deleted {} actors for video {}", actors.size(), video.getId());
+            }
+        } catch (Exception e) {
+            log.debug("Failed to delete actors for video {}: {}", video.getId(), e.getMessage());
+        }
+    }
+
+    @Transactional
+    public int unbindByTmdbId(Long tmdbId) {
+        List<Video> videos = repository.findAllByTmdbId(tmdbId);
+        int count = 0;
+        for (Video video : videos) {
+            cleanupUnboundFiles(video);
+            cleanupUnboundActors(video);
+
+            video.setTmdbId(null);
+            video.setMediaType(null);
+            video.setMetadataSource(null);
+            video.setOriginalTitle(null);
+            video.setOverview(null);
+            video.setPosterUrl(null);
+            video.setBackdropUrl(null);
+            video.setImdbId(null);
+            video.setRating(null);
+            video.setVoteCount(null);
+            video.setDirector(null);
+            video.setActors(null);
+            video.setGenre(null);
+            video.setStatus(null);
+            video.setMetadataUpdatedAt(null);
+
+            if (video.getSeries() != null) {
+                seriesService.removeVideoFromSeries(video);
+            }
+
+            repository.save(video);
+            count++;
+            log.info("Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), tmdbId);
+        }
+        return count;
+    }
+
     @Transactional
     public Video rescrapeVideo(Long videoId, Long tmdbId, String mediaType) {
         unbindTmdb(videoId);
@@ -180,19 +274,28 @@ public class VideoService {
 
     @Transactional
     public int cleanupInvalidRecords() {
-        List<Video> allVideos = repository.findAll();
         int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<Video> page;
 
-        for (Video video : allVideos) {
-            if (video.getFilePath() == null || !Files.exists(Paths.get(video.getFilePath()))) {
-                log.info("Removing invalid record: {} (path: {})", video.getTitle(), video.getFilePath());
-                if (video.getSeries() != null) {
-                    seriesService.removeVideoFromSeries(video);
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = new ArrayList<>();
+            for (Video video : page.getContent()) {
+                if (video.getFilePath() == null || !Files.exists(Paths.get(video.getFilePath()))) {
+                    log.info("Removing invalid record: {} (path: {})", video.getTitle(), video.getFilePath());
+                    if (video.getSeries() != null) {
+                        seriesService.removeVideoFromSeries(video);
+                    }
+                    idsToDelete.add(video.getId());
                 }
-                repository.deleteById(video.getId());
-                removed++;
             }
-        }
+            if (!idsToDelete.isEmpty()) {
+                repository.deleteAllByIdInBatch(idsToDelete);
+                removed += idsToDelete.size();
+            }
+        } while (page.hasNext());
 
         seriesService.cleanupEmptySeries();
 
@@ -224,7 +327,7 @@ public class VideoService {
                     existing.setFormat(getFileExtension(fileName).toUpperCase());
                     Video updated = repository.save(existing);
                     if (isAutoScrape() && updated.getTmdbId() == null) {
-                        scrapeExecutor.submit(() -> tryScrapeVideo(updated));
+                        getScraperExecutor().submit(() -> tryScrapeVideo(updated));
                     }
                     return updated;
                 }
@@ -256,7 +359,7 @@ public class VideoService {
             Video saved = repository.save(video);
 
             if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
-                scrapeExecutor.submit(() -> tryScrapeVideo(saved));
+                getScraperExecutor().submit(() -> tryScrapeVideo(saved));
             }
 
             return saved;
@@ -401,43 +504,16 @@ public class VideoService {
             "|\\b(?:ASS|SSA|SRT|BIG5|GB2312|UTF-?8|EUC-?JP|Shift-?JIS)\\b" +
             "|\\b(?:PART|CHAPTER|CD|DVD|BD|DISC?)\\b";
 
+    private static final java.util.regex.Pattern SE_EP_PATTERN = java.util.regex.Pattern.compile("(?i)S(\\d{1,2})E(\\d{1,4})");
+    private static final java.util.regex.Pattern SEASON_EPISODE_PATTERN = java.util.regex.Pattern.compile("(?i)Season\\s*(\\d{1,2})\\s*Episode\\s*(\\d{1,4})");
+    private static final java.util.regex.Pattern EP_PATTERN = java.util.regex.Pattern.compile("(?i)EP?(\\d{1,4})");
+    private static final java.util.regex.Pattern HASH_PATTERN = java.util.regex.Pattern.compile("[＃#](\\d{1,4})$");
+    private static final java.util.regex.Pattern DASH_NUMBER_PATTERN = java.util.regex.Pattern.compile("[-–—]\\s*(\\d{1,4})\\b");
+    private static final java.util.regex.Pattern TAIL_NUMBER_PATTERN = java.util.regex.Pattern.compile("^(.*?)[\\s._\\-　](\\d{1,4})$");
+    private static final java.util.regex.Pattern CJK_TAIL_NUMBER_PATTERN = java.util.regex.Pattern.compile("^(.*?[\\u4e00-\\u9fa5\\u3040-\\u309f\\u30a0-\\u30ff])(\\d{1,4})$");
+
     public String cleanTitleForSearch(String title) {
-        if (title == null || title.isBlank()) {
-            return title;
-        }
-
-        String cleaned = title;
-
-        cleaned = cleaned.replaceAll("\\[.*?\\]", " ");
-        cleaned = cleaned.replaceAll("【.*?】", " ");
-        cleaned = cleaned.replaceAll("\\(.*?\\)", " ");
-        cleaned = cleaned.replaceAll("（.*?）", " ");
-
-        cleaned = cleaned.replaceAll(DOTTED_QUALITY, " ");
-        cleaned = cleaned.replaceAll("[._]", " ");
-
-        cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\s*E\\d{1,4}\\b", " ");
-        cleaned = cleaned.replaceAll(QUALITY_PATTERN, " ");
-
-        cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:季|部|期)", " ");
-        cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:话|集|回|篇|章)", " ");
-
-        cleaned = cleaned.replaceAll("(?i)\\bSeason\\s*\\d+\\b", " ");
-        cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\b", " ");
-
-        cleaned = cleaned.replaceAll("(?i)\\bE(?:p(?:isode)?)?\\s*\\d{1,4}\\b", " ");
-        cleaned = cleaned.replaceAll("[＃#]\\s*\\d{1,4}\\b", " ");
-
-        cleaned = cleaned.replaceAll("\\s*[-–—]\\s*\\d{1,4}\\s*$", "");
-        cleaned = cleaned.replaceAll("\\s+\\d{1,4}\\s*$", "");
-        cleaned = cleaned.replaceAll("^\\d{1,4}\\s*[-–—]\\s*", "");
-        cleaned = cleaned.replaceAll("\\s*[-–—]\\s*$", "");
-
-        cleaned = cleaned.replaceAll("\\s+", " ").trim();
-
-        log.debug("Cleaned title: '{}' -> '{}'", title, cleaned);
-
-        return cleaned.isBlank() ? title : cleaned;
+        return com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title);
     }
 
     /**
@@ -458,8 +534,7 @@ public class VideoService {
                 ? fileName.substring(0, fileName.lastIndexOf('.'))
                 : fileName;
 
-        // 尝试匹配 S01E01 格式
-        var seMatch = java.util.regex.Pattern.compile("(?i)S(\\d{1,2})E(\\d{1,4})").matcher(baseName);
+        var seMatch = SE_EP_PATTERN.matcher(baseName);
         if (seMatch.find()) {
             return new int[]{
                     Integer.parseInt(seMatch.group(1)),
@@ -467,8 +542,7 @@ public class VideoService {
             };
         }
 
-        // 尝试匹配 Season X Episode Y 格式
-        var seasonEpisodeMatch = java.util.regex.Pattern.compile("(?i)Season\\s*(\\d{1,2})\\s*Episode\\s*(\\d{1,4})").matcher(baseName);
+        var seasonEpisodeMatch = SEASON_EPISODE_PATTERN.matcher(baseName);
         if (seasonEpisodeMatch.find()) {
             return new int[]{
                     Integer.parseInt(seasonEpisodeMatch.group(1)),
@@ -476,34 +550,28 @@ public class VideoService {
             };
         }
 
-        // 尝试匹配 EP01 或 EP1 格式
-        var epMatch = java.util.regex.Pattern.compile("(?i)EP?(\\d{1,4})").matcher(baseName);
+        var epMatch = EP_PATTERN.matcher(baseName);
         if (epMatch.find()) {
             return new int[]{1, Integer.parseInt(epMatch.group(1))};
         }
 
-        // 尝试匹配 ＃数字 或 #数字 格式（全角/半角井号）
-        var hashMatch = java.util.regex.Pattern.compile("[＃#](\\d{1,4})$").matcher(baseName);
+        var hashMatch = HASH_PATTERN.matcher(baseName);
         if (hashMatch.find()) {
             return new int[]{1, Integer.parseInt(hashMatch.group(1))};
         }
 
-        // 尝试匹配 - 02 或 – 02 格式（减号后跟数字，数字后可以有其他内容如标签）
-        var dashNumberMatch = java.util.regex.Pattern.compile("[-–—]\\s*(\\d{1,4})\\b").matcher(baseName);
+        var dashNumberMatch = DASH_NUMBER_PATTERN.matcher(baseName);
         if (dashNumberMatch.find()) {
             return new int[]{1, Integer.parseInt(dashNumberMatch.group(1))};
         }
 
-        // 尝试匹配末尾数字，但要求前面有明确的分隔符
-        // 分隔符：空格、点、下划线、减号、全角空格等
-        var tailNumberMatch = java.util.regex.Pattern.compile("^(.*?)[\\s._\\-　](\\d{1,4})$").matcher(baseName);
+        var tailNumberMatch = TAIL_NUMBER_PATTERN.matcher(baseName);
         if (tailNumberMatch.find()) {
             int number = Integer.parseInt(tailNumberMatch.group(2));
             return new int[]{1, number};
         }
 
-        // 中文/日文标题+数字格式（如：爱心符号多一点1、パイハメ家族1）
-        var cjkTailNumberMatch = java.util.regex.Pattern.compile("^(.*?[\\u4e00-\\u9fa5\\u3040-\\u309f\\u30a0-\\u30ff])(\\d{1,4})$").matcher(baseName);
+        var cjkTailNumberMatch = CJK_TAIL_NUMBER_PATTERN.matcher(baseName);
         if (cjkTailNumberMatch.find()) {
             int number = Integer.parseInt(cjkTailNumberMatch.group(2));
             return new int[]{1, number};
@@ -541,26 +609,27 @@ public class VideoService {
     @Transactional
     public synchronized Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
         Video video = getVideoById(videoId);
+        Object detail = null;
 
         if ("movie".equalsIgnoreCase(mediaType)) {
-            TmdbMovieDetail detail = tmdbService.getMovieDetail(tmdbId);
-            if (detail == null) {
+            TmdbMovieDetail movieDetail = tmdbService.getMovieDetail(tmdbId);
+            if (movieDetail == null) {
                 throw new ResourceNotFoundException("TMDB Movie", "id", tmdbId);
             }
-            updateVideoFromMovieDetail(video, detail);
+            updateVideoFromMovieDetail(video, movieDetail);
+            detail = movieDetail;
         } else if ("tv".equalsIgnoreCase(mediaType)) {
-            TmdbTvDetail detail = tmdbService.getTvDetail(tmdbId);
-            if (detail == null) {
+            TmdbTvDetail tvDetail = tmdbService.getTvDetail(tmdbId);
+            if (tvDetail == null) {
                 throw new ResourceNotFoundException("TMDB TV", "id", tmdbId);
             }
-            updateVideoFromTvDetail(video, detail);
+            updateVideoFromTvDetail(video, tvDetail);
+            detail = tvDetail;
 
-            // 解析文件名中的季数和集数
             int[] seasonEpisode = parseSeasonEpisode(video.getFileName());
             video.setSeasonNumber(seasonEpisode[0]);
             video.setEpisodeNumber(seasonEpisode[1]);
 
-            // 获取集级元数据
             TmdbEpisodeDetail episodeDetail = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1]);
             if (episodeDetail != null) {
                 if (episodeDetail.getOverview() != null && !episodeDetail.getOverview().isBlank()) {
@@ -585,7 +654,7 @@ public class VideoService {
                         seasonEpisode[0], seasonEpisode[1]);
             }
 
-            VideoSeries series = seriesService.getOrCreateAndBindSeries(detail.getName(), tmdbId);
+            VideoSeries series = seriesService.getOrCreateAndBindSeries(tvDetail.getName(), tmdbId);
             seriesService.assignVideoToSeries(video, series);
 
             Path metadataDir = nfoService.getMetadataDir(video);
@@ -604,7 +673,7 @@ public class VideoService {
 
         generateNfoAndCovers(saved);
         moveVideoToMetadataDir(saved);
-        saveActors(saved, mediaType, tmdbId);
+        saveActors(saved, mediaType, tmdbId, detail);
 
         if ("tv".equalsIgnoreCase(mediaType)) {
             bindSiblingVideos(saved, tmdbId);
@@ -660,7 +729,7 @@ public class VideoService {
 
                 repository.save(sibling);
                 generateNfoAndCovers(sibling);
-                saveActors(sibling, "tv", tmdbId);
+                saveActors(sibling, "tv", tmdbId, null);
                 log.info("Auto-bound sibling video: {} -> TMDB {}", sibling.getFileName(), tmdbId);
             } catch (Exception e) {
                 log.warn("Failed to auto-bind sibling video {}: {}", sibling.getFileName(), e.getMessage());
@@ -830,53 +899,64 @@ public class VideoService {
             return repository.findAll();
         }
 
-        scrapeExecutor.submit(() -> {
-            int scraped = 0;
-            int skipped = 0;
+        getScraperExecutor().submit(() -> {
+            java.util.concurrent.atomic.AtomicInteger scraped = new java.util.concurrent.atomic.AtomicInteger(0);
+            java.util.concurrent.atomic.AtomicInteger skipped = new java.util.concurrent.atomic.AtomicInteger(0);
             scrapeProgressService.start("video", videos.size());
 
+            List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
             for (Video video : videos) {
+                futures.add(getScraperExecutor().submit(() -> {
+                    try {
+                        String query = video.getTitle();
+                        if (query == null || query.isBlank()) {
+                            scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
+                            return;
+                        }
+
+                        scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
+
+                        List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
+                        if (results.isEmpty()) {
+                            log.info("No TMDB results for: {}", video.getTitle());
+                            scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
+                            return;
+                        }
+
+                        TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
+                        double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
+
+                        if (score < getMinScore()) {
+                            log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
+                            scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
+                            skipped.incrementAndGet();
+                            return;
+                        }
+
+                        scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
+                        scraped.incrementAndGet();
+                        scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
+
+                        log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
+                                video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
+                    } catch (Exception e) {
+                        log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
+                        scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
+                    }
+                }));
+            }
+
+            for (java.util.concurrent.Future<?> future : futures) {
                 try {
-                    String query = video.getTitle();
-                    if (query == null || query.isBlank()) {
-                        scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
-                        continue;
-                    }
-
-                    scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
-
-                    List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
-                    if (results.isEmpty()) {
-                        log.info("No TMDB results for: {}", video.getTitle());
-                        scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
-                        continue;
-                    }
-
-                    TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
-                    double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
-
-                    if (score < getMinScore()) {
-                        log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
-                        scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
-                        skipped++;
-                        continue;
-                    }
-
-                    scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
-                    scraped++;
-                    scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
-
-                    log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
-                            video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
+                    future.get();
                 } catch (Exception e) {
-                    log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
-                    scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
+                    log.warn("Wait for scrape task failed: {}", e.getMessage());
                 }
             }
 
             scrapeProgressService.finish("video");
-            if (scraped > 0) {
-                log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
+            if (scraped.get() > 0) {
+                log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped.get(), videos.size(), skipped.get(), getMinScore());
             }
         });
 
@@ -917,7 +997,7 @@ public class VideoService {
         video.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
     }
 
-    private void saveActors(Video video, String mediaType, Long tmdbId) {
+    private void saveActors(Video video, String mediaType, Long tmdbId, Object preloadedDetail) {
         try {
             actorRepository.deleteAll(actorRepository.findByVideoId(video.getId()));
 
@@ -927,7 +1007,7 @@ public class VideoService {
 
             int count = 0;
             if ("movie".equalsIgnoreCase(mediaType)) {
-                TmdbMovieDetail detail = tmdbService.getMovieDetail(tmdbId);
+                TmdbMovieDetail detail = preloadedDetail instanceof TmdbMovieDetail ? (TmdbMovieDetail) preloadedDetail : tmdbService.getMovieDetail(tmdbId);
                 if (detail != null && detail.getCredits() != null && detail.getCredits().getCast() != null) {
                     for (TmdbMovieDetail.CastMember member : detail.getCredits().getCast()) {
                         if (count >= 10) break;
@@ -936,7 +1016,7 @@ public class VideoService {
                     }
                 }
             } else if ("tv".equalsIgnoreCase(mediaType)) {
-                TmdbTvDetail detail = tmdbService.getTvDetail(tmdbId);
+                TmdbTvDetail detail = preloadedDetail instanceof TmdbTvDetail ? (TmdbTvDetail) preloadedDetail : tmdbService.getTvDetail(tmdbId);
                 if (detail != null && detail.getCredits() != null && detail.getCredits().getCast() != null) {
                     for (TmdbTvDetail.CastMember member : detail.getCredits().getCast()) {
                         if (count >= 10) break;

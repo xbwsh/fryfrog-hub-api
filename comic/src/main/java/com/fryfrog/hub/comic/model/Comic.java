@@ -6,13 +6,19 @@ import com.fryfrog.hub.common.model.BaseEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.*;
 
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "comics")
+@Table(name = "comics", indexes = {
+    @Index(name = "idx_comic_title", columnList = "title"),
+    @Index(name = "idx_comic_series", columnList = "series"),
+    @Index(name = "idx_comic_favorite", columnList = "favorite"),
+    @Index(name = "idx_comic_file_path", columnList = "filePath")
+})
 @Getter
 @Setter
 @NoArgsConstructor

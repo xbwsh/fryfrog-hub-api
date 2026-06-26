@@ -26,6 +26,8 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     Optional<Video> findByTmdbId(Long tmdbId);
 
+    List<Video> findAllByTmdbId(Long tmdbId);
+
     List<Video> findByMediaType(String mediaType);
 
     @Query("SELECT COUNT(v) FROM Video v WHERE v.series.id = :seriesId")

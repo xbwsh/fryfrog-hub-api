@@ -3,13 +3,17 @@ package com.fryfrog.hub.video.model;
 import com.fryfrog.hub.common.model.BaseEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.*;
+import jakarta.persistence.Index;
 import lombok.*;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "video_series")
+@Table(name = "video_series", indexes = {
+    @Index(name = "idx_series_tmdb_id", columnList = "tmdbId"),
+    @Index(name = "idx_series_title", columnList = "title")
+})
 @Getter
 @Setter
 @NoArgsConstructor

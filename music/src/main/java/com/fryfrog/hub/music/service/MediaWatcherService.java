@@ -1,5 +1,6 @@
 package com.fryfrog.hub.music.service;
 
+import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -23,6 +24,7 @@ public class MediaWatcherService {
     private final MusicMetadataService metadataService;
     private final MusicScrapeService scrapeService;
     private final SystemSettingService settingService;
+    private final PeriodicScanScheduler scanScheduler;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -32,8 +34,8 @@ public class MediaWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
-    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
+    private Set<String> supportedFormatSet;
 
     private List<String> getRootPaths() {
         return Arrays.stream(rootPathsConfig.split(","))
@@ -44,6 +46,7 @@ public class MediaWatcherService {
 
     @PostConstruct
     public void startWatching() {
+        supportedFormatSet = Set.of(supportedFormats.split(","));
         List<String> rootPaths = getRootPaths();
 
         for (String rootPath : rootPaths) {
@@ -51,13 +54,6 @@ public class MediaWatcherService {
             if (!Files.isDirectory(dir)) {
                 log.warn("Media directory does not exist: {}", rootPath);
                 continue;
-            }
-
-            log.info("Initial scan of media directory: {}", rootPath);
-            try {
-                metadataService.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to initial scan from {}", rootPath, e);
             }
 
             try {
@@ -77,19 +73,12 @@ public class MediaWatcherService {
                 return t;
             });
             executor.execute(this::watch);
-            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "music-periodic-scan");
-                t.setDaemon(true);
-                return t;
-            });
-            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
-            log.info("Periodic scan scheduler started for music (check watcher.periodic-scan to enable)");
-            log.info("Initial media scan completed, watching {} directories", watchServices.size());
+            scanScheduler.registerTask(this::periodicScan);
+            log.info("Music watcher registered, watching {} directories", watchServices.size());
         }
     }
 
     private void periodicScan() {
-        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
         try {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
@@ -179,8 +168,7 @@ public class MediaWatcherService {
 
     private boolean isSupportedFormat(String fileName) {
         String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
-        Set<String> formats = Set.of(supportedFormats.split(","));
-        return formats.contains(ext);
+        return supportedFormatSet.contains(ext);
     }
 
     @PreDestroy
@@ -195,9 +183,6 @@ public class MediaWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
-        }
-        if (scheduledExecutor != null) {
-            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching media directories");
     }

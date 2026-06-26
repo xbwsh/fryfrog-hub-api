@@ -198,16 +198,25 @@ public class ComicMetadataService {
 
     @Transactional
     public int cleanupInvalidRecords() {
-        List<Comic> allComics = repository.findAll();
         int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<Comic> page;
 
-        for (Comic comic : allComics) {
-            if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
-                log.debug("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
-                repository.deleteById(comic.getId());
-                removed++;
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = new ArrayList<>();
+            for (Comic comic : page.getContent()) {
+                if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
+                    log.debug("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
+                    idsToDelete.add(comic.getId());
+                }
             }
-        }
+            if (!idsToDelete.isEmpty()) {
+                repository.deleteAllByIdInBatch(idsToDelete);
+                removed += idsToDelete.size();
+            }
+        } while (page.hasNext());
 
         if (removed > 0) {
             log.info("Comic cleanup completed: removed {} invalid records", removed);

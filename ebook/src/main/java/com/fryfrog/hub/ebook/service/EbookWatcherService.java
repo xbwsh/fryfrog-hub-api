@@ -1,5 +1,6 @@
 package com.fryfrog.hub.ebook.service;
 
+import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.ebook.model.Ebook;
 import jakarta.annotation.PostConstruct;
@@ -23,6 +24,7 @@ public class EbookWatcherService {
 
     private final EbookService metadataService;
     private final SystemSettingService settingService;
+    private final PeriodicScanScheduler scanScheduler;
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
     private String rootPathsConfig;
@@ -32,7 +34,6 @@ public class EbookWatcherService {
 
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
-    private java.util.concurrent.ScheduledExecutorService scheduledExecutor;
     private volatile boolean running = true;
 
     private List<String> getRootPaths() {
@@ -53,13 +54,6 @@ public class EbookWatcherService {
                 continue;
             }
 
-            log.info("Initial scan of ebook directory: {}", rootPath);
-            try {
-                metadataService.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to initial scan ebooks from {}", rootPath, e);
-            }
-
             try {
                 WatchService ws = FileSystems.getDefault().newWatchService();
                 watchServices.add(ws);
@@ -77,19 +71,12 @@ public class EbookWatcherService {
                 return t;
             });
             executor.execute(this::watch);
-            scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "ebook-periodic-scan");
-                t.setDaemon(true);
-                return t;
-            });
-            scheduledExecutor.scheduleWithFixedDelay(this::periodicScan, 60, 60, java.util.concurrent.TimeUnit.SECONDS);
-            log.info("Periodic scan scheduler started for ebook (check watcher.periodic-scan to enable)");
-            log.info("Initial ebook scan completed, watching {} directories", watchServices.size());
+            scanScheduler.registerTask(this::periodicScan);
+            log.info("Ebook watcher registered, watching {} directories", watchServices.size());
         }
     }
 
     private void periodicScan() {
-        if (!settingService.getBoolean("watcher.periodic-scan", false)) return;
         try {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
@@ -190,9 +177,6 @@ public class EbookWatcherService {
         }
         if (executor != null) {
             executor.shutdown();
-        }
-        if (scheduledExecutor != null) {
-            scheduledExecutor.shutdown();
         }
         log.info("Stopped watching ebook directories");
     }

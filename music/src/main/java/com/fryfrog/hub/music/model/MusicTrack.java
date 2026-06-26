@@ -4,11 +4,17 @@ import com.fryfrog.hub.common.model.BaseEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.*;
 
 @Entity
-@Table(name = "music_tracks")
+@Table(name = "music_tracks", indexes = {
+    @Index(name = "idx_music_title", columnList = "title"),
+    @Index(name = "idx_music_artist", columnList = "artist"),
+    @Index(name = "idx_music_favorite", columnList = "favorite"),
+    @Index(name = "idx_music_file_path", columnList = "filePath")
+})
 @Getter
 @Setter
 @NoArgsConstructor

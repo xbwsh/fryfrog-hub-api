@@ -185,16 +185,25 @@ public class EbookService {
 
     @Transactional
     public int cleanupInvalidRecords() {
-        List<Ebook> allEbooks = repository.findAll();
         int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<Ebook> page;
 
-        for (Ebook ebook : allEbooks) {
-            if (ebook.getFilePath() == null || !Files.exists(Paths.get(ebook.getFilePath()))) {
-                log.info("Removing invalid record: {} (path: {})", ebook.getTitle(), ebook.getFilePath());
-                repository.deleteById(ebook.getId());
-                removed++;
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = new ArrayList<>();
+            for (Ebook ebook : page.getContent()) {
+                if (ebook.getFilePath() == null || !Files.exists(Paths.get(ebook.getFilePath()))) {
+                    log.info("Removing invalid record: {} (path: {})", ebook.getTitle(), ebook.getFilePath());
+                    idsToDelete.add(ebook.getId());
+                }
             }
-        }
+            if (!idsToDelete.isEmpty()) {
+                repository.deleteAllByIdInBatch(idsToDelete);
+                removed += idsToDelete.size();
+            }
+        } while (page.hasNext());
 
         if (removed > 0) {
             log.info("Ebook cleanup completed: removed {} invalid records", removed);
