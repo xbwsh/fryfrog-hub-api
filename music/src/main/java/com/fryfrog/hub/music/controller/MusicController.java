@@ -246,13 +246,18 @@ public class MusicController {
     }
 
     @PostMapping("/scrape/all")
-    @Operation(summary = "批量刮削所有曲目", description = "对所有缺失元数据的曲目执行在线刮削")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeAll() {
+    @Operation(summary = "批量刮削", description = "刮削所有或指定艺术家的曲目元数据")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeAll(
+            @Parameter(description = "艺术家名称（可选，为空则刮削所有）") @RequestParam(required = false) String artist) {
+        if (artist != null && !artist.isBlank()) {
+            return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeByArtist(artist)));
+        }
         return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAll()));
     }
 
+    @Deprecated
     @PostMapping("/scrape/artist")
-    @Operation(summary = "按艺术家刮削", description = "刮削指定艺术家的所有曲目元数据")
+    @Operation(summary = "[已废弃] 使用 POST /scrape/all?artist=xx 替代", description = "刮削指定艺术家的所有曲目元数据")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> scrapeByArtist(
             @Parameter(description = "艺术家名称") @RequestParam String artist) {
         return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeByArtist(artist)));

@@ -1,6 +1,7 @@
 package com.fryfrog.hub.music.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.repository.MusicTrackRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
     private final MusicScrapeService scrapeService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -40,17 +42,21 @@ public class MusicMetadataService {
         return paths.isEmpty() ? "./media-library/music" : paths.get(0);
     }
 
-    @Value("${hub.music.auto-writeback:false}")
-    private boolean autoWriteback;
+    public boolean isAutoWriteback() {
+        return settingService.getBoolean("music.auto-writeback", true);
+    }
 
-    @Value("${hub.music.use-folder-structure:true}")
-    private boolean useFolderStructure;
+    public boolean isUseFolderStructure() {
+        return settingService.getBoolean("music.use-folder-structure", true);
+    }
 
-    @Value("${hub.music.default-artist:}")
-    private String defaultArtist;
+    public String getDefaultArtist() {
+        return settingService.getValue("music.default-artist", "");
+    }
 
-    @Value("${hub.music.scrape.auto-scrape:false}")
-    private boolean autoScrape;
+    public boolean isAutoScrape() {
+        return settingService.getBoolean("music.auto-scrape", false);
+    }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
 
@@ -257,7 +263,7 @@ public class MusicMetadataService {
                         });
             }
 
-            if (autoScrape && scrapeService.isScrapeEnabled()) {
+            if (isAutoScrape() && scrapeService.isScrapeEnabled()) {
                 log.info("Auto-scrape enabled, starting scrape after scan...");
                 scrapeService.scrapeAll();
             }
@@ -286,7 +292,7 @@ public class MusicMetadataService {
     }
 
     private void inferFromFolderStructure(MusicTrack track, File file) {
-        if (!useFolderStructure) return;
+        if (!isUseFolderStructure()) return;
 
         Path musicRoot = Paths.get(getFirstRootPath()).toAbsolutePath();
         Path parent = file.toPath().getParent();
@@ -314,8 +320,8 @@ public class MusicMetadataService {
             }
         }
 
-        if ((track.getArtist() == null || track.getArtist().isBlank()) && defaultArtist != null && !defaultArtist.isBlank()) {
-            track.setArtist(defaultArtist);
+        if ((track.getArtist() == null || track.getArtist().isBlank()) && getDefaultArtist() != null && !getDefaultArtist().isBlank()) {
+            track.setArtist(getDefaultArtist());
         }
     }
 

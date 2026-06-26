@@ -48,13 +48,12 @@
 -   **Swagger 文档** - 自动生成 API 文档，支持在线测试
 -   **CORS 支持** - 已配置跨域，可直接对接前端
 -   **Docker 部署** - 提供 Dockerfile 和 docker-compose.yml，支持飞牛 NAS 一键部署
--   **H2 开发库** - 开发环境使用 H2 内存数据库
--   **SQLite 生产库** - 生产环境使用 SQLite，无需额外数据库
+-   **SQLite 存储** - 轻量级数据库，无需额外安装
 
 ## 技术栈 / Tech Stack
 
 - Java 21 + Spring Boot 3.2.x
-- Spring Data JPA + H2（开发）/ SQLite（生产）
+- Spring Data JPA + SQLite
 - jaudiotagger（音乐元数据提取）
 - Thumbnails4j（漫画缩略图）
 - Apache Tika（漫画/电子书元数据提取）
@@ -91,7 +90,19 @@ fryfrog-hub-api/
 git clone https://github.com/xbwsh/fryfrog-hub-api.git
 cd fryfrog-hub-api
 
-# 启动应用（开发环境，使用 H2 内存数据库）
+# 创建开发环境配置（可选，不创建则使用 application.yml 默认配置）
+# 复制模板并根据需要修改
+cp app/src/main/resources/application-dev.yml.example app/src/main/resources/application-dev.yml
+```
+
+**开发配置说明**：`application-dev.yml` 已加入 `.gitignore`，不会提交到仓库。你可以根据本地环境自定义：
+- 数据库路径
+- 媒体目录
+- 代理设置
+- 自动刮削开关
+
+```bash
+# 启动应用（开发环境）
 mvn spring-boot:run -pl app
 
 # 或者打包后运行
@@ -106,7 +117,7 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 1. 拉取镜像：`ghcr.io/xbwsh/fryfrog-hub-api:latest`
 2. 创建容器，**网络模式选择 host**
 3. **必须设置环境变量**：
-   - `SPRING_PROFILES_ACTIVE=prod`（不设置会用 H2 内存数据库，重启丢数据）
+   - `SPRING_PROFILES_ACTIVE=prod`
 4. 添加挂载路径（在 UI 中配置你的实际路径）：
 
 | 容器路径 | 用途 | 示例宿主机路径 |
@@ -150,10 +161,10 @@ docker compose up -d
 
 ```bash
 # 设置环境变量
-export MUSIC_ROOT_PATH=/path/to/your/music
-export VIDEO_ROOT_PATH=/path/to/your/video
-export COMIC_ROOT_PATH=/path/to/your/comic
-export EBOOK_ROOT_PATH=/path/to/your/ebook
+export MUSIC_ROOT_PATHS=/path/to/your/music
+export VIDEO_ROOT_PATHS=/path/to/your/video
+export COMIC_ROOT_PATHS=/path/to/your/comic
+export EBOOK_ROOT_PATHS=/path/to/your/ebook
 export TMDB_API_KEY=your_tmdb_api_key  # 可选，用于视频刮削
 export PROXY_HOST=127.0.0.1            # 可选，代理地址
 export PROXY_PORT=7890                 # 可选，代理端口
@@ -248,16 +259,16 @@ server:
 
 hub:
   music:
-    root-path: ${MUSIC_ROOT_PATH:./media-library/music}
+    root-paths: ${MUSIC_ROOT_PATHS:./media-library/music}
     supported-formats: mp3,flac,ogg,wav,aac,m4a
   video:
-    root-path: ${VIDEO_ROOT_PATH:./media-library/video}
+    root-paths: ${VIDEO_ROOT_PATHS:./media-library/video}
     supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
   comic:
-    root-path: ${COMIC_ROOT_PATH:./media-library/comic}
+    root-paths: ${COMIC_ROOT_PATHS:./media-library/comic}
     supported-formats: cbz,cbr,zip,rar
   ebook:
-    root-path: ${EBOOK_ROOT_PATH:./media-library/ebook}
+    root-paths: ${EBOOK_ROOT_PATHS:./media-library/ebook}
     supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt
 ```
 
@@ -265,10 +276,10 @@ hub:
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MUSIC_ROOT_PATH` | `./media-library/music` | 音乐文件目录 |
-| `VIDEO_ROOT_PATH` | `./media-library/video` | 视频文件目录 |
-| `COMIC_ROOT_PATH` | `./media-library/comic` | 漫画文件目录 |
-| `EBOOK_ROOT_PATH` | `./media-library/ebook` | 电子书文件目录 |
+| `MUSIC_ROOT_PATHS` | `./media-library/music` | 音乐文件目录 |
+| `VIDEO_ROOT_PATHS` | `./media-library/video` | 视频文件目录 |
+| `COMIC_ROOT_PATHS` | `./media-library/comic` | 漫画文件目录 |
+| `EBOOK_ROOT_PATHS` | `./media-library/ebook` | 电子书文件目录 |
 | `TMDB_API_KEY` | - | TMDB API Key（视频刮削用） |
 | `TMDB_AUTO_SCRAPE` | `false` | 扫描时自动刮削视频 |
 | `PROXY_HOST` | - | 代理地址 |

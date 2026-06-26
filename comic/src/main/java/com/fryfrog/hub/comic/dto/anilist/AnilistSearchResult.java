@@ -63,6 +63,9 @@ public class AnilistSearchResult {
         @JsonProperty("staff")
         private StaffWrapper staff;
 
+        @JsonProperty("characters")
+        private CharacterWrapper characters;
+
         @Data
         @JsonIgnoreProperties(ignoreUnknown = true)
         public static class MediaTitle {
@@ -132,6 +135,43 @@ public class AnilistSearchResult {
         @Data
         @JsonIgnoreProperties(ignoreUnknown = true)
         public static class StaffName {
+            @JsonProperty("full")
+            private String full;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class CharacterWrapper {
+            @JsonProperty("edges")
+            private List<CharacterEdge> edges;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class CharacterEdge {
+            @JsonProperty("node")
+            private CharacterNode node;
+
+            @JsonProperty("role")
+            private String role;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class CharacterNode {
+            @JsonProperty("id")
+            private Integer id;
+
+            @JsonProperty("name")
+            private CharacterName name;
+
+            @JsonProperty("image")
+            private CoverImage image;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class CharacterName {
             @JsonProperty("full")
             private String full;
         }

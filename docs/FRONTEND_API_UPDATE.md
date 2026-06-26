@@ -54,6 +54,95 @@ Content-Type: application/json
 }
 ```
 
+### 视频 TMDB 刮削（接口重命名）
+
+| 旧接口 | 新接口 | 说明 |
+|--------|--------|------|
+| POST `/tmdb/rescrape` | POST `/tmdb/refresh` | 重新刮削（unbind + rebind） |
+| POST `/tmdb/unbind` | 不变 | 仅解绑 |
+| POST `/tmdb/auto-scrape` | 不变 | 自动刮削全部 |
+
+### 视频扫描（接口废弃）
+
+| 接口 | 状态 | 替代方案 |
+|------|------|----------|
+| POST `/scan-all` | ⚠️ 已废弃 | 使用 `POST /rescan` |
+| POST `/scan?path=xx` | 保留 | 指定目录扫描 |
+
+### 音乐批量刮削（接口合并）
+
+| 旧接口 | 新接口 | 说明 |
+|--------|--------|------|
+| POST `/scrape/all` | POST `/scrape/all?artist=xx` | 可选按艺术家筛选 |
+| POST `/scrape/artist` | ⚠️ 已废弃 | 使用 `scrape/all?artist=xx` |
+
+### 漫画绑定接口（格式变更）
+
+**旧方式**：
+```
+POST /api/v1/comic/3/bangumi/bind?bangumiId=279379&bindSeries=true
+```
+
+**新方式**：
+```
+POST /api/v1/comic/3/bangumi/bind
+Content-Type: application/json
+
+{
+  "bangumiId": 279379,
+  "bindSeries": true
+}
+```
+
+AniList 同理：
+```json
+{ "anilistId": 12345, "bindSeries": true }
+```
+
+---
+
+## 四、数据模型变更
+
+| 模块 | 方法 | 路径 | 说明 |
+|------|------|------|------|
+| 漫画 | POST | `/api/v1/comic/rescan` | 扫描所有根路径 → 整理文件夹 → 自动刮削 |
+| 音乐 | POST | `/api/v1/music/rescan` | 扫描所有根路径 → 刮削歌词/封面 |
+| 视频 | POST | `/api/v1/video/rescan` | 扫描所有根路径 → 整理文件夹 → 自动刮削 |
+| 电子书 | POST | `/api/v1/ebook/rescan` | 扫描所有根路径 |
+
+- 无需传参，直接 POST 即可
+- 后端自动遍历配置的所有根路径
+- 异步执行，立即返回 "Rescan started" 提示
+- 前端可轮询列表接口查看更新结果
+
+### 2. 获取角色图片
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/comic/character/{id}/image` | 优先返回本地图片，无则302重定向到远程URL |
+
+---
+
+## 三、接口变更
+
+### 视频保存观看进度（格式变更）
+
+**旧方式**（URL参数）：
+```
+PUT /api/v1/video/{id}/progress?position=120&duration=300
+```
+
+**新方式**（JSON body）：
+```
+PUT /api/v1/video/{id}/progress
+Content-Type: application/json
+
+{
+  "position": 120.5,
+  "duration": 300.0
+}
+```
+
 ### 漫画保存阅读进度（无变化，确认格式）
 
 ```
@@ -159,7 +248,52 @@ Content-Type: application/json
 
 ---
 
-## 七、文件夹结构（漫画面板展示参考）
+## 八、系统设置项（前端设置页参考）
+
+通过 `PUT /api/v1/settings/{key}` 修改，`GET /api/v1/settings` 获取所有设置。
+
+### 视频模块
+| key | 类型 | 默认值 | 说明 |
+|-----|------|--------|------|
+| tmdb.api-key | String | 空 | TMDB API密钥 |
+| tmdb.language | String | zh-CN | TMDB语言 |
+| tmdb.image-size | String | original | 图片尺寸 |
+| tmdb.auto-scrape | Boolean | false | 扫描时自动刮削 |
+| tmdb.min-score | Double | 0.0 | 自动刮削最低评分阈值 |
+| tmdb.include-adult | Boolean | true | 是否包含成人内容 |
+
+### 漫画模块
+| key | 类型 | 默认值 | 说明 |
+|-----|------|--------|------|
+| anilist.language | String | zh-CN | AniList语言 |
+| anilist.auto-scrape | Boolean | false | 扫描时自动刮削 |
+| anilist.min-score | Double | 0.0 | 自动刮削最低评分阈值 |
+| comic.auto-scrape | Boolean | false | 漫画自动刮削开关 |
+| comic.min-score | Double | 0.0 | 漫画刮削最低评分 |
+
+### 音乐模块
+| key | 类型 | 默认值 | 说明 |
+|-----|------|--------|------|
+| music.scrape.enabled | Boolean | true | 刮削总开关 |
+| music.scrape.auto-scrape | Boolean | false | 扫描时自动刮削 |
+| music.auto-writeback | Boolean | true | 元数据回写到音频文件 |
+| music.use-folder-structure | Boolean | true | 按艺术家文件夹整理 |
+| music.default-artist | String | 空 | 未知艺术家默认名 |
+| music.scrape.lyrics-fallback | Boolean | true | 歌词源回退 |
+| music.scrape.cover-fallback | Boolean | true | 封面源回退 |
+
+### 代理设置
+| key | 类型 | 默认值 | 说明 |
+|-----|------|--------|------|
+| proxy.host | String | 空 | 代理地址 |
+| proxy.port | Integer | 0 | 代理端口 |
+
+### 设置页面建议
+前端设置页可按模块分组展示：视频设置 / 漫画设置 / 音乐设置 / 代理设置，每个分组下展示对应的配置项。
+
+---
+
+## 九、文件夹结构（漫画面板展示参考）
 
 ```
 media-library/comic/

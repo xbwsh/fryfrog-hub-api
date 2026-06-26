@@ -1,11 +1,11 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -21,27 +21,37 @@ public class TmdbService {
     private static final String IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
 
     private final RestTemplate restTemplate;
+    private final SystemSettingService settingService;
 
-    @Value("${hub.tmdb.api-key:}")
-    private String apiKey;
-
-    @Value("${hub.tmdb.language:zh-CN}")
-    private String language;
-
-    @Value("${hub.tmdb.image-size:original}")
-    private String imageSize;
-
-    public TmdbService(RestTemplate restTemplate) {
+    public TmdbService(RestTemplate restTemplate, SystemSettingService settingService) {
         this.restTemplate = restTemplate;
+        this.settingService = settingService;
+    }
+
+    private String getApiKey() {
+        return settingService.getValue("tmdb.api-key", "");
+    }
+
+    private String getLanguage() {
+        return settingService.getValue("tmdb.language", "zh-CN");
+    }
+
+    private String getImageSize() {
+        return settingService.getValue("tmdb.image-size", "original");
+    }
+
+    private boolean isIncludeAdult() {
+        return settingService.getBoolean("tmdb.include-adult", true);
     }
 
     public boolean isConfigured() {
+        String apiKey = getApiKey();
         return apiKey != null && !apiKey.isBlank();
     }
 
     private HttpHeaders createAuthHeaders() {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + apiKey);
+        headers.set("Authorization", "Bearer " + getApiKey());
         return headers;
     }
 
@@ -56,9 +66,9 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/movie")
-                .queryParam("language", language)
+                .queryParam("language", getLanguage())
                 .queryParam("query", query)
-                .queryParam("include_adult", "true")
+                .queryParam("include_adult", String.valueOf(isIncludeAdult()))
                 .toUriString();
 
         try {
@@ -83,9 +93,9 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/tv")
-                .queryParam("language", language)
+                .queryParam("language", getLanguage())
                 .queryParam("query", query)
-                .queryParam("include_adult", "true")
+                .queryParam("include_adult", String.valueOf(isIncludeAdult()))
                 .toUriString();
 
         try {
@@ -110,9 +120,9 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/multi")
-                .queryParam("language", language)
+                .queryParam("language", getLanguage())
                 .queryParam("query", query)
-                .queryParam("include_adult", "true")
+                .queryParam("include_adult", String.valueOf(isIncludeAdult()))
                 .toUriString();
 
         try {
@@ -134,7 +144,7 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/movie/" + movieId)
-                .queryParam("language", language)
+                .queryParam("language", getLanguage())
                 .queryParam("append_to_response", "credits")
                 .toUriString();
 
@@ -156,7 +166,7 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId)
-                .queryParam("language", language)
+                .queryParam("language", getLanguage())
                 .queryParam("append_to_response", "created_by,credits")
                 .toUriString();
 
@@ -178,7 +188,7 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/season/" + seasonNumber + "/episode/" + episodeNumber)
-                .queryParam("language", language)
+                .queryParam("language", getLanguage())
                 .toUriString();
 
         try {
@@ -195,11 +205,11 @@ public class TmdbService {
 
     public String getPosterUrl(String posterPath) {
         if (posterPath == null) return null;
-        return IMAGE_BASE_URL + "/" + imageSize + posterPath;
+        return IMAGE_BASE_URL + "/" + getImageSize() + posterPath;
     }
 
     public String getBackdropUrl(String backdropPath) {
         if (backdropPath == null) return null;
-        return IMAGE_BASE_URL + "/" + imageSize + backdropPath;
+        return IMAGE_BASE_URL + "/" + getImageSize() + backdropPath;
     }
 }

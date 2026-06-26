@@ -48,13 +48,12 @@ A unified media backend API service supporting metadata management and streaming
 - **Swagger Docs** - Auto-generated API documentation with online testing
 - **CORS Support** - Pre-configured for frontend integration
 - **Docker Deployment** - Dockerfile and docker-compose.yml included
-- **H2 Dev Database** - In-memory database for development
-- **SQLite Production Database** - No external database required
+- **SQLite Storage** - Lightweight database, no external setup required
 
 ## Tech Stack
 
 - Java 21 + Spring Boot 3.2.x
-- Spring Data JPA + H2 (dev) / SQLite (prod)
+- Spring Data JPA + SQLite
 - jaudiotagger (music metadata extraction)
 - Thumbnails4j (comic thumbnails)
 - Apache Tika (comic/ebook metadata extraction)
@@ -91,7 +90,18 @@ fryfrog-hub-api/
 git clone https://github.com/xbwsh/fryfrog-hub-api.git
 cd fryfrog-hub-api
 
-# Start the application (dev mode, uses H2 in-memory database)
+# Create dev configuration (optional, uses application.yml defaults if not created)
+cp app/src/main/resources/application-dev.yml.example app/src/main/resources/application-dev.yml
+```
+
+**Dev Configuration**: `application-dev.yml` is in `.gitignore` and won't be committed. Customize for your local environment:
+- Database path
+- Media directories
+- Proxy settings
+- Auto-scrape toggles
+
+```bash
+# Start the application (dev mode)
 mvn spring-boot:run -pl app
 
 # Or build and run
@@ -106,7 +116,7 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 1. Pull the image: `ghcr.io/xbwsh/fryfrog-hub-api:latest`
 2. Create a container, **set network mode to host**
 3. **Required environment variable**:
-   - `SPRING_PROFILES_ACTIVE=prod` (without this, H2 in-memory database is used, data lost on restart)
+   - `SPRING_PROFILES_ACTIVE=prod`
 4. Add volume mounts (configure your actual paths in the UI):
 
 | Container Path | Purpose | Example Host Path |
@@ -150,10 +160,10 @@ Default pulls the GHCR image. For local builds, edit `docker-compose.yml`, comme
 
 ```bash
 # Set environment variables
-export MUSIC_ROOT_PATH=/path/to/your/music
-export VIDEO_ROOT_PATH=/path/to/your/video
-export COMIC_ROOT_PATH=/path/to/your/comic
-export EBOOK_ROOT_PATH=/path/to/your/ebook
+export MUSIC_ROOT_PATHS=/path/to/your/music
+export VIDEO_ROOT_PATHS=/path/to/your/video
+export COMIC_ROOT_PATHS=/path/to/your/comic
+export EBOOK_ROOT_PATHS=/path/to/your/ebook
 export TMDB_API_KEY=your_tmdb_api_key  # Optional, for video scraping
 export PROXY_HOST=127.0.0.1            # Optional, proxy address
 export PROXY_PORT=7890                 # Optional, proxy port
@@ -244,10 +254,10 @@ http://localhost:20058/swagger-ui.html
 
 | Variable | Default | Description |
 |------|--------|------|
-| `MUSIC_ROOT_PATH` | `./media-library/music` | Music files directory |
-| `VIDEO_ROOT_PATH` | `./media-library/video` | Video files directory |
-| `COMIC_ROOT_PATH` | `./media-library/comic` | Comic files directory |
-| `EBOOK_ROOT_PATH` | `./media-library/ebook` | Ebook files directory |
+| `MUSIC_ROOT_PATHS` | `./media-library/music` | Music files directory |
+| `VIDEO_ROOT_PATHS` | `./media-library/video` | Video files directory |
+| `COMIC_ROOT_PATHS` | `./media-library/comic` | Comic files directory |
+| `EBOOK_ROOT_PATHS` | `./media-library/ebook` | Ebook files directory |
 | `TMDB_API_KEY` | - | TMDB API Key (for video scraping) |
 | `TMDB_AUTO_SCRAPE` | `false` | Auto-scrape videos on scan |
 | `PROXY_HOST` | - | Proxy address |

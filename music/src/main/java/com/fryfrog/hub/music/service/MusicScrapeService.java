@@ -1,5 +1,6 @@
 package com.fryfrog.hub.music.service;
 
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.repository.MusicTrackRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,21 +25,21 @@ public class MusicScrapeService {
     private final NetEaseLyricsService netEaseLyricsService;
     private final QQMusicService qqMusicService;
     private final MusicBrainzService musicBrainzService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
 
-    @Value("${hub.music.scrape.enabled:true}")
-    private boolean scrapeEnabled;
-
-    @Value("${hub.music.scrape.lyrics-fallback:true}")
-    private boolean lyricsFallback;
-
-    @Value("${hub.music.scrape.cover-fallback:true}")
-    private boolean coverFallback;
-
     public boolean isScrapeEnabled() {
-        return scrapeEnabled;
+        return settingService.getBoolean("music.scrape.enabled", true);
+    }
+
+    private boolean isLyricsFallback() {
+        return settingService.getBoolean("music.scrape.lyrics-fallback", true);
+    }
+
+    private boolean isCoverFallback() {
+        return settingService.getBoolean("music.scrape.cover-fallback", true);
     }
 
     public MusicTrack scrapeTrack(Long trackId) {
@@ -49,7 +50,7 @@ public class MusicScrapeService {
 
     @Transactional
     public MusicTrack scrapeTrack(MusicTrack track) {
-        if (!scrapeEnabled) {
+        if (!isScrapeEnabled()) {
             log.info("刮削功能已禁用 / Scraping is disabled");
             return track;
         }
@@ -58,12 +59,12 @@ public class MusicScrapeService {
 
         boolean needsWork = false;
 
-        if (lyricsFallback && needsLyrics(track)) {
+        if (isLyricsFallback() && needsLyrics(track)) {
             scrapeLyrics(track);
             needsWork = true;
         }
 
-        if (coverFallback && needsCover(track)) {
+        if (isCoverFallback() && needsCover(track)) {
             scrapeCover(track);
             needsWork = true;
         }

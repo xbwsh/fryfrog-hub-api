@@ -40,11 +40,11 @@ public class MangaScrapeService {
     private final SystemSettingService settingService;
 
     private boolean isAutoScrape() {
-        return settingService.getBoolean("anilist.auto-scrape", false);
+        return settingService.getBoolean("comic.auto-scrape", false);
     }
 
     private double getMinScore() {
-        return settingService.getDouble("anilist.min-score", 0.0);
+        return settingService.getDouble("comic.min-score", 0.0);
     }
 
     public List<BangumiService.SearchResult> searchFromBangumi(String query) {

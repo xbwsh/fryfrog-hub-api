@@ -122,8 +122,9 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success("Scan completed", path));
     }
 
+    @Deprecated
     @PostMapping("/scan-all")
-    @Operation(summary = "扫描所有配置的根目录", description = "扫描所有配置的root-paths目录")
+    @Operation(summary = "[已废弃] 使用 POST /rescan 替代", description = "扫描所有配置的root-paths目录")
     public ResponseEntity<ApiResponse<List<String>>> scanAll() {
         List<String> rootPaths = getRootPaths();
         List<String> scanned = new ArrayList<>();
@@ -243,9 +244,9 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
     }
 
-    @PostMapping("/{id:\\d+}/tmdb/rescrape")
-    @Operation(summary = "重新刮削TMDB元数据", description = "清除现有绑定并重新从TMDB刮削元数据")
-    public ResponseEntity<ApiResponse<VideoDTO>> rescrapeTmdb(
+    @PostMapping("/{id:\\d+}/tmdb/refresh")
+    @Operation(summary = "刷新TMDB元数据", description = "清除现有绑定并重新从TMDB刮削元数据")
+    public ResponseEntity<ApiResponse<VideoDTO>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @Parameter(description = "TMDB ID") @RequestParam Long tmdbId,
             @Parameter(description = "媒体类型（movie/tv）") @RequestParam String mediaType) {

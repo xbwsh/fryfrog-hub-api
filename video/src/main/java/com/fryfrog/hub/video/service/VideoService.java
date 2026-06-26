@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
@@ -36,6 +37,7 @@ public class VideoService {
     private final VideoWatcherService watcherService;
     private final SeriesService seriesService;
     private final TransactionTemplate transactionTemplate;
+    private final SystemSettingService settingService;
 
     private final ExecutorService scrapeExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "tmdb-scraper");
@@ -46,7 +48,7 @@ public class VideoService {
     public VideoService(VideoRepository repository, TmdbService tmdbService,
                        NfoService nfoService, CoverArtService coverArtService,
                        @Lazy VideoWatcherService watcherService, SeriesService seriesService,
-                       TransactionTemplate transactionTemplate) {
+                       TransactionTemplate transactionTemplate, SystemSettingService settingService) {
         this.repository = repository;
         this.tmdbService = tmdbService;
         this.nfoService = nfoService;
@@ -54,6 +56,7 @@ public class VideoService {
         this.watcherService = watcherService;
         this.seriesService = seriesService;
         this.transactionTemplate = transactionTemplate;
+        this.settingService = settingService;
     }
 
     @Value("${hub.video.root-paths:./media-library/video}")
@@ -71,11 +74,13 @@ public class VideoService {
         return paths.isEmpty() ? "./media-library/video" : paths.get(0);
     }
 
-    @Value("${hub.tmdb.auto-scrape:false}")
-    private boolean autoScrape;
+    private boolean isAutoScrape() {
+        return settingService.getBoolean("tmdb.auto-scrape", false);
+    }
 
-    @Value("${hub.tmdb.min-score:0.0}")
-    private double minScore;
+    private double getMinScore() {
+        return settingService.getDouble("tmdb.min-score", 0.0);
+    }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
 
@@ -192,7 +197,7 @@ public class VideoService {
                     existing.setFileSize(file.length());
                     existing.setFormat(getFileExtension(fileName).toUpperCase());
                     Video updated = repository.save(existing);
-                    if (autoScrape && updated.getTmdbId() == null) {
+                    if (isAutoScrape() && updated.getTmdbId() == null) {
                         scrapeExecutor.submit(() -> tryScrapeVideo(updated));
                     }
                     return updated;
@@ -224,7 +229,7 @@ public class VideoService {
 
             Video saved = repository.save(video);
 
-            if (autoScrape && saved.getTmdbId() == null && nfoData == null) {
+            if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
                 scrapeExecutor.submit(() -> tryScrapeVideo(saved));
             }
 
@@ -251,8 +256,8 @@ public class VideoService {
             TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
             double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
 
-            if (score < minScore) {
-                log.info("Skipping auto-scrape for {} - score {} below threshold {}", video.getTitle(), score, minScore);
+            if (score < getMinScore()) {
+                log.info("Skipping auto-scrape for {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
                 return;
             }
 
@@ -725,8 +730,8 @@ public class VideoService {
                 TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
                 double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
 
-                if (score < minScore) {
-                    log.info("Skipping {} - score {} below threshold {}", video.getTitle(), score, minScore);
+                if (score < getMinScore()) {
+                    log.info("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
                     skipped++;
                     continue;
                 }
@@ -741,7 +746,7 @@ public class VideoService {
             }
         }
 
-        log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, minScore);
+        log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped, videos.size(), skipped, getMinScore());
         return repository.findAll();
     }
 

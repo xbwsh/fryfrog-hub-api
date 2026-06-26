@@ -1,0 +1,32 @@
+spring:
+  datasource:
+    url: jdbc:sqlite:./data/fryfrog.db
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.community.dialect.SQLiteDialect
+        format_sql: false
+
+hub:
+  media:
+    root-path: ${MEDIA_ROOT_PATH:./media-library}
+  tmdb:
+    api-key: ${TMDB_API_KEY:}
+    auto-scrape: true
+  comic:
+    auto-scrape: true
+  anilist:
+    auto-scrape: true
+  ebook:
+    auto-scrape: true
+  proxy:
+    host: 127.0.0.1
+    port: 7890
+
+logging:
+  level:
+    com.fryfrog: INFO

@@ -1,10 +1,10 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.comic.dto.anilist.AnilistSearchResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -45,6 +45,16 @@ public class AnilistService {
                       role
                     }
                   }
+                  characters(perPage: 10) {
+                    edges {
+                      node {
+                        id
+                        name { full }
+                        image { large medium }
+                      }
+                      role
+                    }
+                  }
                 }
               }
             }
@@ -52,13 +62,17 @@ public class AnilistService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final SystemSettingService settingService;
 
-    @Value("${hub.anilist.language:zh-CN}")
-    private String language;
-
-    public AnilistService(@Qualifier("scraperRestTemplate") RestTemplate restTemplate, ObjectMapper objectMapper) {
+    public AnilistService(@Qualifier("scraperRestTemplate") RestTemplate restTemplate,
+                         ObjectMapper objectMapper, SystemSettingService settingService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
+        this.settingService = settingService;
+    }
+
+    private String getLanguage() {
+        return settingService.getValue("anilist.language", "zh-CN");
     }
 
     public boolean isConfigured() {
@@ -116,6 +130,16 @@ public class AnilistService {
                     staff(perPage: 10) {
                       edges {
                         node { name { full } }
+                        role
+                      }
+                    }
+                    characters(perPage: 10) {
+                      edges {
+                        node {
+                          id
+                          name { full }
+                          image { large medium }
+                        }
                         role
                       }
                     }
