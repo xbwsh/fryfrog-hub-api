@@ -786,6 +786,7 @@ public class VideoService {
 
                 repository.save(sibling);
                 generateNfoAndCovers(sibling);
+                moveVideoToMetadataDir(sibling);
                 saveActors(sibling, "tv", tmdbId, null);
                 log.info("Auto-bound sibling video: {} -> TMDB {}", sibling.getFileName(), tmdbId);
             } catch (Exception e) {

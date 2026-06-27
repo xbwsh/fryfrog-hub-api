@@ -41,6 +41,15 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
+        Throwable cause = ex;
+        while (cause != null) {
+            String name = cause.getClass().getSimpleName();
+            if (name.contains("Abort") || name.contains("AsyncRequestNotUsable")) {
+                log.debug("Client disconnected: {}", ex.getMessage());
+                return null;
+            }
+            cause = cause.getCause();
+        }
         log.error("Unhandled exception", ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)

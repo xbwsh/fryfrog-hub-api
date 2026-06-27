@@ -161,6 +161,23 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(actorRepository.findByVideoId(id)));
     }
 
+    @GetMapping("/actor/{actorId:\\d+}/image")
+    @Operation(summary = "获取演员头像", description = "返回指定演员的头像图片")
+    public ResponseEntity<Resource> getActorImage(
+            @Parameter(description = "演员ID") @PathVariable Long actorId) {
+        VideoActor actor = actorRepository.findById(actorId).orElse(null);
+        if (actor == null || actor.getImagePath() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        Path imagePath = Paths.get(actor.getImagePath());
+        if (!Files.exists(imagePath)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_JPEG)
+                .body(new FileSystemResource(imagePath.toFile()));
+    }
+
     @GetMapping("/{id:\\d+}/cover")
     @Operation(summary = "获取封面图片", description = "返回视频的封面图片（竖屏海报），无封面时返回标题占位图")
     public ResponseEntity<Resource> getCoverArt(
@@ -185,7 +202,7 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/stream")
-    @Operation(summary = "播放视频", description = "流式返回视频文件，支持Range请求实现断点续播")
+    @Operation(summary = "播放视频", description = "流式返回视频文件")
     public ResponseEntity<Resource> streamVideo(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String range,
