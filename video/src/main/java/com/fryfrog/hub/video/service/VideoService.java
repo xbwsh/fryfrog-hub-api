@@ -14,7 +14,6 @@ import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -38,13 +37,15 @@ public class VideoService {
     private final TmdbService tmdbService;
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
-    private final VideoWatcherService watcherService;
     private final SeriesService seriesService;
     private final TransactionTemplate transactionTemplate;
     private final SystemSettingService settingService;
     private final VideoActorRepository actorRepository;
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
+    private final jakarta.persistence.EntityManager entityManager;
+
+    private final java.util.concurrent.locks.ReentrantLock dbWriteLock = new java.util.concurrent.locks.ReentrantLock();
 
     private volatile ExecutorService scrapeExecutor = createScraperPool(1);
 
@@ -77,22 +78,23 @@ public class VideoService {
 
     public VideoService(VideoRepository repository, TmdbService tmdbService,
                        NfoService nfoService, CoverArtService coverArtService,
-                       @Lazy VideoWatcherService watcherService, SeriesService seriesService,
+                       SeriesService seriesService,
                        TransactionTemplate transactionTemplate, SystemSettingService settingService,
                        VideoActorRepository actorRepository,
                        @org.springframework.beans.factory.annotation.Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate,
-                       ScrapeProgressService scrapeProgressService) {
+                       ScrapeProgressService scrapeProgressService,
+                       jakarta.persistence.EntityManager entityManager) {
         this.repository = repository;
         this.tmdbService = tmdbService;
         this.nfoService = nfoService;
         this.coverArtService = coverArtService;
-        this.watcherService = watcherService;
         this.seriesService = seriesService;
         this.transactionTemplate = transactionTemplate;
         this.settingService = settingService;
         this.actorRepository = actorRepository;
         this.scraperRestTemplate = scraperRestTemplate;
         this.scrapeProgressService = scrapeProgressService;
+        this.entityManager = entityManager;
     }
 
     @Value("${hub.video.root-paths:./media-library/video}")
@@ -151,8 +153,17 @@ public class VideoService {
         return repository.save(video);
     }
 
-    @Transactional
     public Video unbindTmdb(Long videoId) {
+        dbWriteLock.lock();
+        try {
+            return transactionTemplate.execute(status -> doUnbindTmdb(videoId));
+        } finally {
+            dbWriteLock.unlock();
+        }
+    }
+
+    @Transactional
+    Video doUnbindTmdb(Long videoId) {
         Video video = getVideoById(videoId);
 
         if (video.getTmdbId() == null) {
@@ -220,8 +231,17 @@ public class VideoService {
         }
     }
 
-    @Transactional
     public int unbindByTmdbId(Long tmdbId) {
+        dbWriteLock.lock();
+        try {
+            return transactionTemplate.execute(status -> doUnbindByTmdbId(tmdbId));
+        } finally {
+            dbWriteLock.unlock();
+        }
+    }
+
+    @Transactional
+    int doUnbindByTmdbId(Long tmdbId) {
         List<Video> videos = repository.findAllByTmdbId(tmdbId);
         int count = 0;
         for (Video video : videos) {
@@ -261,15 +281,39 @@ public class VideoService {
         return scrapeAndBindTmdb(videoId, tmdbId, mediaType);
     }
 
-    public Video rescrapeVideo(Long videoId) {
+    public List<Video> rescrapeVideo(Long videoId) {
         Video video = getVideoById(videoId);
         if (video.getTmdbId() == null || video.getMediaType() == null) {
             throw new IllegalArgumentException("Video has no TMDB binding: " + videoId);
         }
         Long tmdbId = video.getTmdbId();
         String mediaType = video.getMediaType();
-        unbindTmdb(videoId);
-        return scrapeAndBindTmdb(videoId, tmdbId, mediaType);
+
+        List<Video> siblings = repository.findAllByTmdbId(tmdbId);
+        if (siblings.isEmpty()) {
+            throw new IllegalArgumentException("No videos found with tmdbId: " + tmdbId);
+        }
+
+        log.info("Rescraping {} videos with tmdbId={}", siblings.size(), tmdbId);
+        for (Video s : siblings) {
+            try {
+                unbindTmdb(s.getId());
+            } catch (Exception e) {
+                log.warn("Failed to unbind video {} during rescrape: {}", s.getTitle(), e.getMessage());
+            }
+        }
+
+        List<Video> results = new ArrayList<>();
+        for (Video s : siblings) {
+            try {
+                Video bound = scrapeAndBindTmdb(s.getId(), tmdbId, mediaType);
+                results.add(bound);
+            } catch (Exception e) {
+                log.warn("Failed to rescrape video {}: {}", s.getTitle(), e.getMessage());
+                results.add(s);
+            }
+        }
+        return results;
     }
 
     @Transactional
@@ -293,6 +337,7 @@ public class VideoService {
             }
             if (!idsToDelete.isEmpty()) {
                 repository.deleteAllByIdInBatch(idsToDelete);
+                entityManager.clear();
                 removed += idsToDelete.size();
             }
         } while (page.hasNext());
@@ -390,9 +435,7 @@ public class VideoService {
                 return;
             }
 
-            transactionTemplate.executeWithoutResult(status -> {
-                scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
-            });
+            scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
 
             log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
                     video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
@@ -436,6 +479,8 @@ public class VideoService {
     }
 
     private void autoGroupSeries() {
+        dbWriteLock.lock();
+        try {
         List<Video> allVideos = repository.findAll();
 
         Map<String, List<Video>> grouped = new LinkedHashMap<>();
@@ -475,6 +520,9 @@ public class VideoService {
 
         if (groupedCount > 0) {
             log.info("Auto-grouped {} series from scan", groupedCount);
+        }
+        } finally {
+            dbWriteLock.unlock();
         }
     }
 
@@ -606,8 +654,17 @@ public class VideoService {
         return movieResults;
     }
 
+    public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
+        dbWriteLock.lock();
+        try {
+            return transactionTemplate.execute(status -> doScrapeAndBind(videoId, tmdbId, mediaType));
+        } finally {
+            dbWriteLock.unlock();
+        }
+    }
+
     @Transactional
-    public synchronized Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
+    Video doScrapeAndBind(Long videoId, Long tmdbId, String mediaType) {
         Video video = getVideoById(videoId);
         Object detail = null;
 
@@ -764,15 +821,8 @@ public class VideoService {
                 return;
             }
 
-            watcherService.addScrapingPath(videoPath.toString());
-            watcherService.addScrapingPath(targetPath.toString());
-            try {
-                Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-                log.debug("Successfully moved video: {} -> {}", videoPath, targetPath);
-            } finally {
-                watcherService.removeScrapingPath(videoPath.toString());
-                watcherService.removeScrapingPath(targetPath.toString());
-            }
+            Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            log.debug("Successfully moved video: {} -> {}", videoPath, targetPath);
 
             video.setFilePath(targetPath.toString());
             repository.save(video);
@@ -799,6 +849,8 @@ public class VideoService {
 
     @Transactional
     public Map<String, Object> organizeVideos(String path) {
+        dbWriteLock.lock();
+        try {
         List<Video> videos;
         if (path != null && !path.isBlank()) {
             videos = repository.findByFilePathContaining(path);
@@ -861,6 +913,9 @@ public class VideoService {
         result.put("skipped", skipped);
         result.put("failed", failed);
         return result;
+        } finally {
+            dbWriteLock.unlock();
+        }
     }
 
     private void moveAssociatedFile(Path oldDir, Path newDir, String fileName) {
@@ -890,6 +945,25 @@ public class VideoService {
             current = current.getParent();
         }
         return null;
+    }
+
+    public void rescrapeAll() {
+        List<Video> allVideos = repository.findAll();
+        int bound = 0;
+        for (Video video : allVideos) {
+            if (video.getTmdbId() != null) {
+                try {
+                    unbindTmdb(video.getId());
+                    bound++;
+                } catch (Exception e) {
+                    log.warn("Failed to unbind video {}: {}", video.getTitle(), e.getMessage());
+                }
+            }
+        }
+        if (bound > 0) {
+            log.info("Unbound {} videos, starting full re-scrape", bound);
+        }
+        autoScrapeAll();
     }
 
     public List<Video> autoScrapeAll() {
@@ -1000,29 +1074,41 @@ public class VideoService {
     private void saveActors(Video video, String mediaType, Long tmdbId, Object preloadedDetail) {
         try {
             actorRepository.deleteAll(actorRepository.findByVideoId(video.getId()));
+            actorRepository.flush();
 
             Path actorsDir = getActorsDir(video, mediaType);
             if (actorsDir == null) return;
             Files.createDirectories(actorsDir);
 
-            int count = 0;
+            List<Object> members = new ArrayList<>();
             if ("movie".equalsIgnoreCase(mediaType)) {
                 TmdbMovieDetail detail = preloadedDetail instanceof TmdbMovieDetail ? (TmdbMovieDetail) preloadedDetail : tmdbService.getMovieDetail(tmdbId);
                 if (detail != null && detail.getCredits() != null && detail.getCredits().getCast() != null) {
-                    for (TmdbMovieDetail.CastMember member : detail.getCredits().getCast()) {
-                        if (count >= 10) break;
-                        count = saveOneActor(video, actorsDir, count,
-                                member.getName(), member.getCharacter(), member.getId(), member.getProfilePath());
+                    for (TmdbMovieDetail.CastMember m : detail.getCredits().getCast()) {
+                        members.add(m);
+                        if (members.size() >= 10) break;
                     }
                 }
             } else if ("tv".equalsIgnoreCase(mediaType)) {
                 TmdbTvDetail detail = preloadedDetail instanceof TmdbTvDetail ? (TmdbTvDetail) preloadedDetail : tmdbService.getTvDetail(tmdbId);
                 if (detail != null && detail.getCredits() != null && detail.getCredits().getCast() != null) {
-                    for (TmdbTvDetail.CastMember member : detail.getCredits().getCast()) {
-                        if (count >= 10) break;
-                        count = saveOneActor(video, actorsDir, count,
-                                member.getName(), member.getCharacter(), member.getId(), member.getProfilePath());
+                    for (TmdbTvDetail.CastMember m : detail.getCredits().getCast()) {
+                        members.add(m);
+                        if (members.size() >= 10) break;
                     }
+                }
+            }
+
+            int count = 0;
+            for (Object member : members) {
+                try {
+                    if (member instanceof TmdbMovieDetail.CastMember cm) {
+                        count = saveOneActor(video, actorsDir, count, cm.getName(), cm.getCharacter(), cm.getId(), cm.getProfilePath());
+                    } else if (member instanceof TmdbTvDetail.CastMember cm) {
+                        count = saveOneActor(video, actorsDir, count, cm.getName(), cm.getCharacter(), cm.getId(), cm.getProfilePath());
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to save actor for video id={}: {}", video.getId(), e.getMessage());
                 }
             }
             log.info("Saved {} actors for video id={}", count, video.getId());

@@ -219,34 +219,37 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/tmdb/unbind")
-    @Operation(summary = "解绑TMDB元数据", description = "清除视频的TMDB元数据绑定")
-    public ResponseEntity<ApiResponse<VideoDTO>> unbindTmdb(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        Video video = service.unbindTmdb(id);
-        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
-    }
-
-    @PostMapping("/{id:\\d+}/tmdb/unbind-series")
-    @Operation(summary = "批量解绑同系列TMDB", description = "解绑同一TMDB ID下的所有视频（电视剧多集场景）")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> unbindSeriesTmdb(
+    @Operation(summary = "解绑TMDB元数据", description = "解绑该视频所属系列的所有视频（同tmdbId）的TMDB元数据")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> unbindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
         if (video.getTmdbId() == null) {
             return ResponseEntity.ok(ApiResponse.success(Map.of("unbound", 0)));
         }
-        int count = service.unbindByTmdbId(video.getTmdbId());
+        Long tmdbId = video.getTmdbId();
+        int count = service.unbindByTmdbId(tmdbId);
         return ResponseEntity.ok(ApiResponse.success(Map.of(
-                "tmdbId", video.getTmdbId(),
+                "tmdbId", tmdbId,
                 "unbound", count
         )));
     }
 
     @PostMapping("/{id:\\d+}/tmdb/refresh")
-    @Operation(summary = "刷新TMDB元数据", description = "使用视频已有的TMDB绑定重新刮削元数据")
-    public ResponseEntity<ApiResponse<VideoDTO>> refreshTmdb(
+    @Operation(summary = "刷新TMDB元数据", description = "重新刮削该视频所属系列的所有视频（同tmdbId）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
-        Video video = service.rescrapeVideo(id);
-        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+        List<Video> results = service.rescrapeVideo(id);
+        return ResponseEntity.ok(ApiResponse.success(Map.of(
+                "total", results.size(),
+                "videos", results.stream().map(this::toDTO).toList()
+        )));
+    }
+
+    @PostMapping("/tmdb/rescrape-all")
+    @Operation(summary = "全量重新刮削", description = "解绑所有视频的TMDB绑定，然后重新搜索绑定")
+    public ResponseEntity<ApiResponse<String>> rescrapeAll() {
+        service.rescrapeAll();
+        return ResponseEntity.ok(ApiResponse.success("Rescrape started: unbind all → re-scrape"));
     }
 
     @GetMapping("/scrape/progress")

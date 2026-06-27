@@ -77,6 +77,10 @@ public class SeriesService {
         if (existing.isPresent()) {
             return existing.get();
         }
+        VideoSeries byTitle = seriesRepository.findByTitle(title).orElse(null);
+        if (byTitle != null) {
+            return bindTmdbToSeries(byTitle.getId(), tmdbId);
+        }
         VideoSeries series = createSeries(title);
         return bindTmdbToSeries(series.getId(), tmdbId);
     }

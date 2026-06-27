@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:sqlite:/data/fryfrog.db
+    url: jdbc:sqlite:/data/fryfrog.db?journal_mode=WAL&busy_timeout=5000
     driver-class-name: org.sqlite.JDBC
   jpa:
     hibernate:
