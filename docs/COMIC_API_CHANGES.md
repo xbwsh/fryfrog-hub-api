@@ -45,7 +45,7 @@ media-library/comic/
 文件监控检测到新漫画文件后自动触发刮削（已绑定的跳过）。
 
 ### 封面存储位置
-从 `{root}/.cache/covers/` 迁移到漫画文件同目录，命名 `{文件名}_cover.jpg`。
+封面存储在漫画文件同目录，命名 `{文件名}_cover.jpg`。
 
 ### 角色数据刮削
 绑定Bangumi/AniList时自动下载角色图片到 `characters/` 目录。

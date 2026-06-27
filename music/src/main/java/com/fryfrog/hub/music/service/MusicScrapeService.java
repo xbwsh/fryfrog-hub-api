@@ -59,21 +59,15 @@ public class MusicScrapeService {
 
         log.debug("开始刮削 / Scraping track: {} - {}", track.getArtist(), track.getTitle());
 
-        boolean needsWork = false;
-
-        if (isLyricsFallback() && needsLyrics(track)) {
+        if (isLyricsFallback()) {
             scrapeLyrics(track);
-            needsWork = true;
         }
 
-        if (isCoverFallback() && needsCover(track)) {
+        if (isCoverFallback()) {
             scrapeCover(track);
-            needsWork = true;
         }
 
-        if (needsWork) {
-            enrichMetadata(track);
-        }
+        enrichMetadata(track);
 
         track.setScrapeStatus("scraped");
         return repository.save(track);
@@ -144,7 +138,16 @@ public class MusicScrapeService {
     }
 
     private boolean needsMetadata(MusicTrack track) {
-        return (track.getMusicBrainzId() == null || track.getMusicBrainzId().isBlank());
+        if (track.getMusicBrainzId() == null || track.getMusicBrainzId().isBlank()) {
+            return true;
+        }
+        if (track.getGenre() == null || track.getGenre().isBlank()) {
+            return true;
+        }
+        if (track.getArtistImage() == null || track.getArtistImage().isBlank()) {
+            return true;
+        }
+        return false;
     }
 
     private void scrapeLyrics(MusicTrack track) {
@@ -161,6 +164,7 @@ public class MusicScrapeService {
                 log.info("从QQ音乐获取歌词成功 / Lyrics found from QQ Music: {} - {}", artist, title);
                 return;
             }
+            log.info("QQ音乐未找到歌词 / No lyrics from QQ Music: {} - {}", artist, title);
         } catch (Exception e) {
             log.warn("QQ音乐歌词获取失败 / QQ Music lyrics failed for {} - {}: {}", artist, title, e.getMessage());
         }
@@ -179,7 +183,7 @@ public class MusicScrapeService {
             log.warn("网易云歌词获取失败 / NetEase lyrics failed for {} - {}: {}", artist, title, e.getMessage());
         }
 
-        log.debug("未找到歌词 / No lyrics found for: {} - {}", artist, title);
+        log.info("未找到歌词 / No lyrics found for: {} - {}", artist, title);
     }
 
     private void saveLyricsFile(MusicTrack track, String lyrics) {
@@ -210,6 +214,7 @@ public class MusicScrapeService {
                     return;
                 }
             }
+            log.info("QQ音乐未找到封面 / No cover from QQ Music: {} - {}", artist, title);
         } catch (Exception e) {
             log.warn("QQ音乐封面获取失败 / QQ Music cover failed for {} - {}: {}", artist, title, e.getMessage());
         }
@@ -236,8 +241,70 @@ public class MusicScrapeService {
     private void enrichMetadata(MusicTrack track) {
         try {
             musicBrainzService.enrichTrack(track);
+
+            if (track.getArtistImage() == null || track.getArtistImage().isBlank()) {
+                scrapeArtistImage(track);
+            }
+
+            if (track.getArtistImage() != null && !track.getArtistImage().isBlank()
+                    && track.getArtistImage().startsWith("http")) {
+                String localPath = downloadArtistImage(track.getArtistImage(), track);
+                if (localPath != null) {
+                    track.setArtistImage(localPath);
+                }
+            }
         } catch (Exception e) {
             log.warn("元数据增强失败 / Metadata enrichment failed for {} - {}: {}", track.getArtist(), track.getTitle(), e.getMessage());
+        }
+    }
+
+    private void scrapeArtistImage(MusicTrack track) {
+        String artist = track.getArtist();
+        if (artist == null || artist.isBlank()) {
+            return;
+        }
+
+        try {
+            String coverUrl = qqMusicService.searchArtistImage(artist);
+            if (coverUrl != null) {
+                track.setArtistImage(coverUrl);
+                log.info("从QQ音乐获取歌手图片成功 / Artist image found from QQ Music: {}", artist);
+                return;
+            }
+            log.info("QQ音乐未找到歌手图片 / No artist image from QQ Music: {}", artist);
+        } catch (Exception e) {
+            log.warn("QQ音乐歌手图片获取失败 / QQ Music artist image failed for {}: {}", artist, e.getMessage());
+        }
+
+        try {
+            String coverUrl = netEaseLyricsService.searchArtistImage(artist);
+            if (coverUrl != null) {
+                track.setArtistImage(coverUrl);
+                log.info("从网易云获取歌手图片成功 / Artist image found from NetEase: {}", artist);
+                return;
+            }
+            log.info("网易云未找到歌手图片 / No artist image from NetEase: {}", artist);
+        } catch (Exception e) {
+            log.warn("网易云歌手图片获取失败 / NetEase artist image failed for {}: {}", artist, e.getMessage());
+        }
+    }
+
+    private String downloadArtistImage(String imageUrl, MusicTrack track) {
+        try {
+            Path targetDir = organizeTrackFolder(track);
+            Path artistImagePath = targetDir.resolve("artist.jpg");
+
+            if (Files.exists(artistImagePath)) {
+                return artistImagePath.toAbsolutePath().toString();
+            }
+
+            try (InputStream in = new URL(imageUrl).openStream()) {
+                Files.copy(in, artistImagePath);
+                return artistImagePath.toAbsolutePath().toString();
+            }
+        } catch (Exception e) {
+            log.warn("下载歌手图片失败 / Failed to download artist image: {}", e.getMessage());
+            return null;
         }
     }
 

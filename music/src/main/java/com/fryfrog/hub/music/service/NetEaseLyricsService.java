@@ -115,6 +115,32 @@ public class NetEaseLyricsService {
         }
     }
 
+    public String searchArtistImage(String artist) {
+        try {
+            String url = "https://music.163.com/api/search/get?s=" + artist + "&type=100&limit=1&offset=0";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Referer", neteaseApi);
+            headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Map result = (Map) response.getBody().get("result");
+                if (result != null) {
+                    List<Map> artists = (List<Map>) result.get("artists");
+                    if (artists != null && !artists.isEmpty()) {
+                        return (String) artists.get(0).get("picUrl");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("NetEase artist image search failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
     private String fetchSongCover(String songId) {
         String url = "https://music.163.com/api/song/detail?ids=" + songId;
 

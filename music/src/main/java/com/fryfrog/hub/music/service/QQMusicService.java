@@ -118,6 +118,55 @@ public class QQMusicService {
         return null;
     }
 
+    public String searchArtistImage(String artist) {
+        try {
+            String singerMid = searchSingerMid(artist);
+            if (singerMid != null && !singerMid.isBlank()) {
+                return COVER_BASE_URL + "T001R300x300M000" + singerMid + ".jpg";
+            }
+        } catch (Exception e) {
+            log.warn("Failed to search artist image from QQ Music: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String searchSingerMid(String artist) {
+        HttpHeaders headers = createHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("comm", Map.of("ct", 19, "cv", 1859));
+        body.put("req", Map.of(
+                "method", "DoSearchForQQMusicDesktop",
+                "module", "music.search.SearchCgiService",
+                "param", Map.of(
+                        "num_per_page", 1,
+                        "page_num", 1,
+                        "query", artist,
+                        "search_type", 0
+                )
+        ));
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(SEARCH_URL, HttpMethod.POST, entity, String.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                JsonNode root = objectMapper.readTree(response.getBody());
+                JsonNode songList = root.path("req").path("data").path("body").path("song").path("list");
+                if (songList.isArray() && !songList.isEmpty()) {
+                    JsonNode singers = songList.get(0).path("singer");
+                    if (singers.isArray() && !singers.isEmpty()) {
+                        return singers.get(0).path("mid").asText(null);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("QQ Music singer search failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
     public Map<String, String> searchSongInfo(String artist, String title) {
         Map<String, Object> fullInfo = searchSongInfoFull(artist, title);
         if (fullInfo == null) {

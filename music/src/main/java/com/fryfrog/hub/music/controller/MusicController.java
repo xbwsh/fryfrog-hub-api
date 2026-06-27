@@ -52,34 +52,44 @@ public class MusicController {
     @GetMapping
     @Operation(summary = "获取所有曲目", description = "返回数据库中所有已索引的音乐曲目列表")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getAllTracks() {
-        return ResponseEntity.ok(ApiResponse.success(service.getAllTracks()));
+        List<MusicTrack> tracks = service.getAllTracks();
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取曲目详情", description = "根据ID获取单个曲目的详细信息，包含歌词、封面路径等")
     public ResponseEntity<ApiResponse<MusicTrack>> getTrackById(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(service.getTrackById(id)));
+        MusicTrack track = service.getTrackById(id);
+        fillApiPaths(track);
+        return ResponseEntity.ok(ApiResponse.success(track));
     }
 
     @GetMapping("/search/title")
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchByTitle(q)));
+        List<MusicTrack> tracks = service.searchByTitle(q);
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
     @GetMapping("/search/artist")
     @Operation(summary = "按艺术家搜索", description = "根据艺术家名称模糊搜索音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByArtist(
             @Parameter(description = "艺术家名称关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchByArtist(q)));
+        List<MusicTrack> tracks = service.searchByArtist(q);
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
     @GetMapping("/favorites")
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getFavorites() {
-        return ResponseEntity.ok(ApiResponse.success(service.getFavorites()));
+        List<MusicTrack> tracks = service.getFavorites();
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
     @PutMapping("/{id:\\d+}/favorite")
@@ -262,5 +272,36 @@ public class MusicController {
             return MediaType.IMAGE_GIF;
         }
         return MediaType.IMAGE_JPEG;
+    }
+
+    private void fillApiPaths(MusicTrack track) {
+        String basePath = "/api/v1/music/" + track.getId();
+        track.setCoverApiPath(basePath + "/cover");
+        track.setArtistImageApiPath(basePath + "/artist-image");
+        track.setStreamApiPath(basePath + "/stream");
+    }
+
+    @GetMapping("/{id:\\d+}/artist-image")
+    @Operation(summary = "获取歌手图片", description = "返回歌手的图片")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无歌手图片")
+    })
+    public ResponseEntity<Resource> getArtistImage(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        MusicTrack track = service.getTrackById(id);
+        if (track.getArtistImage() == null || track.getArtistImage().isBlank()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        File imageFile = new File(track.getArtistImage());
+        if (!imageFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        MediaType mediaType = resolveImageMediaType(imageFile.getName());
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .body(new FileSystemResource(imageFile));
     }
 }

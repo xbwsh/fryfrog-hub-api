@@ -50,6 +50,7 @@ public class MusicTrack extends BaseEntity {
 
     @Schema(description = "文件完整路径")
     @Column(unique = true)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String filePath;
 
     @Schema(description = "文件名", example = "许嵩 - 多余的解释.flac")
@@ -69,6 +70,7 @@ public class MusicTrack extends BaseEntity {
     private String format;
 
     @Schema(description = "封面图片缓存路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String coverArtPath;
 
     @Schema(description = "封面来源", example = "embedded")
@@ -94,6 +96,7 @@ public class MusicTrack extends BaseEntity {
     private String musicBrainzId;
 
     @Schema(description = "艺术家图片URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String artistImage;
 
     @Schema(description = "艺术家简介")
@@ -106,4 +109,16 @@ public class MusicTrack extends BaseEntity {
 
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
+
+    @Schema(description = "封面图片API路径", example = "/api/v1/music/1/cover")
+    @jakarta.persistence.Transient
+    private String coverApiPath;
+
+    @Schema(description = "歌手图片API路径", example = "/api/v1/music/1/artist-image")
+    @jakarta.persistence.Transient
+    private String artistImageApiPath;
+
+    @Schema(description = "音频播放API路径", example = "/api/v1/music/1/stream")
+    @jakarta.persistence.Transient
+    private String streamApiPath;
 }

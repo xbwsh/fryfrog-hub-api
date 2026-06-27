@@ -68,6 +68,14 @@ public class MusicBrainzService {
                                     result.put("catalogNumber", (String) labelInfo.get("catalog-number"));
                                 }
                             }
+
+                            String releaseGroupId = (String) releaseGroup.get("id");
+                            if (releaseGroupId != null) {
+                                String genre = getReleaseGroupTags(releaseGroupId);
+                                if (genre != null) {
+                                    result.put("genre", genre);
+                                }
+                            }
                         }
                     }
                     return result;
@@ -75,6 +83,43 @@ public class MusicBrainzService {
             }
         } catch (Exception e) {
             log.warn("MusicBrainz search failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String getReleaseGroupTags(String releaseGroupId) {
+        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/release-group/" + releaseGroupId)
+                .queryParam("fmt", "json")
+                .queryParam("inc", "tags")
+                .toUriString();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("User-Agent", USER_AGENT);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                List<Map> tags = (List<Map>) response.getBody().get("tags");
+                if (tags != null && !tags.isEmpty()) {
+                    StringBuilder genreBuilder = new StringBuilder();
+                    for (Map tag : tags) {
+                        String tagName = (String) tag.get("name");
+                        if (tagName != null && !tagName.isBlank()) {
+                            if (!genreBuilder.isEmpty()) {
+                                genreBuilder.append(", ");
+                            }
+                            genreBuilder.append(tagName);
+                        }
+                    }
+                    if (!genreBuilder.isEmpty()) {
+                        return genreBuilder.toString();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to get release-group tags: {}", e.getMessage());
         }
         return null;
     }
@@ -145,6 +190,134 @@ public class MusicBrainzService {
         return null;
     }
 
+    public String getArtistImageUrl(String artistName) {
+        Map<String, String> artistInfo = getArtistInfo(artistName);
+        if (artistInfo == null) {
+            return null;
+        }
+
+        String artistId = artistInfo.get("id");
+        if (artistId == null) {
+            return null;
+        }
+
+        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/artist/" + artistId)
+                .queryParam("fmt", "json")
+                .queryParam("inc", "url-rels")
+                .toUriString();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("User-Agent", USER_AGENT);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                List<Map> relations = (List<Map>) response.getBody().get("relations");
+                if (relations != null) {
+                    for (Map relation : relations) {
+                        String type = (String) relation.get("type");
+                        Map urlObj = (Map) relation.get("url");
+                        if (urlObj != null) {
+                            String resource = (String) urlObj.get("resource");
+                            if (resource != null && resource.contains("commons.wikimedia.org/wiki/File:")) {
+                                String filename = resource.substring(resource.lastIndexOf("/File:") + 6);
+                                return getWikimediaImageUrl(filename);
+                            }
+                        }
+                    }
+
+                    for (Map relation : relations) {
+                        Map urlObj = (Map) relation.get("url");
+                        if (urlObj != null) {
+                            String resource = (String) urlObj.get("resource");
+                            if (resource != null && resource.contains("wikidata.org/wiki/")) {
+                                String wikidataId = resource.substring(resource.lastIndexOf('/') + 1);
+                                String imageUrl = getWikidataImage(wikidataId);
+                                if (imageUrl != null) {
+                                    return imageUrl;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get artist image URL from MusicBrainz: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String getWikidataImage(String wikidataId) {
+        String url = "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=" + wikidataId + "&property=P18&format=json";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("User-Agent", USER_AGENT);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Map claims = (Map) response.getBody().get("claims");
+                if (claims != null) {
+                    List<Map> p18Claims = (List<Map>) claims.get("P18");
+                    if (p18Claims != null && !p18Claims.isEmpty()) {
+                        Map claim = p18Claims.get(0);
+                        Map mainsnak = (Map) claim.get("mainsnak");
+                        if (mainsnak != null) {
+                            Map datavalue = (Map) mainsnak.get("datavalue");
+                            if (datavalue != null) {
+                                String filename = (String) datavalue.get("value");
+                                if (filename != null) {
+                                    return getWikimediaImageUrl(filename);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get Wikidata image: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String getWikimediaImageUrl(String filename) {
+        String encodedFilename = filename.replace(" ", "_");
+        String url = "https://commons.wikimedia.org/w/api.php?action=query&titles=File:" + encodedFilename + "&prop=imageinfo&iiprop=url&format=json";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("User-Agent", USER_AGENT);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Map query = (Map) response.getBody().get("query");
+                if (query != null) {
+                    Map pages = (Map) query.get("pages");
+                    if (pages != null && !pages.isEmpty()) {
+                        for (Object pageObj : pages.values()) {
+                            Map page = (Map) pageObj;
+                            List<Map> imageinfo = (List<Map>) page.get("imageinfo");
+                            if (imageinfo != null && !imageinfo.isEmpty()) {
+                                Map info = imageinfo.get(0);
+                                return (String) info.get("url");
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Wikimedia API failed, using fallback URL: {}", e.getMessage());
+        }
+
+        return "https://commons.wikimedia.org/wiki/Special:FilePath/" + encodedFilename + "?width=400";
+    }
+
     public void enrichTrack(MusicTrack track) {
         if (track.getArtist() == null || track.getTitle() == null) {
             return;
@@ -164,6 +337,9 @@ public class MusicBrainzService {
                 if (track.getReleaseDate() == null || track.getReleaseDate().isBlank()) {
                     track.setReleaseDate(recording.get("releaseDate"));
                 }
+                if (track.getGenre() == null || track.getGenre().isBlank()) {
+                    track.setGenre(recording.get("genre"));
+                }
 
                 String releaseId = recording.get("releaseId");
                 if (releaseId != null && (track.getCoverArtPath() == null || track.getCoverArtPath().isBlank())) {
@@ -171,6 +347,13 @@ public class MusicBrainzService {
                     if (coverUrl != null) {
                         track.setCoverSource("musicbrainz");
                     }
+                }
+            }
+
+            if (track.getArtistImage() == null || track.getArtistImage().isBlank()) {
+                String artistImageUrl = getArtistImageUrl(track.getArtist());
+                if (artistImageUrl != null) {
+                    track.setArtistImage(artistImageUrl);
                 }
             }
         } catch (Exception e) {

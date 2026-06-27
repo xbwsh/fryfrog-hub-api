@@ -77,7 +77,6 @@ mvn verify -Pintegration
 - 媒体文件路径通过 `application.yml` 配置：`hub.media.root-path`
 - 文件扫描：后台定时任务或手动触发
 - 元数据：读取后存入数据库，文件不移动
-- 缩略图：按需生成，缓存到 `{root-path}/.cache/thumbnails/`
 - 转码：FFmpeg 进程通过 `ProcessBuilder` 调用，输出到临时目录
 
 ## Environment
