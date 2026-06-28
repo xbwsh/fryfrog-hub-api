@@ -110,6 +110,12 @@ public class MusicTrack extends BaseEntity {
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
 
+    @Schema(description = "播放次数", example = "0")
+    private Integer playCount = 0;
+
+    @Schema(description = "最后播放时间")
+    private java.time.LocalDateTime lastPlayedAt;
+
     @Schema(description = "封面图片API路径", example = "/api/v1/music/1/cover")
     @jakarta.persistence.Transient
     private String coverApiPath;

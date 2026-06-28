@@ -1,11 +1,10 @@
 package com.fryfrog.hub.music.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
-import com.fryfrog.hub.common.dto.ScrapeProgress;
-import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.music.model.MusicTrack;
+import com.fryfrog.hub.music.model.Playlist;
+import com.fryfrog.hub.music.model.PlaylistTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
-import com.fryfrog.hub.music.service.MusicScrapeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -26,18 +25,17 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/music")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "音乐管理", description = "音乐元数据查询、扫描和刮削接口")
+@Tag(name = "音乐管理", description = "音乐元数据查询、扫描和整理接口")
 public class MusicController {
 
     private final MusicMetadataService service;
-    private final MusicScrapeService scrapeService;
-    private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -58,7 +56,7 @@ public class MusicController {
     }
 
     @GetMapping("/{id:\\d+}")
-    @Operation(summary = "获取曲目详情", description = "根据ID获取单个曲目的详细信息，包含歌词、封面路径等")
+    @Operation(summary = "获取曲目详情", description = "根据ID获取单个曲目的详细信息")
     public ResponseEntity<ApiResponse<MusicTrack>> getTrackById(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
         MusicTrack track = service.getTrackById(id);
@@ -93,15 +91,118 @@ public class MusicController {
     }
 
     @PutMapping("/{id:\\d+}/favorite")
-    @Operation(summary = "设置收藏状态", description = "设置曲目的收藏状态")
+    @Operation(summary = "切换收藏状态", description = "切换曲目的收藏状态（支持body传status或自动切换）")
     public ResponseEntity<ApiResponse<MusicTrack>> setFavorite(
             @Parameter(description = "曲目ID") @PathVariable Long id,
-            @Parameter(description = "收藏状态") @RequestParam boolean status) {
-        return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
+            @RequestBody(required = false) Map<String, Object> body) {
+        MusicTrack track = service.getTrackById(id);
+        boolean newStatus;
+        if (body != null && body.containsKey("status")) {
+            newStatus = Boolean.TRUE.equals(body.get("status"));
+        } else {
+            newStatus = !Boolean.TRUE.equals(track.getFavorite());
+        }
+        return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, newStatus)));
+    }
+
+    @GetMapping("/recently-played")
+    @Operation(summary = "最近播放", description = "返回最近播放过的音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> getRecentlyPlayed() {
+        List<MusicTrack> tracks = service.getRecentlyPlayed();
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
+    }
+
+    @GetMapping("/most-played")
+    @Operation(summary = "最常播放", description = "返回播放次数最多的音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> getMostPlayed() {
+        List<MusicTrack> tracks = service.getMostPlayed();
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
+    }
+
+    @GetMapping("/recently-added")
+    @Operation(summary = "最近添加", description = "返回最近添加的音乐曲目")
+    public ResponseEntity<ApiResponse<List<MusicTrack>>> getRecentlyAdded() {
+        List<MusicTrack> tracks = service.getRecentlyAdded();
+        tracks.forEach(this::fillApiPaths);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
+    }
+
+    @PostMapping("/{id:\\d+}/play")
+    @Operation(summary = "记录播放", description = "记录曲目播放次数和最后播放时间")
+    public ResponseEntity<ApiResponse<MusicTrack>> recordPlay(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(service.recordPlay(id)));
+    }
+
+    @GetMapping("/recommendations")
+    @Operation(summary = "推荐歌单", description = "根据听歌习惯生成多个推荐分类")
+    public ResponseEntity<ApiResponse<Map<String, List<MusicTrack>>>> getRecommendations() {
+        Map<String, List<MusicTrack>> recommendations = service.getRecommendations();
+        recommendations.values().forEach(list -> list.forEach(this::fillApiPaths));
+        return ResponseEntity.ok(ApiResponse.success(recommendations));
+    }
+
+    @GetMapping("/playlists")
+    @Operation(summary = "获取所有播放列表", description = "返回所有播放列表")
+    public ResponseEntity<ApiResponse<List<Playlist>>> getAllPlaylists() {
+        return ResponseEntity.ok(ApiResponse.success(service.getAllPlaylists()));
+    }
+
+    @PostMapping("/playlists")
+    @Operation(summary = "创建播放列表", description = "创建新的播放列表")
+    public ResponseEntity<ApiResponse<Playlist>> createPlaylist(
+            @RequestBody Map<String, String> body) {
+        String name = body.getOrDefault("name", "新建播放列表");
+        String description = body.getOrDefault("description", "");
+        return ResponseEntity.ok(ApiResponse.success(service.createPlaylist(name, description)));
+    }
+
+    @PutMapping("/playlists/{id:\\d+}")
+    @Operation(summary = "更新播放列表", description = "更新播放列表名称和描述")
+    public ResponseEntity<ApiResponse<Playlist>> updatePlaylist(
+            @Parameter(description = "播放列表ID") @PathVariable Long id,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(ApiResponse.success(
+                service.updatePlaylist(id, body.get("name"), body.get("description"))));
+    }
+
+    @DeleteMapping("/playlists/{id:\\d+}")
+    @Operation(summary = "删除播放列表", description = "删除播放列表及其所有曲目")
+    public ResponseEntity<ApiResponse<Void>> deletePlaylist(
+            @Parameter(description = "播放列表ID") @PathVariable Long id) {
+        service.deletePlaylist(id);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @GetMapping("/playlists/{id:\\d+}/tracks")
+    @Operation(summary = "获取播放列表曲目", description = "返回播放列表中的所有曲目")
+    public ResponseEntity<ApiResponse<List<PlaylistTrack>>> getPlaylistTracks(
+            @Parameter(description = "播放列表ID") @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(service.getPlaylistTracks(id)));
+    }
+
+    @PostMapping("/playlists/{id:\\d+}/tracks")
+    @Operation(summary = "添加曲目到播放列表", description = "将曲目添加到播放列表")
+    public ResponseEntity<ApiResponse<PlaylistTrack>> addTrackToPlaylist(
+            @Parameter(description = "播放列表ID") @PathVariable Long id,
+            @RequestBody Map<String, Long> body) {
+        Long trackId = body.get("trackId");
+        return ResponseEntity.ok(ApiResponse.success(service.addTrackToPlaylist(id, trackId)));
+    }
+
+    @DeleteMapping("/playlists/{playlistId:\\d+}/tracks/{trackId:\\d+}")
+    @Operation(summary = "从播放列表移除曲目", description = "从播放列表中移除指定曲目")
+    public ResponseEntity<ApiResponse<Void>> removeTrackFromPlaylist(
+            @Parameter(description = "播放列表ID") @PathVariable Long playlistId,
+            @Parameter(description = "曲目ID") @PathVariable Long trackId) {
+        service.removeTrackFromPlaylist(playlistId, trackId);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @PostMapping("/rescan")
-    @Operation(summary = "一键刷新音乐库", description = "扫描所有根路径 → 整理文件夹 → 自动刮削歌词/封面")
+    @Operation(summary = "扫描音乐库", description = "扫描所有根路径，按歌手/专辑分文件夹整理")
     public ResponseEntity<ApiResponse<String>> rescan() {
         for (String rootPath : getRootPaths()) {
             try {
@@ -110,7 +211,14 @@ public class MusicController {
                 log.error("Failed to scan music directory {}: {}", rootPath, e.getMessage());
             }
         }
-        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan → scrape"));
+        return ResponseEntity.ok(ApiResponse.success("Rescan completed"));
+    }
+
+    @PostMapping("/reorganize")
+    @Operation(summary = "重新整理文件夹", description = "将已有歌曲按歌手/专辑重新整理到正确文件夹")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> reorganize() {
+        int moved = service.reorganizeAllTracks();
+        return ResponseEntity.ok(ApiResponse.success(Map.of("moved", moved)));
     }
 
     @GetMapping("/{id:\\d+}/lyrics")
@@ -139,7 +247,7 @@ public class MusicController {
     }
 
     @GetMapping("/{id:\\d+}/cover")
-    @Operation(summary = "获取封面图片", description = "返回曲目内嵌的封面图片（JPEG格式）")
+    @Operation(summary = "获取封面图片", description = "返回曲目内嵌的封面图片")
     @ApiResponses(value = {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无封面")
@@ -155,27 +263,6 @@ public class MusicController {
         return ResponseEntity.ok()
                 .contentType(mediaType)
                 .body(new FileSystemResource(coverFile));
-    }
-
-    private File findCoverFile(MusicTrack track) {
-        if (track.getCoverArtPath() != null) {
-            File coverFile = new File(track.getCoverArtPath());
-            if (coverFile.exists()) {
-                return coverFile;
-            }
-        }
-        Path audioPath = Paths.get(track.getFilePath());
-        Path parentDir = audioPath.getParent();
-        if (parentDir == null) {
-            return null;
-        }
-        for (String ext : List.of("cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "cover.gif")) {
-            File fallback = parentDir.resolve(ext).toFile();
-            if (fallback.exists()) {
-                return fallback;
-            }
-        }
-        return null;
     }
 
     @GetMapping("/{id:\\d+}/stream")
@@ -238,23 +325,58 @@ public class MusicController {
         return null;
     }
 
-    @PostMapping("/{id:\\d+}/scrape")
-    @Operation(summary = "刮削单曲元数据", description = "从在线源搜索并补充歌词、封面、专辑信息等元数据")
-    public ResponseEntity<ApiResponse<MusicTrack>> scrapeTrack(
+    @GetMapping("/{id:\\d+}/artist-image")
+    @Operation(summary = "获取歌手图片", description = "返回歌手的图片（歌手文件夹下的artist.jpg）")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无歌手图片")
+    })
+    public ResponseEntity<Resource> getArtistImage(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeTrack(id)));
+        String imagePath = service.getArtistImagePath(id);
+        if (imagePath == null) {
+            return ResponseEntity.notFound().build();
+        }
+        File imageFile = new File(imagePath);
+        if (!imageFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        MediaType mediaType = resolveImageMediaType(imageFile.getName());
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .body(new FileSystemResource(imageFile));
     }
 
-    @GetMapping("/scrape/status")
-    @Operation(summary = "刮削状态", description = "返回待刮削曲目数量")
-    public ResponseEntity<ApiResponse<Long>> scrapeStatus() {
-        return ResponseEntity.ok(ApiResponse.success(scrapeService.countPendingScrape()));
+    @PostMapping("/{id:\\d+}/artist-image/scrape")
+    @Operation(summary = "刮削歌手图片", description = "从在线源获取歌手图片并保存到歌手文件夹")
+    public ResponseEntity<ApiResponse<String>> scrapeArtistImage(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        String imagePath = service.scrapeArtistImage(id);
+        if (imagePath == null) {
+            return ResponseEntity.ok(ApiResponse.error("未找到歌手图片"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(imagePath));
     }
 
-    @GetMapping("/scrape/progress")
-    @Operation(summary = "刮削进度", description = "返回当前音乐刮削任务的进度")
-    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
-        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("music")));
+    private File findCoverFile(MusicTrack track) {
+        if (track.getCoverArtPath() != null) {
+            File coverFile = new File(track.getCoverArtPath());
+            if (coverFile.exists()) {
+                return coverFile;
+            }
+        }
+        Path audioPath = Paths.get(track.getFilePath());
+        Path parentDir = audioPath.getParent();
+        if (parentDir == null) {
+            return null;
+        }
+        for (String ext : List.of("cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "cover.gif")) {
+            File fallback = parentDir.resolve(ext).toFile();
+            if (fallback.exists()) {
+                return fallback;
+            }
+        }
+        return null;
     }
 
     private MediaType resolveImageMediaType(String fileName) {
@@ -279,29 +401,5 @@ public class MusicController {
         track.setCoverApiPath(basePath + "/cover");
         track.setArtistImageApiPath(basePath + "/artist-image");
         track.setStreamApiPath(basePath + "/stream");
-    }
-
-    @GetMapping("/{id:\\d+}/artist-image")
-    @Operation(summary = "获取歌手图片", description = "返回歌手的图片")
-    @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无歌手图片")
-    })
-    public ResponseEntity<Resource> getArtistImage(
-            @Parameter(description = "曲目ID") @PathVariable Long id) {
-        MusicTrack track = service.getTrackById(id);
-        if (track.getArtistImage() == null || track.getArtistImage().isBlank()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        File imageFile = new File(track.getArtistImage());
-        if (!imageFile.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        MediaType mediaType = resolveImageMediaType(imageFile.getName());
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .body(new FileSystemResource(imageFile));
     }
 }

@@ -1,6 +1,9 @@
 package com.fryfrog.hub.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.comic.service.ComicMetadataService;
+import com.fryfrog.hub.ebook.service.EbookService;
+import com.fryfrog.hub.music.service.MusicMetadataService;
 import com.fryfrog.hub.video.service.VideoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,9 +23,16 @@ public class LibraryController {
     private static final Logger log = LoggerFactory.getLogger(LibraryController.class);
 
     private final VideoService videoService;
+    private final MusicMetadataService musicMetadataService;
+    private final ComicMetadataService comicMetadataService;
+    private final EbookService ebookService;
 
-    public LibraryController(VideoService videoService) {
+    public LibraryController(VideoService videoService, MusicMetadataService musicMetadataService,
+                             ComicMetadataService comicMetadataService, EbookService ebookService) {
         this.videoService = videoService;
+        this.musicMetadataService = musicMetadataService;
+        this.comicMetadataService = comicMetadataService;
+        this.ebookService = ebookService;
     }
 
     @PostMapping("/rescan")
@@ -35,6 +45,9 @@ public class LibraryController {
 
         Map<String, String> scanResult = new LinkedHashMap<>();
         try { videoService.scanDirectory(videoService.getRootPath()); scanResult.put("video", "ok"); } catch (Exception e) { scanResult.put("video", "error: " + e.getMessage()); }
+        try { musicMetadataService.scanDirectory(musicMetadataService.getFirstRootPath()); scanResult.put("music", "ok"); } catch (Exception e) { scanResult.put("music", "error: " + e.getMessage()); }
+        try { comicMetadataService.scanDirectory(comicMetadataService.getFirstRootPath()); scanResult.put("comic", "ok"); } catch (Exception e) { scanResult.put("comic", "error: " + e.getMessage()); }
+        try { ebookService.scanDirectory(ebookService.getFirstRootPath()); scanResult.put("ebook", "ok"); } catch (Exception e) { scanResult.put("ebook", "error: " + e.getMessage()); }
         result.put("scan", scanResult);
 
         // 整理视频文件到正确目录

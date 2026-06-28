@@ -3,7 +3,11 @@ package com.fryfrog.hub.music.service;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.music.model.MusicTrack;
+import com.fryfrog.hub.music.model.Playlist;
+import com.fryfrog.hub.music.model.PlaylistTrack;
 import com.fryfrog.hub.music.repository.MusicTrackRepository;
+import com.fryfrog.hub.music.repository.PlaylistRepository;
+import com.fryfrog.hub.music.repository.PlaylistTrackRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +17,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
 import java.nio.file.*;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -24,8 +31,12 @@ import java.util.stream.Stream;
 public class MusicMetadataService {
 
     private final MusicTrackRepository repository;
+    private final PlaylistRepository playlistRepository;
+    private final PlaylistTrackRepository playlistTrackRepository;
     private final MusicScrapeService scrapeService;
     private final SystemSettingService settingService;
+    private final QQMusicService qqMusicService;
+    private final NetEaseLyricsService netEaseLyricsService;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -85,6 +96,232 @@ public class MusicMetadataService {
 
     public List<MusicTrack> getFavorites() {
         return repository.findByFavoriteTrue();
+    }
+
+    @Transactional
+    public MusicTrack recordPlay(Long id) {
+        MusicTrack track = getTrackById(id);
+        track.setPlayCount((track.getPlayCount() != null ? track.getPlayCount() : 0) + 1);
+        track.setLastPlayedAt(LocalDateTime.now());
+        return repository.save(track);
+    }
+
+    public List<MusicTrack> getRecentlyPlayed() {
+        return repository.findByLastPlayedAtIsNotNullOrderByLastPlayedAtDesc();
+    }
+
+    public List<MusicTrack> getMostPlayed() {
+        return repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0);
+    }
+
+    public List<MusicTrack> getRecentlyAdded() {
+        return repository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+    }
+
+    public Map<String, List<MusicTrack>> getRecommendations() {
+        Map<String, List<MusicTrack>> recommendations = new LinkedHashMap<>();
+
+        List<MusicTrack> favorites = repository.findByFavoriteTrue();
+        if (!favorites.isEmpty()) {
+            Set<String> favArtists = favorites.stream()
+                    .map(MusicTrack::getArtist)
+                    .filter(a -> a != null && !a.isBlank())
+                    .collect(Collectors.toSet());
+            List<MusicTrack> similar = favArtists.stream()
+                    .flatMap(a -> repository.findByArtist(a).stream())
+                    .filter(t -> !favorites.contains(t))
+                    .distinct()
+                    .limit(20)
+                    .toList();
+            if (!similar.isEmpty()) {
+                recommendations.put("猜你喜欢", similar);
+            }
+        }
+
+        List<MusicTrack> hot = repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0);
+        if (!hot.isEmpty()) {
+            recommendations.put("热门歌曲", hot.stream().limit(20).toList());
+        }
+
+        List<MusicTrack> unplayed = repository.findUnplayedTracks();
+        if (!unplayed.isEmpty()) {
+            recommendations.put("新歌发现", unplayed.stream().limit(20).toList());
+        }
+
+        List<String> genres = repository.findDistinctGenres();
+        for (String genre : genres) {
+            List<MusicTrack> genreTracks = repository.findByGenre(genre);
+            if (genreTracks.size() >= 3) {
+                recommendations.put(genre, genreTracks.stream().limit(10).toList());
+            }
+        }
+
+        return recommendations;
+    }
+
+    public String scrapeArtistImage(Long trackId) {
+        MusicTrack track = getTrackById(trackId);
+        String artist = track.getArtist();
+        if (artist == null || artist.isBlank()) {
+            return null;
+        }
+
+        String safeArtist = artist.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        Path artistDir = Paths.get(getFirstRootPath(), safeArtist);
+        Path artistImagePath = artistDir.resolve("artist.jpg");
+
+        if (Files.exists(artistImagePath)) {
+            return artistImagePath.toAbsolutePath().toString();
+        }
+
+        String imageUrl = null;
+        try {
+            imageUrl = qqMusicService.searchArtistImage(artist);
+        } catch (Exception e) {
+            log.debug("QQ音乐歌手图片获取失败 / QQ Music artist image failed: {}", e.getMessage());
+        }
+
+        if (imageUrl == null) {
+            try {
+                imageUrl = netEaseLyricsService.searchArtistImage(artist);
+            } catch (Exception e) {
+                log.debug("网易云歌手图片获取失败 / NetEase artist image failed: {}", e.getMessage());
+            }
+        }
+
+        if (imageUrl == null) {
+            log.info("未找到歌手图片 / No artist image found for: {}", artist);
+            return null;
+        }
+
+        try {
+            if (!Files.exists(artistDir)) {
+                Files.createDirectories(artistDir);
+            }
+            try (InputStream in = new URL(imageUrl).openStream()) {
+                Files.copy(in, artistImagePath);
+                log.info("歌手图片下载成功 / Artist image saved for: {} -> {}", artist, artistImagePath);
+                return artistImagePath.toAbsolutePath().toString();
+            }
+        } catch (Exception e) {
+            log.warn("歌手图片下载失败 / Failed to download artist image for {}: {}", artist, e.getMessage());
+            return null;
+        }
+    }
+
+    public String getArtistImagePath(Long trackId) {
+        MusicTrack track = getTrackById(trackId);
+        String artist = track.getArtist();
+        if (artist == null || artist.isBlank()) {
+            return null;
+        }
+        String safeArtist = artist.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        Path artistImagePath = Paths.get(getFirstRootPath(), safeArtist, "artist.jpg");
+        return Files.exists(artistImagePath) ? artistImagePath.toAbsolutePath().toString() : null;
+    }
+
+    @Transactional
+    public int reorganizeAllTracks() {
+        int moved = 0;
+        List<MusicTrack> tracks = repository.findAll();
+        String firstRootPath = getFirstRootPath();
+
+        for (MusicTrack track : tracks) {
+            try {
+                Path audioPath = Paths.get(track.getFilePath());
+                if (!Files.exists(audioPath)) {
+                    continue;
+                }
+
+                String artist = (track.getArtist() != null && !track.getArtist().isBlank())
+                        ? track.getArtist() : "未知歌手";
+                String album = (track.getAlbum() != null && !track.getAlbum().isBlank())
+                        ? track.getAlbum() : "未知专辑";
+                String safeArtist = sanitizeFileName(artist);
+                String safeAlbum = sanitizeFileName(album);
+
+                Path targetDir = Paths.get(firstRootPath, safeArtist, safeAlbum);
+                Path targetFile = targetDir.resolve(track.getFileName());
+
+                if (audioPath.equals(targetFile)) {
+                    continue;
+                }
+
+                if (!Files.exists(targetDir)) {
+                    Files.createDirectories(targetDir);
+                }
+
+                if (Files.exists(targetFile)) {
+                    log.warn("目标文件已存在，跳过 / Target file exists, skipping: {}", targetFile);
+                    continue;
+                }
+
+                Files.move(audioPath, targetFile);
+                track.setFilePath(targetFile.toAbsolutePath().toString());
+                repository.save(track);
+                moved++;
+                log.info("整理完成 / Moved: {} -> {}", audioPath, targetFile);
+            } catch (Exception e) {
+                log.warn("整理失败 / Failed to reorganize: {} - {}", track.getTitle(), e.getMessage());
+            }
+        }
+
+        log.info("整理完成，共移动 {} 首歌曲 / Reorganize complete, moved {} tracks", moved, moved);
+        return moved;
+    }
+
+    public List<Playlist> getAllPlaylists() {
+        return playlistRepository.findAll();
+    }
+
+    public Playlist getPlaylistById(Long id) {
+        return playlistRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Playlist", "id", id));
+    }
+
+    public Playlist createPlaylist(String name, String description) {
+        Playlist playlist = new Playlist();
+        playlist.setName(name);
+        playlist.setDescription(description);
+        return playlistRepository.save(playlist);
+    }
+
+    public Playlist updatePlaylist(Long id, String name, String description) {
+        Playlist playlist = getPlaylistById(id);
+        if (name != null) playlist.setName(name);
+        if (description != null) playlist.setDescription(description);
+        return playlistRepository.save(playlist);
+    }
+
+    public void deletePlaylist(Long id) {
+        playlistRepository.deleteById(id);
+    }
+
+    public List<PlaylistTrack> getPlaylistTracks(Long playlistId) {
+        return playlistTrackRepository.findByPlaylistIdOrderByPositionAsc(playlistId);
+    }
+
+    @Transactional
+    public PlaylistTrack addTrackToPlaylist(Long playlistId, Long trackId) {
+        Playlist playlist = getPlaylistById(playlistId);
+        MusicTrack track = getTrackById(trackId);
+
+        Optional<PlaylistTrack> existing = playlistTrackRepository.findByPlaylistIdAndTrackId(playlistId, trackId);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        int position = playlistTrackRepository.countByPlaylistId(playlistId);
+        PlaylistTrack pt = new PlaylistTrack();
+        pt.setPlaylist(playlist);
+        pt.setTrack(track);
+        pt.setPosition(position);
+        return playlistTrackRepository.save(pt);
+    }
+
+    @Transactional
+    public void removeTrackFromPlaylist(Long playlistId, Long trackId) {
+        playlistTrackRepository.deleteByPlaylistIdAndTrackId(playlistId, trackId);
     }
 
     public MusicTrack extractAndSaveMetadata(String filePath) {
@@ -171,14 +408,24 @@ public class MusicMetadataService {
 
             Path targetDir = organizeTrackFolder(track);
 
-            if (track.getLyrics() != null && !track.getLyrics().isBlank()) {
-                if (track.getLyricsSource() == null) {
-                    track.setLyricsSource("embedded");
-                }
-                Path lrcPath = targetDir.resolve(
-                        track.getFileName().replaceAll("\\.[^.]+$", ".lrc"));
-                if (!Files.exists(lrcPath)) {
-                    Files.writeString(lrcPath, track.getLyrics());
+            if (track.getArtist() != null && !track.getArtist().isBlank()) {
+                String safeArtist = track.getArtist().replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+                Path artistImagePath = Paths.get(getFirstRootPath(), safeArtist, "artist.jpg");
+                if (!Files.exists(artistImagePath)) {
+                    try {
+                        String imageUrl = qqMusicService.searchArtistImage(track.getArtist());
+                        if (imageUrl == null) {
+                            imageUrl = netEaseLyricsService.searchArtistImage(track.getArtist());
+                        }
+                        if (imageUrl != null) {
+                            try (InputStream in = new URL(imageUrl).openStream()) {
+                                Files.copy(in, artistImagePath);
+                                log.debug("歌手图片下载成功 / Artist image saved for: {}", track.getArtist());
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("歌手图片获取失败 / Failed to get artist image for {}: {}", track.getArtist(), e.getMessage());
+                    }
                 }
             }
 
@@ -193,8 +440,11 @@ public class MusicMetadataService {
         try {
             String firstRootPath = getFirstRootPath();
             Path audioPath = Paths.get(track.getFilePath());
-            String folderName = track.getArtist() + " - " + track.getTitle();
-            Path targetDir = Paths.get(firstRootPath, folderName);
+            String artist = (track.getArtist() != null && !track.getArtist().isBlank())
+                    ? track.getArtist() : "未知歌手";
+            String album = (track.getAlbum() != null && !track.getAlbum().isBlank())
+                    ? track.getAlbum() : "未知专辑";
+            Path targetDir = Paths.get(firstRootPath, sanitizeFileName(artist), sanitizeFileName(album));
 
             if (!Files.exists(targetDir)) {
                 Files.createDirectories(targetDir);
@@ -211,6 +461,10 @@ public class MusicMetadataService {
             log.warn("整理文件夹失败 / Failed to organize folder for {}: {}", track.getFileName(), e.getMessage());
             return Paths.get(track.getFilePath()).getParent();
         }
+    }
+
+    private String sanitizeFileName(String name) {
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
 
     @Transactional
@@ -286,23 +540,18 @@ public class MusicMetadataService {
                             }
                         });
             }
-
-            if (isAutoScrape() && scrapeService.isScrapeEnabled()) {
-                log.debug("Auto-scrape enabled, starting scrape after scan...");
-                scrapeService.scrapeAll();
-            }
         } catch (Exception e) {
             log.error("Failed to scan directory: {}", directoryPath);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
         }
     }
 
-    private String parseTitleFromFileName(String fileName) {
+    public String parseTitleFromFileName(String fileName) {
         String[] parts = fileName.split("\\s*-\\s*", 2);
         return parts.length > 1 ? parts[1].trim() : fileName.trim();
     }
 
-    private String parseArtistFromFileName(String fileName) {
+    public String parseArtistFromFileName(String fileName) {
         String[] parts = fileName.split("\\s*-\\s*", 2);
         return parts.length > 1 ? parts[0].trim() : "";
     }
