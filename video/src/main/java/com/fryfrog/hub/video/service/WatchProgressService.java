@@ -20,7 +20,7 @@ public class WatchProgressService {
     private final WatchProgressRepository repository;
     private final VideoService videoService;
 
-    private static final double COMPLETED_THRESHOLD = 0.9;
+    private static final double COMPLETED_THRESHOLD = 0.95;
 
     public WatchProgress getProgress(Long videoId) {
         return repository.findByVideoId(videoId).orElse(null);
@@ -55,5 +55,33 @@ public class WatchProgressService {
     @Transactional
     public void deleteProgress(Long videoId) {
         repository.findByVideoId(videoId).ifPresent(repository::delete);
+    }
+
+    @Transactional
+    public WatchProgress markAsWatched(Long videoId) {
+        Video video = videoService.getVideoById(videoId);
+
+        WatchProgress progress = repository.findByVideoId(videoId).orElse(new WatchProgress());
+        progress.setVideo(video);
+        progress.setCompleted(true);
+
+        if (progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
+            progress.setPositionSeconds(progress.getDurationSeconds());
+        }
+
+        WatchProgress saved = repository.save(progress);
+        log.info("Marked video {} as watched", videoId);
+        return saved;
+    }
+
+    @Transactional
+    public WatchProgress markAsUnwatched(Long videoId) {
+        WatchProgress progress = repository.findByVideoId(videoId).orElse(null);
+        if (progress != null) {
+            progress.setCompleted(false);
+            repository.save(progress);
+            log.info("Marked video {} as unwatched", videoId);
+        }
+        return progress;
     }
 }

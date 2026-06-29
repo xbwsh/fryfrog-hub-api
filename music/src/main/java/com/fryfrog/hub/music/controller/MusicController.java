@@ -202,7 +202,7 @@ public class MusicController {
     }
 
     @PostMapping("/rescan")
-    @Operation(summary = "扫描音乐库", description = "扫描所有根路径，按歌手/专辑分文件夹整理")
+    @Operation(summary = "扫描并整理音乐库", description = "扫描所有根路径，清理无效记录，按歌手/专辑分文件夹整理")
     public ResponseEntity<ApiResponse<String>> rescan() {
         for (String rootPath : getRootPaths()) {
             try {
@@ -212,13 +212,6 @@ public class MusicController {
             }
         }
         return ResponseEntity.ok(ApiResponse.success("Rescan completed"));
-    }
-
-    @PostMapping("/reorganize")
-    @Operation(summary = "重新整理文件夹", description = "将已有歌曲按歌手/专辑重新整理到正确文件夹")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> reorganize() {
-        int moved = service.reorganizeAllTracks();
-        return ResponseEntity.ok(ApiResponse.success(Map.of("moved", moved)));
     }
 
     @GetMapping("/{id:\\d+}/lyrics")

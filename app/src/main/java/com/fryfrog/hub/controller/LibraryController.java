@@ -64,12 +64,4 @@ public class LibraryController {
         log.info("Full library rescan completed in {}ms", elapsed);
         return ResponseEntity.ok(ApiResponse.success("资源库整理完成", result));
     }
-
-    @PostMapping("/cleanup")
-    @Operation(summary = "仅清理无效记录", description = "删除所有模块中文件已不存在的数据库记录，不重新扫描")
-    public ResponseEntity<ApiResponse<Map<String, Integer>>> cleanupAll() {
-        Map<String, Integer> result = new LinkedHashMap<>();
-        result.put("video", videoService.cleanupInvalidRecords());
-        return ResponseEntity.ok(ApiResponse.success("清理完成", result));
-    }
 }

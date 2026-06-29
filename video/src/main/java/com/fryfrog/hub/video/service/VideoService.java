@@ -1,6 +1,8 @@
 package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
@@ -43,7 +45,9 @@ public class VideoService {
     private final VideoActorRepository actorRepository;
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
+    private final MediaInfoService mediaInfoService;
     private final jakarta.persistence.EntityManager entityManager;
+    private final MediaLibraryService mediaLibraryService;
 
     private final java.util.concurrent.locks.ReentrantLock dbWriteLock = new java.util.concurrent.locks.ReentrantLock();
 
@@ -83,7 +87,9 @@ public class VideoService {
                        VideoActorRepository actorRepository,
                        @org.springframework.beans.factory.annotation.Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate,
                        ScrapeProgressService scrapeProgressService,
-                       jakarta.persistence.EntityManager entityManager) {
+                       MediaInfoService mediaInfoService,
+                       jakarta.persistence.EntityManager entityManager,
+                       MediaLibraryService mediaLibraryService) {
         this.repository = repository;
         this.tmdbService = tmdbService;
         this.nfoService = nfoService;
@@ -94,17 +100,27 @@ public class VideoService {
         this.actorRepository = actorRepository;
         this.scraperRestTemplate = scraperRestTemplate;
         this.scrapeProgressService = scrapeProgressService;
+        this.mediaInfoService = mediaInfoService;
         this.entityManager = entityManager;
+        this.mediaLibraryService = mediaLibraryService;
     }
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
+        List<String> paths = mediaLibraryService.getEnabledPaths();
+        if (!paths.isEmpty()) {
+            return paths;
+        }
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
+    }
+
+    public MediaLibrary findLibraryForPath(String filePath) {
+        return mediaLibraryService.findByPath(filePath);
     }
 
     public String getFirstRootPath() {
@@ -351,6 +367,10 @@ public class VideoService {
     }
 
     public Video extractAndSaveMetadata(String filePath) {
+        return extractAndSaveMetadata(filePath, null);
+    }
+
+    public Video extractAndSaveMetadata(String filePath, Long libraryId) {
         try {
             File file = new File(filePath);
             if (!file.exists()) {
@@ -361,6 +381,8 @@ public class VideoService {
             String fileName = file.getName();
 
             Video existing = repository.findByFilePath(absolutePath).orElse(null);
+            log.debug("extractAndSaveMetadata: filePath={}, libraryId={}, foundByPath={}",
+                    absolutePath, libraryId, existing != null);
 
             if (existing == null) {
                 existing = repository.findByFileName(fileName).orElse(null);
@@ -370,7 +392,11 @@ public class VideoService {
                     existing.setFileName(fileName);
                     existing.setFileSize(file.length());
                     existing.setFormat(getFileExtension(fileName).toUpperCase());
+                    if (libraryId != null) {
+                        existing.setLibraryId(libraryId);
+                    }
                     Video updated = repository.save(existing);
+                    log.info("Updated video id={}, libraryId={}", updated.getId(), updated.getLibraryId());
                     if (isAutoScrape() && updated.getTmdbId() == null) {
                         getScraperExecutor().submit(() -> tryScrapeVideo(updated));
                     }
@@ -401,7 +427,16 @@ public class VideoService {
             video.setSeasonNumber(se[0]);
             video.setEpisodeNumber(se[1]);
 
+            if (libraryId != null && video.getLibraryId() == null) {
+                video.setLibraryId(libraryId);
+            }
+
             Video saved = repository.save(video);
+            log.info("Saved video id={}, title={}, libraryId={}, fileName={}",
+                    saved.getId(), saved.getTitle(), saved.getLibraryId(), saved.getFileName());
+
+            // 用 ffprobe 分析技术元数据（异步，不阻塞）
+            getScraperExecutor().submit(() -> mediaInfoService.updateVideoMediaInfo(saved));
 
             if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
                 getScraperExecutor().submit(() -> tryScrapeVideo(saved));
@@ -421,7 +456,23 @@ public class VideoService {
                 return;
             }
 
-            List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
+            String mediaTypeFilter = null;
+            if (video.getLibraryId() != null) {
+                MediaLibrary library = mediaLibraryService.getLibraryById(video.getLibraryId());
+                mediaTypeFilter = library.getMediaTypeFilter();
+                log.info("Scraping '{}' with library filter: libraryId={}, libraryType={}, filter={}",
+                        video.getTitle(), video.getLibraryId(), library.getType(), mediaTypeFilter);
+            } else {
+                log.info("Scraping '{}' with no library filter (libraryId=null)", video.getTitle());
+            }
+
+            if (mediaTypeFilter == null && isTvEpisode(video)) {
+                mediaTypeFilter = "tv";
+                log.info("File '{}' parsed as TV episode (S{}E{}), forcing mediaType=tv",
+                        video.getFileName(), video.getSeasonNumber(), video.getEpisodeNumber());
+            }
+
+            List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
             if (results.isEmpty()) {
                 log.info("No TMDB results for: {}", video.getTitle());
                 return;
@@ -431,20 +482,40 @@ public class VideoService {
             double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
 
             if (score < getMinScore()) {
-                log.debug("Skipping auto-scrape for {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
+                log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
                 return;
             }
 
             scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
 
-            log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
-                    video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
+            log.info("Auto-scraped: {} -> TMDB {} ({}) score={} filter={}",
+                    video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score, mediaTypeFilter);
         } catch (Exception e) {
             log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage(), e);
         }
     }
 
+    private boolean isTvEpisode(Video video) {
+        if (video.getSeasonNumber() != null && video.getEpisodeNumber() != null
+                && (video.getSeasonNumber() > 1 || video.getEpisodeNumber() > 1)) {
+            return true;
+        }
+        if (video.getFileName() != null) {
+            String name = video.getFileName();
+            if (SE_EP_PATTERN.matcher(name).find()) return true;
+            if (SEASON_EPISODE_PATTERN.matcher(name).find()) return true;
+            if (EP_PATTERN.matcher(name).find()) return true;
+            if (HASH_PATTERN.matcher(name).find()) return true;
+        }
+        return false;
+    }
+
     public void scanDirectory(String directoryPath) {
+        scanDirectory(directoryPath, null);
+    }
+
+    public void scanDirectory(String directoryPath, Long libraryId) {
+        log.info("Scanning directory: {} (libraryId={})", directoryPath, libraryId);
         try {
             Path dir = Paths.get(directoryPath);
             if (!Files.isDirectory(dir)) {
@@ -454,6 +525,7 @@ public class VideoService {
             cleanupInvalidRecords();
             seriesService.cleanupDuplicateSeries();
 
+            long[] count = {0};
             try (Stream<Path> paths = Files.walk(dir)) {
                 paths.filter(Files::isRegularFile)
                         .filter(path -> {
@@ -463,13 +535,15 @@ public class VideoService {
                         })
                         .forEach(path -> {
                             try {
-                                extractAndSaveMetadata(path.toString());
-                                log.debug("Indexed video: {}", path.getFileName());
+                                count[0]++;
+                                extractAndSaveMetadata(path.toString(), libraryId);
+                                log.info("Indexed video: {} (libraryId={})", path.getFileName(), libraryId);
                             } catch (Exception e) {
                                 log.warn("Failed to index video: {}", path.getFileName(), e);
                             }
                         });
             }
+            log.info("Scan complete: {} video files found in {}", count[0], directoryPath);
 
             autoGroupSeries();
         } catch (Exception e) {
@@ -629,29 +703,45 @@ public class VideoService {
     }
 
     public List<TmdbSearchResult.TmdbSearchItem> searchFromTmdb(String query) {
+        return searchFromTmdb(query, null);
+    }
+
+    public List<TmdbSearchResult.TmdbSearchItem> searchFromTmdb(String query, String mediaTypeFilter) {
         if (!tmdbService.isConfigured()) {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
         String cleanedQuery = cleanTitleForSearch(query);
 
-        List<TmdbSearchResult.TmdbSearchItem> movieResults = tmdbService.searchMovies(cleanedQuery);
-        List<TmdbSearchResult.TmdbSearchItem> tvResults = tmdbService.searchTv(cleanedQuery);
+        List<TmdbSearchResult.TmdbSearchItem> movieResults = List.of();
+        List<TmdbSearchResult.TmdbSearchItem> tvResults = List.of();
+
+        if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+            movieResults = tmdbService.searchMovies(cleanedQuery);
+        }
+        if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+            tvResults = tmdbService.searchTv(cleanedQuery);
+        }
 
         if (movieResults.isEmpty() && tvResults.isEmpty() && !cleanedQuery.equals(query)) {
             log.info("No results for cleaned query '{}', trying original: '{}'", cleanedQuery, query);
-            movieResults = tmdbService.searchMovies(query);
-            tvResults = tmdbService.searchTv(query);
+            if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+                movieResults = tmdbService.searchMovies(query);
+            }
+            if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+                tvResults = tmdbService.searchTv(query);
+            }
         }
 
-        movieResults.addAll(tvResults);
-        movieResults.sort((a, b) -> {
+        List<TmdbSearchResult.TmdbSearchItem> allResults = new ArrayList<>(movieResults);
+        allResults.addAll(tvResults);
+        allResults.sort((a, b) -> {
             double scoreA = a.getVoteAverage() != null ? a.getVoteAverage() : 0;
             double scoreB = b.getVoteAverage() != null ? b.getVoteAverage() : 0;
             return Double.compare(scoreB, scoreA);
         });
 
-        return movieResults;
+        return allResults;
     }
 
     public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
@@ -730,6 +820,7 @@ public class VideoService {
 
         generateNfoAndCovers(saved);
         moveVideoToMetadataDir(saved);
+        renameVideoFile(saved);
         saveActors(saved, mediaType, tmdbId, detail);
 
         if ("tv".equalsIgnoreCase(mediaType)) {
@@ -825,10 +916,122 @@ public class VideoService {
             Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
             log.debug("Successfully moved video: {} -> {}", videoPath, targetPath);
 
+            // 移动外挂字幕
+            String baseName = nfoService.getBaseName(video.getFileName());
+            moveAssociatedSubtitles(videoPath.getParent(), targetPath.getParent(), baseName);
+
             video.setFilePath(targetPath.toString());
             repository.save(video);
         } catch (IOException e) {
             log.error("Failed to move video {} to metadata dir: {}", video.getFileName(), e.getMessage(), e);
+        }
+    }
+
+    private void renameVideoFile(Video video) {
+        try {
+            Path videoPath = Paths.get(video.getFilePath());
+            if (!Files.exists(videoPath)) {
+                return;
+            }
+
+            String newFileName = generateCleanFileName(video);
+            if (newFileName == null || newFileName.isBlank()) {
+                return;
+            }
+
+            String oldExtension = getFileExtension(video.getFileName());
+            String newExtension = getFileExtension(newFileName);
+            if (newExtension.isBlank()) {
+                newFileName = newFileName + "." + oldExtension;
+            }
+
+            if (video.getFileName().equals(newFileName)) {
+                return;
+            }
+
+            Path newPath = videoPath.getParent().resolve(newFileName);
+            if (Files.exists(newPath)) {
+                log.debug("Target file already exists, skipping rename: {}", newFileName);
+                return;
+            }
+
+            String oldBaseName = nfoService.getBaseName(video.getFileName());
+            Files.move(videoPath, newPath);
+
+            Path parentDir = videoPath.getParent();
+            renameAssociatedFile(parentDir, oldBaseName + ".nfo", newFileName);
+            renameAssociatedFile(parentDir, oldBaseName + "-poster.jpg", newFileName);
+            renameAssociatedFile(parentDir, oldBaseName + "-fanart.jpg", newFileName);
+            renamePosterFanartByPattern(parentDir, oldBaseName, newFileName);
+            renameAssociatedSubtitles(parentDir, oldBaseName, newFileName);
+
+            video.setFileName(newFileName);
+            video.setFilePath(newPath.toString());
+            repository.save(video);
+            log.info("Renamed video: {} -> {}", video.getFileName(), newFileName);
+        } catch (Exception e) {
+            log.warn("Failed to rename video {}: {}", video.getFileName(), e.getMessage());
+        }
+    }
+
+    private String generateCleanFileName(Video video) {
+        String title = video.getTitle();
+        if (title == null || title.isBlank()) {
+            return null;
+        }
+
+        String extension = getFileExtension(video.getFileName());
+
+        if ("tv".equalsIgnoreCase(video.getMediaType())) {
+            int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
+            int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
+            return String.format("%s - S%02dE%02d.%s", title, season, episode, extension);
+        } else {
+            return title + "." + extension;
+        }
+    }
+
+    private void renameAssociatedFile(Path dir, String oldBaseName, String newFileName) {
+        try {
+            String ext = getFileExtension(oldBaseName);
+            String dottedExt = ext.isEmpty() ? "" : "." + ext;
+            String newBaseName = nfoService.getBaseName(newFileName);
+            Path oldFile = dir.resolve(oldBaseName);
+            Path newFile = dir.resolve(newBaseName + dottedExt);
+            if (Files.exists(oldFile) && !Files.exists(newFile)) {
+                Files.move(oldFile, newFile);
+                log.debug("Renamed associated file: {} -> {}", oldBaseName, newBaseName + dottedExt);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to rename associated file: {}", e.getMessage());
+        }
+    }
+
+    private void renameAssociatedSubtitles(Path dir, String oldBaseName, String newFileName) {
+        try {
+            String newBaseName = nfoService.getBaseName(newFileName);
+            try (var stream = Files.list(dir)) {
+                stream.filter(Files::isRegularFile)
+                        .filter(file -> {
+                            String name = file.getFileName().toString();
+                            return name.startsWith(oldBaseName) && SUBTITLE_EXTENSIONS.stream()
+                                    .anyMatch(ext -> name.toLowerCase().endsWith(ext));
+                        })
+                        .forEach(file -> {
+                            try {
+                                String name = file.getFileName().toString();
+                                String subExt = name.substring(name.lastIndexOf('.'));
+                                Path newFile = dir.resolve(newBaseName + subExt);
+                                if (!Files.exists(newFile)) {
+                                    Files.move(file, newFile);
+                                }
+                            } catch (Exception e) {
+                                log.warn("Failed to rename subtitle: {}", e.getMessage());
+                            }
+                        });
+            }
+        } catch (Exception e) {
+            log.warn("Failed to rename subtitles: {}", e.getMessage());
         }
     }
 
@@ -891,6 +1094,9 @@ public class VideoService {
                 moveAssociatedFile(oldDir, metadataDir, baseName + "-poster.jpg");
                 moveAssociatedFile(oldDir, metadataDir, baseName + "-fanart.jpg");
 
+                // 移动外挂字幕文件
+                moveAssociatedSubtitles(oldDir, metadataDir, baseName);
+
                 // 移动actors目录（电视剧在季目录下，电影在视频目录下）
                 Path oldActorsDir = findOldActorsDir(oldDir);
                 Path newActorsDir = metadataDir.resolve("actors");
@@ -932,6 +1138,67 @@ public class VideoService {
         }
     }
 
+    private void renamePosterFanartByPattern(Path dir, String oldBaseName, String newFileName) {
+        try {
+            String newBaseName = nfoService.getBaseName(newFileName);
+            try (var stream = Files.list(dir)) {
+                stream.filter(Files::isRegularFile)
+                        .filter(file -> {
+                            String name = file.getFileName().toString().toLowerCase();
+                            return name.contains("-poster.jpg") || name.contains("-fanart.jpg");
+                        })
+                        .filter(file -> file.getFileName().toString().contains(oldBaseName))
+                        .forEach(file -> {
+                            try {
+                                String name = file.getFileName().toString();
+                                String suffix = name.contains("-poster") ? "-poster.jpg" : "-fanart.jpg";
+                                Path newFile = dir.resolve(newBaseName + suffix);
+                                if (!Files.exists(newFile)) {
+                                    Files.move(file, newFile);
+                                    log.debug("Renamed poster/fanart: {}", file.getFileName());
+                                }
+                            } catch (Exception e) {
+                                log.warn("Failed to rename poster/fanart: {}", e.getMessage());
+                            }
+                        });
+            }
+        } catch (Exception e) {
+            log.warn("Failed to list directory for poster/fanart: {}", e.getMessage());
+        }
+    }
+
+    private static final java.util.Set<String> SUBTITLE_EXTENSIONS = java.util.Set.of(
+            ".srt", ".ass", ".ssa", ".vtt", ".sub", ".sup", ".idx"
+    );
+
+    private void moveAssociatedSubtitles(Path oldDir, Path newDir, String baseName) {
+        try (var stream = Files.list(oldDir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(file -> {
+                        String name = file.getFileName().toString().toLowerCase();
+                        String ext = name.substring(name.lastIndexOf('.'));
+                        return SUBTITLE_EXTENSIONS.contains(ext);
+                    })
+                    .filter(file -> {
+                        String name = file.getFileName().toString();
+                        return name.startsWith(baseName);
+                    })
+                    .forEach(file -> {
+                        try {
+                            Path target = newDir.resolve(file.getFileName());
+                            if (!Files.exists(target)) {
+                                Files.move(file, target);
+                                log.debug("Moved subtitle: {}", file.getFileName());
+                            }
+                        } catch (Exception e) {
+                            log.warn("Failed to move subtitle {}: {}", file.getFileName(), e.getMessage());
+                        }
+                    });
+        } catch (Exception e) {
+            log.warn("Failed to list directory for subtitles: {}", e.getMessage());
+        }
+    }
+
     private Path findOldActorsDir(Path videoDir) {
         // 先检查当前目录
         Path direct = videoDir.resolve("actors");
@@ -949,9 +1216,17 @@ public class VideoService {
     }
 
     public void rescrapeAll() {
+        rescrapeByLibrary(null);
+    }
+
+    public void rescrapeByLibrary(Long libraryId) {
+        log.info("rescrapeByLibrary called with libraryId={}", libraryId);
         List<Video> allVideos = repository.findAll();
         int bound = 0;
         for (Video video : allVideos) {
+            if (libraryId != null && !libraryId.equals(video.getLibraryId())) {
+                continue;
+            }
             if (video.getTmdbId() != null) {
                 try {
                     unbindTmdb(video.getId());
@@ -960,11 +1235,42 @@ public class VideoService {
                     log.warn("Failed to unbind video {}: {}", video.getTitle(), e.getMessage());
                 }
             }
+            cleanupNfoFiles(video);
         }
         if (bound > 0) {
-            log.info("Unbound {} videos, starting full re-scrape", bound);
+            log.info("Unbound {} videos from library {}, starting re-scrape", bound, libraryId);
         }
+
+        MediaLibrary library = mediaLibraryService.getLibraryById(libraryId);
+        log.info("About to scan directory: {} for libraryId={}", library.getPath(), libraryId);
+        scanDirectory(library.getPath(), libraryId);
+        log.info("Finished scanning directory for libraryId={}", libraryId);
+
         autoScrapeAll();
+    }
+
+    private void cleanupNfoFiles(Video video) {
+        try {
+            Path videoPath = Paths.get(video.getFilePath());
+            Path videoDir = videoPath.getParent();
+            String baseName = nfoService.getBaseName(video.getFileName());
+
+            Files.deleteIfExists(videoDir.resolve(baseName + ".nfo"));
+            Files.deleteIfExists(videoDir.resolve(baseName + "-poster.jpg"));
+            Files.deleteIfExists(videoDir.resolve(baseName + "-fanart.jpg"));
+
+            Path metadataDir = nfoService.getMetadataDir(video);
+            if (Files.isDirectory(metadataDir)) {
+                Files.walk(metadataDir)
+                    .filter(p -> p.getFileName().toString().startsWith(baseName))
+                    .forEach(p -> {
+                        try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                    });
+            }
+            log.debug("Cleaned up NFO files for: {}", video.getFileName());
+        } catch (Exception e) {
+            log.warn("Failed to cleanup NFO files for {}: {}", video.getFileName(), e.getMessage());
+        }
     }
 
     public List<Video> autoScrapeAll() {
@@ -989,9 +1295,25 @@ public class VideoService {
                             return;
                         }
 
+                        String mediaTypeFilter = null;
+                        if (video.getLibraryId() != null) {
+                            MediaLibrary library = mediaLibraryService.getLibraryById(video.getLibraryId());
+                            mediaTypeFilter = library.getMediaTypeFilter();
+                            log.info("Auto-scraping '{}' libraryId={} type={} filter={}",
+                                    video.getTitle(), video.getLibraryId(), library.getType(), mediaTypeFilter);
+                        } else {
+                            log.info("Auto-scraping '{}' libraryId=null (no filter)", video.getTitle());
+                        }
+
+                        if (mediaTypeFilter == null && isTvEpisode(video)) {
+                            mediaTypeFilter = "tv";
+                            log.info("File '{}' parsed as TV episode (S{}E{}), forcing mediaType=tv",
+                                    video.getFileName(), video.getSeasonNumber(), video.getEpisodeNumber());
+                        }
+
                         scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
 
-                        List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query);
+                        List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                         if (results.isEmpty()) {
                             log.info("No TMDB results for: {}", video.getTitle());
                             scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
@@ -1012,8 +1334,8 @@ public class VideoService {
                         scraped.incrementAndGet();
                         scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
 
-                        log.debug("Auto-scraped: {} -> TMDB {} ({}) score={}",
-                                video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score);
+                        log.debug("Auto-scraped: {} -> TMDB {} ({}) score={} (filter={})",
+                                video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score, mediaTypeFilter);
                     } catch (Exception e) {
                         log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());

@@ -93,17 +93,26 @@ public class SeriesService {
         return seriesRepository.findById(id);
     }
 
+    @Transactional
     public void removeVideoFromSeries(Video video) {
         if (video.getSeries() != null) {
-            VideoSeries series = video.getSeries();
+            Long seriesId = video.getSeries().getId();
+            VideoSeries series = seriesRepository.findById(seriesId).orElse(null);
+            if (series == null) {
+                video.setSeries(null);
+                video.setIsSeries(false);
+                videoRepository.save(video);
+                return;
+            }
+            String seriesTitle = series.getTitle();
             video.setSeries(null);
             video.setIsSeries(false);
 
             videoRepository.save(video);
 
-            if (videoRepository.countBySeriesId(series.getId()) == 0) {
-                log.info("Removing empty series: {} (id={})", series.getTitle(), series.getId());
-                seriesRepository.delete(series);
+            if (videoRepository.countBySeriesId(seriesId) == 0) {
+                log.info("Removing empty series: {} (id={})", seriesTitle, seriesId);
+                seriesRepository.deleteById(seriesId);
             }
         }
     }

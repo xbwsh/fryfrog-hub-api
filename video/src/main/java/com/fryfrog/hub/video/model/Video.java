@@ -12,7 +12,8 @@ import lombok.*;
     @Index(name = "idx_video_tmdb_id", columnList = "tmdbId"),
     @Index(name = "idx_video_file_name", columnList = "fileName"),
     @Index(name = "idx_video_favorite", columnList = "favorite"),
-    @Index(name = "idx_video_series_id", columnList = "series_id")
+    @Index(name = "idx_video_series_id", columnList = "series_id"),
+    @Index(name = "idx_video_library_id", columnList = "library_id")
 })
 @Getter
 @Setter
@@ -129,4 +130,8 @@ public class Video extends BaseEntity {
 
     @Schema(description = "播出状态", example = "Returning Series")
     private String status;
+
+    @Schema(description = "所属资源库ID", example = "1")
+    @Column(name = "library_id")
+    private Long libraryId;
 }

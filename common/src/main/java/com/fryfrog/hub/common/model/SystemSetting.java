@@ -12,10 +12,10 @@ import lombok.Setter;
 @Table(name = "system_setting")
 public class SystemSetting extends BaseEntity {
 
-    @Column(nullable = false, unique = true)
+    @Column(name = "\"key\"", nullable = false, unique = true)
     private String key;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(name = "\"value\"", columnDefinition = "TEXT")
     private String value;
 
     @Column(columnDefinition = "TEXT")

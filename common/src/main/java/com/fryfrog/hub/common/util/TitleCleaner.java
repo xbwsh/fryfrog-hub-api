@@ -66,6 +66,7 @@ public final class TitleCleaner {
         cleaned = cleaned.replaceAll("\\s*[-–—]\\s*$", "");
         cleaned = cleaned.replaceAll("[,;]+\\s*$", "");
 
+        cleaned = cleaned.replaceAll("\\s*[-–—]+\\s*", " ");
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
 
         return cleaned.isBlank() ? title : cleaned;
@@ -104,6 +105,7 @@ public final class TitleCleaner {
         cleaned = cleaned.replaceAll("\\s*[-–—]\\s*$", "");
         cleaned = cleaned.replaceAll("[,;]+\\s*$", "");
 
+        cleaned = cleaned.replaceAll("\\s*[-–—]+\\s*", " ");
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
 
         return cleaned.isBlank() ? title : cleaned;

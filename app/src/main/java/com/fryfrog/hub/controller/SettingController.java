@@ -60,7 +60,7 @@ public class SettingController {
         String dbKey = key.startsWith("hub.") ? key : "hub." + key;
         SystemSetting setting = settingService.setValue(dbKey, request.getValue(), null);
 
-        if ("watcher.periodic-scan-interval".equals(dbKey)) {
+        if (dbKey.endsWith("watcher.periodic-scan-interval")) {
             try {
                 int interval = Integer.parseInt(request.getValue());
                 scanScheduler.updateInterval(interval);

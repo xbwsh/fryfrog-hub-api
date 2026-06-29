@@ -261,6 +261,10 @@ public class MusicMetadataService {
                 repository.save(track);
                 moved++;
                 log.info("整理完成 / Moved: {} -> {}", audioPath, targetFile);
+
+                Path sourceDir = audioPath.getParent();
+                moveAuxiliaryFiles(sourceDir, targetDir, track.getFileName());
+                cleanEmptyDirectory(sourceDir);
             } catch (Exception e) {
                 log.warn("整理失败 / Failed to reorganize: {} - {}", track.getTitle(), e.getMessage());
             }
@@ -268,6 +272,58 @@ public class MusicMetadataService {
 
         log.info("整理完成，共移动 {} 首歌曲 / Reorganize complete, moved {} tracks", moved, moved);
         return moved;
+    }
+
+    private void moveAuxiliaryFiles(Path sourceDir, Path targetDir, String audioFileName) {
+        if (!Files.exists(sourceDir) || !Files.isDirectory(sourceDir)) {
+            return;
+        }
+
+        String baseName = audioFileName.contains(".")
+                ? audioFileName.substring(0, audioFileName.lastIndexOf('.'))
+                : audioFileName;
+
+        try (var stream = Files.list(sourceDir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(file -> {
+                        String name = file.getFileName().toString();
+                        return name.endsWith(".lrc") || name.endsWith(".jpg")
+                                || name.endsWith(".png") || name.endsWith(".nfo");
+                    })
+                    .filter(file -> {
+                        String name = file.getFileName().toString();
+                        return name.startsWith(baseName) || name.equals("cover.jpg")
+                                || name.equals("cover.png");
+                    })
+                    .forEach(file -> {
+                        try {
+                            Path targetFile = targetDir.resolve(file.getFileName());
+                            if (!Files.exists(targetFile)) {
+                                Files.move(file, targetFile);
+                                log.info("移动附属文件 / Moved auxiliary: {}", file.getFileName());
+                            }
+                        } catch (Exception e) {
+                            log.warn("移动附属文件失败 / Failed to move auxiliary: {}", file.getFileName());
+                        }
+                    });
+        } catch (Exception e) {
+            log.warn("列出附属文件失败 / Failed to list auxiliary files: {}", e.getMessage());
+        }
+    }
+
+    private void cleanEmptyDirectory(Path dir) {
+        if (dir == null || !Files.exists(dir)) {
+            return;
+        }
+
+        try (var stream = Files.list(dir)) {
+            if (stream.findFirst().isEmpty()) {
+                Files.delete(dir);
+                log.info("删除空目录 / Removed empty directory: {}", dir);
+            }
+        } catch (Exception e) {
+            // 忽略删除失败
+        }
     }
 
     public List<Playlist> getAllPlaylists() {
@@ -544,6 +600,8 @@ public class MusicMetadataService {
             log.error("Failed to scan directory: {}", directoryPath);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
         }
+
+        reorganizeAllTracks();
     }
 
     public String parseTitleFromFileName(String fileName) {
