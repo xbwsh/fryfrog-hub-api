@@ -25,39 +25,50 @@ public class MediaLibrary extends BaseEntity {
     @Column(nullable = false)
     private String path;
 
-    @Schema(description = "资源库类型: MOVIE=电影, TV=电视剧, MIXED=混合", example = "MOVIE")
+    @Schema(description = "媒体类型: MUSIC/COMIC/VIDEO/EBOOK", example = "VIDEO")
     @Column(nullable = false)
     private String type;
+
+    @Schema(description = "视频子类型: MOVIE=电影, TV=电视剧, MIXED=混合（仅 type=VIDEO 时有效）", example = "MOVIE")
+    private String subType;
 
     @Schema(description = "是否启用", example = "true")
     @Column(nullable = false)
     private Boolean enabled = true;
 
     @Schema(description = "排序", example = "0")
-    private Integer sortOrder = 0;
+    private Integer sortOrder;
 
     @Schema(description = "备注说明")
     private String description;
 
     public enum Type {
+        MUSIC, COMIC, VIDEO, EBOOK
+    }
+
+    public enum VideoSubType {
         MOVIE, TV, MIXED
     }
 
-    public boolean isMovieType() {
-        return "MOVIE".equalsIgnoreCase(type);
+    public boolean isVideoType() {
+        return "VIDEO".equalsIgnoreCase(type);
     }
 
-    public boolean isTvType() {
-        return "TV".equalsIgnoreCase(type);
+    public boolean isMovieSubType() {
+        return "MOVIE".equalsIgnoreCase(subType);
     }
 
-    public boolean isMixedType() {
-        return "MIXED".equalsIgnoreCase(type);
+    public boolean isTvSubType() {
+        return "TV".equalsIgnoreCase(subType);
+    }
+
+    public boolean isMixedSubType() {
+        return subType == null || "MIXED".equalsIgnoreCase(subType);
     }
 
     public String getMediaTypeFilter() {
-        if (isMovieType()) return "movie";
-        if (isTvType()) return "tv";
-        return null; // MIXED: no filter
+        if (isMovieSubType()) return "movie";
+        if (isTvSubType()) return "tv";
+        return null; // MIXED or no subType: no filter
     }
 }

@@ -97,14 +97,14 @@ public class MusicScrapeService {
         try {
             coverUrl = qqMusicService.searchCoverUrl(artist, title);
         } catch (Exception e) {
-            log.debug("QQ音乐封面获取失败 / QQ Music cover failed: {}", e.getMessage());
+            log.debug("QQ Music cover failed: {}", e.getMessage());
         }
 
         if (coverUrl == null) {
             try {
                 coverUrl = netEaseLyricsService.searchCoverUrl(artist, title);
             } catch (Exception e) {
-                log.debug("网易云封面获取失败 / NetEase cover failed: {}", e.getMessage());
+                log.debug("NetEase cover failed: {}", e.getMessage());
             }
         }
 
@@ -124,14 +124,14 @@ public class MusicScrapeService {
         try {
             imageUrl = qqMusicService.searchArtistImage(artist);
         } catch (Exception e) {
-            log.debug("QQ音乐歌手图片获取失败 / QQ Music artist image failed: {}", e.getMessage());
+            log.debug("QQ Music artist image failed: {}", e.getMessage());
         }
 
         if (imageUrl == null) {
             try {
                 imageUrl = netEaseLyricsService.searchArtistImage(artist);
             } catch (Exception e) {
-                log.debug("网易云歌手图片获取失败 / NetEase artist image failed: {}", e.getMessage());
+                log.debug("NetEase artist image failed: {}", e.getMessage());
             }
         }
 
@@ -153,7 +153,7 @@ public class MusicScrapeService {
                 track.setCoverSource("online");
             }
         } catch (Exception e) {
-            log.debug("封面下载失败 / Failed to download cover: {}", e.getMessage());
+            log.debug("Failed to download cover: {}", e.getMessage());
         }
     }
 
@@ -172,7 +172,7 @@ public class MusicScrapeService {
                 Files.copy(in, artistImagePath);
             }
         } catch (Exception e) {
-            log.debug("歌手图片下载失败 / Failed to download artist image: {}", e.getMessage());
+            log.debug("Failed to download artist image: {}", e.getMessage());
         }
     }
 

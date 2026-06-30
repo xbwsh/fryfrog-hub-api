@@ -49,14 +49,3 @@ logging:
     com.fryfrog: INFO
     org.springframework: WARN
     org.hibernate: WARN
-    org.h2: WARN
-  pattern:
-    console: "%d{HH:mm:ss} [%thread] %-5level %logger{20} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
-  file:
-    name: /data/logs/app.log
-  logback:
-    rollingpolicy:
-      max-file-size: 10MB
-      max-history: 7
-      total-size-cap: 100MB

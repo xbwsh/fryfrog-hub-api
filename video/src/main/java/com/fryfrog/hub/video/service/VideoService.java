@@ -51,33 +51,14 @@ public class VideoService {
 
     private final java.util.concurrent.locks.ReentrantLock dbWriteLock = new java.util.concurrent.locks.ReentrantLock();
 
-    private volatile ExecutorService scrapeExecutor = createScraperPool(1);
+    private volatile ExecutorService scrapeExecutor = createScraperPool();
 
-    private ExecutorService createScraperPool(int threads) {
-        return Executors.newFixedThreadPool(threads, r -> {
-            Thread t = new Thread(r, "tmdb-scraper");
-            t.setDaemon(true);
-            return t;
-        });
+    private ExecutorService createScraperPool() {
+        return Executors.newVirtualThreadPerTaskExecutor();
     }
 
     private ExecutorService getScraperExecutor() {
-        int configured = settingService.getInteger("hub.tmdb.scraper-threads", 1);
-        configured = Math.max(1, Math.min(configured, 4));
-        ExecutorService current = scrapeExecutor;
-        if (current instanceof java.util.concurrent.ThreadPoolExecutor tpe) {
-            if (tpe.getCorePoolSize() != configured) {
-                synchronized (this) {
-                    if (tpe.getCorePoolSize() != configured) {
-                        log.info("Resizing scraper thread pool: {} -> {}", tpe.getCorePoolSize(), configured);
-                        current.shutdown();
-                        scrapeExecutor = createScraperPool(configured);
-                        return scrapeExecutor;
-                    }
-                }
-            }
-        }
-        return current;
+        return scrapeExecutor;
     }
 
     public VideoService(VideoRepository repository, TmdbService tmdbService,
@@ -396,7 +377,7 @@ public class VideoService {
                         existing.setLibraryId(libraryId);
                     }
                     Video updated = repository.save(existing);
-                    log.info("Updated video id={}, libraryId={}", updated.getId(), updated.getLibraryId());
+                    log.debug("Updated video id={}, libraryId={}", updated.getId(), updated.getLibraryId());
                     if (isAutoScrape() && updated.getTmdbId() == null) {
                         getScraperExecutor().submit(() -> tryScrapeVideo(updated));
                     }
@@ -432,7 +413,7 @@ public class VideoService {
             }
 
             Video saved = repository.save(video);
-            log.info("Saved video id={}, title={}, libraryId={}, fileName={}",
+            log.debug("Saved video id={}, title={}, libraryId={}, fileName={}",
                     saved.getId(), saved.getTitle(), saved.getLibraryId(), saved.getFileName());
 
             // 用 ffprobe 分析技术元数据（异步，不阻塞）
@@ -460,8 +441,8 @@ public class VideoService {
             if (video.getLibraryId() != null) {
                 MediaLibrary library = mediaLibraryService.getLibraryById(video.getLibraryId());
                 mediaTypeFilter = library.getMediaTypeFilter();
-                log.info("Scraping '{}' with library filter: libraryId={}, libraryType={}, filter={}",
-                        video.getTitle(), video.getLibraryId(), library.getType(), mediaTypeFilter);
+                log.info("Scraping '{}' with library filter: libraryId={}, type={}, subType={}, filter={}",
+                        video.getTitle(), video.getLibraryId(), library.getType(), library.getSubType(), mediaTypeFilter);
             } else {
                 log.info("Scraping '{}' with no library filter (libraryId=null)", video.getTitle());
             }
@@ -537,7 +518,7 @@ public class VideoService {
                             try {
                                 count[0]++;
                                 extractAndSaveMetadata(path.toString(), libraryId);
-                                log.info("Indexed video: {} (libraryId={})", path.getFileName(), libraryId);
+                                log.debug("Indexed video: {} (libraryId={})", path.getFileName(), libraryId);
                             } catch (Exception e) {
                                 log.warn("Failed to index video: {}", path.getFileName(), e);
                             }
@@ -794,7 +775,7 @@ public class VideoService {
                 if (episodeDetail.getStillPath() != null && !episodeDetail.getStillPath().isBlank()) {
                     video.setBackdropUrl(tmdbService.getBackdropUrl(episodeDetail.getStillPath()));
                 }
-                log.info("Updated video with episode metadata: S{}E{} - {}",
+                log.debug("Updated video with episode metadata: S{}E{} - {}",
                         seasonEpisode[0], seasonEpisode[1], episodeDetail.getName());
             } else {
                 log.warn("Could not fetch episode metadata for S{}E{}, using show-level metadata",
@@ -1045,7 +1026,7 @@ public class VideoService {
 
         try {
             coverArtService.downloadAllCovers(video);
-            log.info("Downloaded covers for: {}", video.getTitle());
+            log.debug("Downloaded covers for: {}", video.getTitle());
         } catch (Exception e) {
             log.warn("Failed to download covers for {}: {}", video.getTitle(), e.getMessage());
         }
@@ -1299,8 +1280,8 @@ public class VideoService {
                         if (video.getLibraryId() != null) {
                             MediaLibrary library = mediaLibraryService.getLibraryById(video.getLibraryId());
                             mediaTypeFilter = library.getMediaTypeFilter();
-                            log.info("Auto-scraping '{}' libraryId={} type={} filter={}",
-                                    video.getTitle(), video.getLibraryId(), library.getType(), mediaTypeFilter);
+                            log.info("Auto-scraping '{}' libraryId={} type={} subType={} filter={}",
+                                    video.getTitle(), video.getLibraryId(), library.getType(), library.getSubType(), mediaTypeFilter);
                         } else {
                             log.info("Auto-scraping '{}' libraryId=null (no filter)", video.getTitle());
                         }
@@ -1434,7 +1415,7 @@ public class VideoService {
                     log.warn("Failed to save actor for video id={}: {}", video.getId(), e.getMessage());
                 }
             }
-            log.info("Saved {} actors for video id={}", count, video.getId());
+            log.debug("Saved {} actors for video id={}", count, video.getId());
         } catch (Exception e) {
             log.warn("Failed to save actors for video id={}: {}", video.getId(), e.getMessage());
         }

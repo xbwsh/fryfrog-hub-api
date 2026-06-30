@@ -27,8 +27,21 @@ public class MediaLibraryService {
 
     @PostConstruct
     public void init() {
+        migrateOldTypeValues();
         if (repository.count() == 0 && legacyRootPaths != null && !legacyRootPaths.isBlank()) {
             migrateLegacyConfig();
+        }
+    }
+
+    private void migrateOldTypeValues() {
+        for (MediaLibrary library : repository.findAll()) {
+            String type = library.getType();
+            if ("MOVIE".equalsIgnoreCase(type) || "TV".equalsIgnoreCase(type) || "MIXED".equalsIgnoreCase(type)) {
+                library.setSubType(type.toUpperCase());
+                library.setType("VIDEO");
+                repository.save(library);
+                log.info("Migrated library '{}' type: {} -> type=VIDEO, subType={}", library.getName(), type, library.getSubType());
+            }
         }
     }
 
@@ -43,7 +56,8 @@ public class MediaLibraryService {
             MediaLibrary library = MediaLibrary.builder()
                     .name("默认资源库")
                     .path(path)
-                    .type("MIXED")
+                    .type("VIDEO")
+                    .subType("MIXED")
                     .enabled(true)
                     .sortOrder(order++)
                     .description("从 application.yml 迁移的默认配置")
@@ -73,17 +87,19 @@ public class MediaLibraryService {
         if (library.getSortOrder() == null) {
             library.setSortOrder((int) repository.count());
         }
+        library.setPath(normalizePath(library.getPath()));
         return repository.save(library);
     }
 
     public MediaLibrary updateLibrary(Long id, MediaLibrary updated) {
         MediaLibrary library = getLibraryById(id);
-        library.setName(updated.getName());
-        library.setPath(updated.getPath());
-        library.setType(updated.getType());
-        library.setEnabled(updated.getEnabled());
-        library.setSortOrder(updated.getSortOrder());
-        library.setDescription(updated.getDescription());
+        if (updated.getName() != null) library.setName(updated.getName());
+        if (updated.getPath() != null) library.setPath(normalizePath(updated.getPath()));
+        if (updated.getType() != null) library.setType(updated.getType());
+        if (updated.getSubType() != null) library.setSubType(updated.getSubType());
+        if (updated.getEnabled() != null) library.setEnabled(updated.getEnabled());
+        if (updated.getSortOrder() != null) library.setSortOrder(updated.getSortOrder());
+        if (updated.getDescription() != null) library.setDescription(updated.getDescription());
         return repository.save(library);
     }
 
@@ -111,5 +127,14 @@ public class MediaLibraryService {
                 .filter(lib -> path.startsWith(lib.getPath()) || lib.getPath().startsWith(path))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private String normalizePath(String path) {
+        if (path == null) return null;
+        try {
+            return java.nio.file.Path.of(path).toAbsolutePath().normalize().toString();
+        } catch (Exception e) {
+            return path;
+        }
     }
 }

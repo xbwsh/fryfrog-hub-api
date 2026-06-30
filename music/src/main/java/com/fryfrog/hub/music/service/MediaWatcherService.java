@@ -67,11 +67,7 @@ public class MediaWatcherService {
         }
 
         if (!watchServices.isEmpty()) {
-            executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "media-watcher");
-                t.setDaemon(true);
-                return t;
-            });
+            executor = Executors.newVirtualThreadPerTaskExecutor();
             executor.execute(this::watch);
             scanScheduler.registerTask(this::periodicScan);
             log.info("Music watcher registered, watching {} directories", watchServices.size());

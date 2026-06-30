@@ -178,19 +178,19 @@ public class MusicMetadataService {
         try {
             imageUrl = qqMusicService.searchArtistImage(artist);
         } catch (Exception e) {
-            log.debug("QQ音乐歌手图片获取失败 / QQ Music artist image failed: {}", e.getMessage());
+            log.debug("QQ Music artist image failed: {}", e.getMessage());
         }
 
         if (imageUrl == null) {
             try {
                 imageUrl = netEaseLyricsService.searchArtistImage(artist);
             } catch (Exception e) {
-                log.debug("网易云歌手图片获取失败 / NetEase artist image failed: {}", e.getMessage());
+                log.debug("NetEase artist image failed: {}", e.getMessage());
             }
         }
 
         if (imageUrl == null) {
-            log.info("未找到歌手图片 / No artist image found for: {}", artist);
+            log.info("No artist image found for: {}", artist);
             return null;
         }
 
@@ -200,11 +200,11 @@ public class MusicMetadataService {
             }
             try (InputStream in = new URL(imageUrl).openStream()) {
                 Files.copy(in, artistImagePath);
-                log.info("歌手图片下载成功 / Artist image saved for: {} -> {}", artist, artistImagePath);
+                log.info("Artist image saved: {} -> {}", artist, artistImagePath);
                 return artistImagePath.toAbsolutePath().toString();
             }
         } catch (Exception e) {
-            log.warn("歌手图片下载失败 / Failed to download artist image for {}: {}", artist, e.getMessage());
+            log.warn("Failed to download artist image for {}: {}", artist, e.getMessage());
             return null;
         }
     }
@@ -252,25 +252,25 @@ public class MusicMetadataService {
                 }
 
                 if (Files.exists(targetFile)) {
-                    log.warn("目标文件已存在，跳过 / Target file exists, skipping: {}", targetFile);
+                    log.debug("Target file exists, skipping: {}", targetFile);
                     continue;
                 }
 
                 Files.move(audioPath, targetFile);
-                track.setFilePath(targetFile.toAbsolutePath().toString());
+                track.setFilePath(targetFile.toAbsolutePath().normalize().toString());
                 repository.save(track);
                 moved++;
-                log.info("整理完成 / Moved: {} -> {}", audioPath, targetFile);
+                log.info("Moved: {} -> {}", audioPath, targetFile);
 
                 Path sourceDir = audioPath.getParent();
                 moveAuxiliaryFiles(sourceDir, targetDir, track.getFileName());
                 cleanEmptyDirectory(sourceDir);
             } catch (Exception e) {
-                log.warn("整理失败 / Failed to reorganize: {} - {}", track.getTitle(), e.getMessage());
+                log.warn("Failed to reorganize: {} - {}", track.getTitle(), e.getMessage());
             }
         }
 
-        log.info("整理完成，共移动 {} 首歌曲 / Reorganize complete, moved {} tracks", moved, moved);
+        log.info("Reorganize complete, moved {} tracks", moved);
         return moved;
     }
 
@@ -300,14 +300,14 @@ public class MusicMetadataService {
                             Path targetFile = targetDir.resolve(file.getFileName());
                             if (!Files.exists(targetFile)) {
                                 Files.move(file, targetFile);
-                                log.info("移动附属文件 / Moved auxiliary: {}", file.getFileName());
+                                log.info("Moved auxiliary: {}", file.getFileName());
                             }
                         } catch (Exception e) {
-                            log.warn("移动附属文件失败 / Failed to move auxiliary: {}", file.getFileName());
+                            log.warn("Failed to move auxiliary: {}", file.getFileName());
                         }
                     });
         } catch (Exception e) {
-            log.warn("列出附属文件失败 / Failed to list auxiliary files: {}", e.getMessage());
+            log.warn("Failed to list auxiliary files: {}", e.getMessage());
         }
     }
 
@@ -319,7 +319,7 @@ public class MusicMetadataService {
         try (var stream = Files.list(dir)) {
             if (stream.findFirst().isEmpty()) {
                 Files.delete(dir);
-                log.info("删除空目录 / Removed empty directory: {}", dir);
+                log.debug("Removed empty directory: {}", dir);
             }
         } catch (Exception e) {
             // 忽略删除失败
@@ -391,7 +391,7 @@ public class MusicMetadataService {
             MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
             MusicTrack track = existing != null ? existing : new MusicTrack();
 
-            track.setFilePath(absolutePath);
+            track.setFilePath(java.nio.file.Path.of(absolutePath).toAbsolutePath().normalize().toString());
             track.setFileName(file.getName());
             track.setFileSize(file.length());
 
@@ -443,10 +443,10 @@ public class MusicMetadataService {
                         track.setCoverSource("embedded");
                     }
                 } catch (Exception e) {
-                    log.warn("提取封面失败 / Failed to extract cover art from: {}", file.getName(), e);
+                    log.warn("Failed to extract cover art from: {}", file.getName(), e);
                 }
             } catch (Exception e) {
-                log.debug("标签读取失败，仅从文件名解析 / Tag read failed for {}, parsing from filename: {}", file.getName(), e.getMessage());
+                log.debug("Tag read failed for {}, parsing from filename: {}", file.getName(), e.getMessage());
             }
 
             if (track.getCoverArtPath() == null) {
@@ -476,18 +476,18 @@ public class MusicMetadataService {
                         if (imageUrl != null) {
                             try (InputStream in = new URL(imageUrl).openStream()) {
                                 Files.copy(in, artistImagePath);
-                                log.debug("歌手图片下载成功 / Artist image saved for: {}", track.getArtist());
+                                log.debug("Artist image saved: {}", track.getArtist());
                             }
                         }
                     } catch (Exception e) {
-                        log.debug("歌手图片获取失败 / Failed to get artist image for {}: {}", track.getArtist(), e.getMessage());
+                        log.debug("Failed to get artist image for {}: {}", track.getArtist(), e.getMessage());
                     }
                 }
             }
 
             return repository.save(track);
         } catch (Exception e) {
-            log.error("提取元数据失败 / Failed to extract metadata from: {}", filePath, e);
+            log.error("Failed to extract metadata from: {}", filePath, e);
             throw new RuntimeException("Failed to extract metadata: " + e.getMessage(), e);
         }
     }
@@ -509,12 +509,12 @@ public class MusicMetadataService {
             Path targetFile = targetDir.resolve(track.getFileName());
             if (!audioPath.equals(targetFile) && Files.exists(audioPath) && !Files.exists(targetFile)) {
                 Files.move(audioPath, targetFile);
-                track.setFilePath(targetFile.toAbsolutePath().toString());
+                track.setFilePath(targetFile.toAbsolutePath().normalize().toString());
             }
 
             return targetDir;
         } catch (Exception e) {
-            log.warn("整理文件夹失败 / Failed to organize folder for {}: {}", track.getFileName(), e.getMessage());
+            log.warn("Failed to organize folder for {}: {}", track.getFileName(), e.getMessage());
             return Paths.get(track.getFilePath()).getParent();
         }
     }
@@ -585,7 +585,7 @@ public class MusicMetadataService {
                                     repository.findByFilePath(saved.getFilePath()).ifPresent(existing -> {
                                         if (!existing.getId().equals(saved.getId())) {
                                             repository.delete(existing);
-                                            log.info("Removed duplicate record: {}", existing.getTitle());
+                                            log.debug("Removed duplicate record: {}", existing.getTitle());
                                         }
                                     });
                                 }
@@ -597,7 +597,7 @@ public class MusicMetadataService {
                         });
             }
         } catch (Exception e) {
-            log.error("Failed to scan directory: {}", directoryPath);
+            log.error("Failed to scan directory: {}", directoryPath, e);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
         }
 
@@ -749,7 +749,7 @@ public class MusicMetadataService {
 
             if (changed) {
                 audioFile.commit();
-                log.info("Wrote metadata to file: {}", file.getName());
+                log.debug("Wrote metadata to file: {}", file.getName());
             }
         } catch (Exception e) {
             log.warn("Failed to write metadata to file: {}", file.getName(), e);

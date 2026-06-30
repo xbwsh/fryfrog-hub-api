@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.dto;
 
+import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
@@ -10,8 +11,11 @@ import java.util.List;
 @Schema(description = "视频系列信息")
 public class SeriesDTO {
 
-    @Schema(description = "系列ID")
+    @Schema(description = "系列ID（独立视频为视频ID）")
     private Long id;
+
+    @Schema(description = "条目类型: series=系列, standalone=独立视频")
+    private String type;
 
     @Schema(description = "系列名称")
     private String title;
@@ -64,6 +68,7 @@ public class SeriesDTO {
     public static SeriesDTO fromEntity(VideoSeries series, List<VideoDTO> episodes) {
         SeriesDTO dto = new SeriesDTO();
         dto.setId(series.getId());
+        dto.setType("series");
         dto.setTitle(series.getTitle());
         dto.setOriginalTitle(series.getOriginalTitle());
         dto.setOverview(series.getOverview());
@@ -80,6 +85,28 @@ public class SeriesDTO {
         dto.setStatus(series.getStatus());
         dto.setMetadataDir(series.getMetadataDir());
         dto.setEpisodes(episodes);
+        return dto;
+    }
+
+    public static SeriesDTO fromStandaloneVideo(Video video, VideoDTO episode) {
+        SeriesDTO dto = new SeriesDTO();
+        dto.setId(video.getId());
+        dto.setType("standalone");
+        dto.setTitle(video.getTitle());
+        dto.setOriginalTitle(video.getOriginalTitle());
+        dto.setOverview(video.getOverview());
+        dto.setMediaType(video.getMediaType());
+        dto.setTmdbId(video.getTmdbId());
+        dto.setRating(video.getRating());
+        dto.setYear(video.getYear());
+        dto.setPosterUrl(video.getPosterUrl());
+        dto.setBackdropUrl(video.getBackdropUrl());
+        dto.setSeasonNumber(null);
+        dto.setNumberOfSeasons(null);
+        dto.setTotalEpisodes(1);
+        dto.setEpisodeCount(1);
+        dto.setStatus(video.getStatus());
+        dto.setEpisodes(List.of(episode));
         return dto;
     }
 }

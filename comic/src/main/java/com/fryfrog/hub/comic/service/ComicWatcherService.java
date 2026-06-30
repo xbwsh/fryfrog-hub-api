@@ -66,11 +66,7 @@ public class ComicWatcherService {
         }
 
         if (!watchServices.isEmpty()) {
-            executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "comic-watcher");
-                t.setDaemon(true);
-                return t;
-            });
+            executor = Executors.newVirtualThreadPerTaskExecutor();
             executor.execute(this::watch);
             scanScheduler.registerTask(this::periodicScan);
             log.info("Comic watcher registered, watching {} directories", watchServices.size());

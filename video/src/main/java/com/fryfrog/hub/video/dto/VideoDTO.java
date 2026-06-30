@@ -112,6 +112,9 @@ public class VideoDTO {
     @Schema(description = "是否为系列剧集")
     private Boolean isSeries;
 
+    @Schema(description = "所属资源库ID")
+    private Long libraryId;
+
     @Schema(description = "所属系列ID")
     private Long seriesId;
 
@@ -169,6 +172,7 @@ public class VideoDTO {
         dto.setMetadataDir(metadataDir);
         dto.setScraped(video.getTmdbId() != null);
         dto.setIsSeries(video.getIsSeries());
+        dto.setLibraryId(video.getLibraryId());
         dto.setSeasonNumber(video.getSeasonNumber());
         dto.setEpisodeNumber(video.getEpisodeNumber());
         if (video.getSeries() != null) {

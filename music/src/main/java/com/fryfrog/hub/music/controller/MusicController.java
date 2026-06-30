@@ -201,19 +201,6 @@ public class MusicController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    @PostMapping("/rescan")
-    @Operation(summary = "扫描并整理音乐库", description = "扫描所有根路径，清理无效记录，按歌手/专辑分文件夹整理")
-    public ResponseEntity<ApiResponse<String>> rescan() {
-        for (String rootPath : getRootPaths()) {
-            try {
-                service.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to scan music directory {}: {}", rootPath, e.getMessage());
-            }
-        }
-        return ResponseEntity.ok(ApiResponse.success("Rescan completed"));
-    }
-
     @GetMapping("/{id:\\d+}/lyrics")
     @Operation(summary = "获取歌词", description = "读取同目录下的.lrc歌词文件")
     @ApiResponses(value = {

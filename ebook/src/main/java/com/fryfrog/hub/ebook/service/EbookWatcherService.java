@@ -65,11 +65,7 @@ public class EbookWatcherService {
         }
 
         if (!watchServices.isEmpty()) {
-            executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "ebook-watcher");
-                t.setDaemon(true);
-                return t;
-            });
+            executor = Executors.newVirtualThreadPerTaskExecutor();
             executor.execute(this::watch);
             scanScheduler.registerTask(this::periodicScan);
             log.info("Ebook watcher registered, watching {} directories", watchServices.size());

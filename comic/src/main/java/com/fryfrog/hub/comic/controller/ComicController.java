@@ -256,21 +256,6 @@ public class ComicController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    @PostMapping("/rescan")
-    @Operation(summary = "一键刷新漫画库", description = "扫描所有根路径 → 整理文件夹 → 自动刮削未绑定漫画")
-    public ResponseEntity<ApiResponse<String>> rescan() {
-        for (String rootPath : getRootPaths()) {
-            try {
-                service.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to scan comic directory {}: {}", rootPath, e.getMessage());
-            }
-        }
-        service.organizeAll();
-        mangaScrapeService.autoScrapeAll();
-        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan → organize → scrape"));
-    }
-
     @GetMapping("/bangumi/search")
     @Operation(summary = "搜索 Bangumi 漫画", description = "在 Bangumi 上搜索日漫（中文数据最全）")
     public ResponseEntity<ApiResponse<List<BangumiService.SearchResult>>> searchBangumi(

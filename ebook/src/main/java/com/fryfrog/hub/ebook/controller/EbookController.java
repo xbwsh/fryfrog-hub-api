@@ -98,19 +98,6 @@ public class EbookController {
         return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
     }
 
-    @PostMapping("/rescan")
-    @Operation(summary = "一键刷新电子书库", description = "扫描所有根路径 → 整理文件夹")
-    public ResponseEntity<ApiResponse<String>> rescan() {
-        for (String rootPath : getRootPaths()) {
-            try {
-                service.scanDirectory(rootPath);
-            } catch (Exception e) {
-                log.error("Failed to scan ebook directory {}: {}", rootPath, e.getMessage());
-            }
-        }
-        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan completed"));
-    }
-
     @GetMapping("/{id:\\d+}/cover")
     @Operation(summary = "获取封面图片", description = "返回电子书的封面图片，无封面时返回标题占位图")
     public ResponseEntity<Resource> getCoverArt(

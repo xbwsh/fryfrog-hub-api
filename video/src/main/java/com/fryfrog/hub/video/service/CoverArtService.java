@@ -79,7 +79,7 @@ public class CoverArtService {
                 Files.copy(inputStream, targetPath, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            log.info("Downloaded cover: {}", targetPath);
+            log.debug("Downloaded cover: {}", targetPath);
             return true;
         } catch (IOException e) {
             log.error("Failed to download cover from {}: {}", imageUrl, e.getMessage(), e);

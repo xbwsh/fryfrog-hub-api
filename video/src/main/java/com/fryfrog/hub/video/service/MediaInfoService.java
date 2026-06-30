@@ -153,7 +153,7 @@ public class MediaInfoService {
             }
 
             videoRepository.save(video);
-            log.info("Updated media info for: {}", video.getFileName());
+            log.debug("Updated media info for: {}", video.getFileName());
         } catch (Exception e) {
             log.warn("Failed to analyze media info for {}: {}", video.getFileName(), e.getMessage());
         }

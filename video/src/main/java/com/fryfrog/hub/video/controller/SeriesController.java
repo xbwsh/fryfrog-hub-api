@@ -19,6 +19,8 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -33,16 +35,27 @@ public class SeriesController {
     private final NfoService nfoService;
 
     @GetMapping
-    @Operation(summary = "获取所有系列", description = "返回所有视频系列列表")
+    @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影）")
     public ResponseEntity<ApiResponse<List<SeriesDTO>>> getAllSeries() {
-        List<SeriesDTO> dtos = seriesService.getAllSeries().stream()
-                .map(series -> {
-                    List<VideoDTO> episodes = series.getVideos().stream()
-                            .map(video -> toVideoDTO(video))
-                            .collect(Collectors.toList());
-                    return SeriesDTO.fromEntity(series, episodes);
-                })
-                .collect(Collectors.toList());
+        List<SeriesDTO> dtos = new ArrayList<>();
+
+        // 系列剧集
+        for (VideoSeries series : seriesService.getAllSeries()) {
+            List<VideoDTO> episodes = series.getVideos().stream()
+                    .map(this::toVideoDTO)
+                    .collect(Collectors.toList());
+            dtos.add(SeriesDTO.fromEntity(series, episodes));
+        }
+
+        // 独立视频（不属于任何系列的，如电影）
+        List<Video> standaloneVideos = videoService.getAllVideos().stream()
+                .filter(v -> v.getSeries() == null)
+                .sorted(Comparator.comparing(Video::getTitle))
+                .toList();
+        for (Video video : standaloneVideos) {
+            dtos.add(SeriesDTO.fromStandaloneVideo(video, toVideoDTO(video)));
+        }
+
         return ResponseEntity.ok(ApiResponse.success(dtos));
     }
 

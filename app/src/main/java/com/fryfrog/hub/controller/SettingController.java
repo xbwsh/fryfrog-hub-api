@@ -89,7 +89,6 @@ public class SettingController {
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("watcher.periodic-scan", settingService.getBoolean("watcher.periodic-scan", true));
         settings.put("watcher.periodic-scan-interval", settingService.getInteger("watcher.periodic-scan-interval", 300));
-        settings.put("hub.tmdb.scraper-threads", settingService.getInteger("hub.tmdb.scraper-threads", 1));
         return ResponseEntity.ok(ApiResponse.success(settings));
     }
 }

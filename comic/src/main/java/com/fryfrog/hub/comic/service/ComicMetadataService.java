@@ -166,7 +166,7 @@ public class ComicMetadataService {
                     : fileName;
 
             comic.setTitle(baseName);
-            comic.setFilePath(absolutePath);
+            comic.setFilePath(Paths.get(absolutePath).toAbsolutePath().normalize().toString());
             comic.setFileName(fileName);
             comic.setFileSize(file.length());
             comic.setFormat(getFileExtension(fileName).toUpperCase());
@@ -336,11 +336,20 @@ public class ComicMetadataService {
                 return false;
             }
 
+            // 检查目标路径是否已被其他记录占用
+            String targetAbsolutePath = targetPath.toAbsolutePath().toString();
+            Optional<Comic> existing = repository.findByFilePath(targetAbsolutePath);
+            if (existing.isPresent() && !existing.get().getId().equals(comic.getId())) {
+                log.debug("Target path already occupied by comic id={}, skipping: {}",
+                        existing.get().getId(), comic.getFileName());
+                return false;
+            }
+
             Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-            comic.setFilePath(targetPath.toAbsolutePath().toString());
+            comic.setFilePath(targetPath.toAbsolutePath().normalize().toString());
             comic.setFileName(newName);
             repository.save(comic);
-            log.info("Organized: {} -> {}", file.getName(), targetPath);
+            log.debug("Organized: {} -> {}", file.getName(), targetPath);
             return true;
         } catch (Exception e) {
             log.warn("Failed to organize comic {}: {}", comic.getFileName(), e.getMessage());

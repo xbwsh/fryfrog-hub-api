@@ -2,8 +2,6 @@ package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
-import com.fryfrog.hub.common.model.MediaLibrary;
-import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
@@ -62,7 +60,6 @@ public class VideoController {
     private final SubtitleService subtitleService;
     private final VideoActorRepository actorRepository;
     private final ScrapeProgressService scrapeProgressService;
-    private final MediaLibraryService mediaLibraryService;
 
     @GetMapping
     @Operation(summary = "获取所有视频", description = "返回数据库中所有已索引的视频列表")
@@ -129,29 +126,6 @@ public class VideoController {
             @Parameter(description = "收藏状态") @RequestParam boolean status) {
         Video video = service.setFavorite(id, status);
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
-    }
-
-    @PostMapping("/cleanup")
-    @Operation(summary = "清理无效记录", description = "删除数据库中文件已不存在的视频记录")
-    public ResponseEntity<ApiResponse<Map<String, Integer>>> cleanupInvalidRecords() {
-        int removed = service.cleanupInvalidRecords();
-        return ResponseEntity.ok(ApiResponse.success(Map.of("removed", removed)));
-    }
-
-    @PostMapping("/rescan")
-    @Operation(summary = "一键刷新视频库", description = "扫描所有资源库 → 整理文件夹 → 自动刮削未绑定视频")
-    public ResponseEntity<ApiResponse<String>> rescan() {
-        List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries();
-        for (MediaLibrary library : libraries) {
-            try {
-                service.scanDirectory(library.getPath(), library.getId());
-            } catch (Exception e) {
-                log.error("Failed to scan library {} ({}): {}", library.getName(), library.getPath(), e.getMessage());
-            }
-        }
-        service.organizeVideos(null);
-        service.autoScrapeAll();
-        return ResponseEntity.ok(ApiResponse.success("Rescan started: scan → organize → scrape"));
     }
 
     @GetMapping("/{id:\\d+}/actors")
@@ -242,13 +216,6 @@ public class VideoController {
                 "total", results.size(),
                 "videos", results.stream().map(this::toDTO).toList()
         )));
-    }
-
-    @PostMapping("/tmdb/rescrape-all")
-    @Operation(summary = "全量重新刮削", description = "解绑所有视频的TMDB绑定，然后重新搜索绑定")
-    public ResponseEntity<ApiResponse<String>> rescrapeAll() {
-        service.rescrapeAll();
-        return ResponseEntity.ok(ApiResponse.success("Rescrape started: unbind all → re-scrape"));
     }
 
     @PostMapping("/tmdb/rescrape-library/{libraryId}")

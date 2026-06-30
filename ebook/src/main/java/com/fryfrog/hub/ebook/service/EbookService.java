@@ -132,7 +132,7 @@ public class EbookService {
                     ? fileName.substring(0, fileName.lastIndexOf('.'))
                     : fileName;
 
-            ebook.setFilePath(absolutePath);
+            ebook.setFilePath(java.nio.file.Path.of(absolutePath).toAbsolutePath().normalize().toString());
             ebook.setFileName(fileName);
             ebook.setFileSize(file.length());
             ebook.setFormat(getFileExtension(fileName).toUpperCase());
@@ -370,10 +370,10 @@ public class EbookService {
 
             if (!file.toPath().toAbsolutePath().equals(targetPath.toAbsolutePath())) {
                 Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-                ebook.setFilePath(targetPath.toAbsolutePath().toString());
+                ebook.setFilePath(targetPath.toAbsolutePath().normalize().toString());
                 ebook.setFileName(newName);
                 repository.save(ebook);
-                log.info("Organized ebook to: {}", targetPath);
+                log.debug("Organized ebook to: {}", targetPath);
             }
         } catch (Exception e) {
             log.warn("Failed to organize ebook file for {}: {}", ebook.getTitle(), e.getMessage());
