@@ -13,11 +13,10 @@ import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
+import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
 import com.fryfrog.hub.video.service.MediaInfoService;
 import com.fryfrog.hub.video.service.NfoService;
-import com.fryfrog.hub.video.service.SubtitleService;
-import com.fryfrog.hub.video.service.TmdbService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +30,8 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.File;
 import java.io.IOException;
@@ -52,13 +53,12 @@ import java.util.stream.Collectors;
 public class VideoController {
 
     private final VideoService service;
-    private final TmdbService tmdbService;
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
     private final WatchProgressService watchProgressService;
     private final MediaInfoService mediaInfoService;
-    private final SubtitleService subtitleService;
     private final VideoActorRepository actorRepository;
+    private final VideoRepository videoRepository;
     private final ScrapeProgressService scrapeProgressService;
 
     @GetMapping
@@ -232,12 +232,6 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("video")));
     }
 
-    @GetMapping("/tmdb/status")
-    @Operation(summary = "检查TMDB配置状态", description = "检查TMDB API是否已正确配置")
-    public ResponseEntity<ApiResponse<Boolean>> checkTmdbStatus() {
-        return ResponseEntity.ok(ApiResponse.success(tmdbService.isConfigured()));
-    }
-
     @PostMapping("/{id:\\d+}/nfo")
     @Operation(summary = "生成NFO文件", description = "为指定视频生成NFO元数据文件")
     public ResponseEntity<ApiResponse<Map<String, String>>> generateNfo(
@@ -358,27 +352,31 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/stream")
-    @Operation(summary = "视频流播放", description = "支持 Range 请求，用于本地播放器直接播放")
-    public ResponseEntity<Resource> streamVideo(
+    @Operation(summary = "视频流播放", description = "支持 Range 请求，音频不兼容时管道转码输出")
+    public void streamVideo(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader) {
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader,
+            jakarta.servlet.http.HttpServletResponse response) throws Exception {
 
         Video video = service.getVideoById(id);
         File videoFile = new File(video.getFilePath());
 
         if (!videoFile.exists()) {
-            return ResponseEntity.notFound().build();
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
         }
 
-        String contentType = getContentType(video.getFileName());
+        String contentType = getContentType(videoFile.getName());
         long fileLength = videoFile.length();
 
         if (rangeHeader == null || !rangeHeader.startsWith("bytes=")) {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType(contentType));
-            headers.set("Accept-Ranges", "bytes");
-            headers.setContentLength(fileLength);
-            return ResponseEntity.ok().headers(headers).body(new FileSystemResource(videoFile));
+            response.setContentType(contentType);
+            response.setHeader("Accept-Ranges", "bytes");
+            response.setContentLengthLong(fileLength);
+            try (var is = new java.io.FileInputStream(videoFile); var os = response.getOutputStream()) {
+                is.transferTo(os);
+            }
+            return;
         }
 
         String[] ranges = rangeHeader.substring(6).split("-");
@@ -397,31 +395,27 @@ public class VideoController {
         end = Math.min(fileLength - 1, end);
         long contentLength = end - start + 1;
 
-        Resource resource = new RangeResource(videoFile, start, contentLength);
-        ResourceRegion region = new ResourceRegion(resource, 0, contentLength);
+        response.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+        response.setContentType(contentType);
+        response.setHeader("Accept-Ranges", "bytes");
+        response.setHeader("Content-Range", String.format("bytes %d-%d/%d", start, end, fileLength));
+        response.setContentLengthLong(contentLength);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(contentType));
-        headers.set("Accept-Ranges", "bytes");
-        headers.set("Content-Range", String.format("bytes %d-%d/%d", start, end, fileLength));
-        headers.setContentLength(contentLength);
-
-        return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
-                .headers(headers)
-                .body(resource);
-    }
-
-    @GetMapping("/{id:\\d+}/stream/info")
-    @Operation(summary = "获取播放链接", description = "返回视频流 URL，用于本地播放器")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getStreamInfo(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        Video video = service.getVideoById(id);
-        Map<String, Object> info = Map.of(
-                "videoId", id,
-                "fileName", video.getFileName(),
-                "streamUrl", "/api/v1/video/" + id + "/stream"
-        );
-        return ResponseEntity.ok(ApiResponse.success(info));
+        try (var raf = new java.io.RandomAccessFile(videoFile, "r")) {
+            raf.seek(start);
+            try (var os = response.getOutputStream()) {
+                byte[] buffer = new byte[8192];
+                long remaining = contentLength;
+                while (remaining > 0) {
+                    int toRead = (int) Math.min(buffer.length, remaining);
+                    int read = raf.read(buffer, 0, toRead);
+                    if (read == -1) break;
+                    os.write(buffer, 0, read);
+                    remaining -= read;
+                }
+                os.flush();
+            }
+        }
     }
 
     @GetMapping("/{id:\\d+}/media-info")
@@ -449,63 +443,137 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/subtitles")
-    @Operation(summary = "获取内嵌字幕列表", description = "列出视频中所有内嵌字幕轨道")
+    @Operation(summary = "获取内嵌字幕列表", description = "列出视频中所有内嵌字幕轨道（语言、编码等）")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSubtitles(
             @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
         Video video = service.getVideoById(id);
-        List<Map<String, Object>> subtitles = mediaInfoService.getSubtitleStreams(video.getFilePath());
-        return ResponseEntity.ok(ApiResponse.success(subtitles));
+        List<Map<String, Object>> tracks = mediaInfoService.getSubtitleTracks(video.getFilePath());
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    @PostMapping("/{id:\\d+}/subtitles/extract")
-    @Operation(summary = "提取内嵌字幕", description = "将内嵌字幕提取为独立文件")
-    public ResponseEntity<ApiResponse<List<SubtitleService.SubtitleFile>>> extractSubtitles(
-            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
-        Video video = service.getVideoById(id);
-        String videoDir = new File(video.getFilePath()).getParent();
-        String metadataDir = nfoService.getMetadataDir(video).toString();
-
-        List<SubtitleService.SubtitleFile> files = subtitleService.extractSubtitles(
-                video.getFilePath(), metadataDir);
-
-        return ResponseEntity.ok(ApiResponse.success(files));
-    }
-
-    @GetMapping("/{id:\\d+}/subtitles/files")
-    @Operation(summary = "获取已提取的字幕文件", description = "列出视频目录下已提取的字幕文件")
-    public ResponseEntity<ApiResponse<List<String>>> getSubtitleFiles(
+    @GetMapping("/{id:\\d+}/subtitle/external")
+    @Operation(summary = "获取外挂字幕列表", description = "列出视频同目录下的外挂字幕文件（.srt/.ass/.ssa等）")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getExternalSubtitles(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
-        String baseName = nfoService.getBaseName(video.getFileName());
-        String metadataDir = nfoService.getMetadataDir(video).toString();
-
-        List<String> files = subtitleService.getAvailableSubtitles(metadataDir, baseName);
-        return ResponseEntity.ok(ApiResponse.success(files));
+        List<Map<String, Object>> subs = mediaInfoService.getExternalSubtitles(video.getFilePath());
+        return ResponseEntity.ok(ApiResponse.success(subs));
     }
 
-    @GetMapping("/{id:\\d+}/subtitles/{fileName}")
-    @Operation(summary = "获取字幕内容", description = "返回字幕文件内容，.ass/.srt 自动转为 .vtt 格式")
-    public ResponseEntity<Resource> getSubtitleContent(
+    @GetMapping("/{id:\\d+}/subtitle/vtt")
+    @Operation(summary = "获取字幕WebVTT", description = "将内嵌或外挂字幕转换为WebVTT格式返回，内嵌用index参数，外挂用file参数")
+    public ResponseEntity<String> getSubtitleVtt(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "字幕文件名") @PathVariable String fileName) {
+            @Parameter(description = "内嵌字幕流索引（内嵌字幕时使用）") @RequestParam(required = false) Integer index,
+            @Parameter(description = "外挂字幕文件名（外挂字幕时使用，如 xxx.zh.srt）") @RequestParam(required = false) String file) throws Exception {
         Video video = service.getVideoById(id);
-        String metadataDir = nfoService.getMetadataDir(video).toString();
-        Path subtitlePath = Paths.get(metadataDir, fileName);
 
-        if (!Files.exists(subtitlePath)) {
-            return ResponseEntity.notFound().build();
+        String videoDir = new File(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+
+        String vttContent;
+        String vttFileName;
+
+        if (index != null) {
+            vttFileName = baseName + ".sub" + index + ".vtt";
+            Path vttPath = Path.of(videoDir, vttFileName);
+            if (Files.exists(vttPath)) {
+                vttContent = Files.readString(vttPath);
+            } else {
+                vttContent = mediaInfoService.extractSubtitleAsVtt(video.getFilePath(), index);
+                Files.writeString(vttPath, vttContent);
+                log.info("Converted embedded subtitle index={} for: {}", index, video.getFileName());
+            }
+        } else if (file != null) {
+            Path subPath = Path.of(videoDir, file);
+            if (!Files.exists(subPath)) {
+                return ResponseEntity.notFound().build();
+            }
+            vttFileName = file;
+            vttContent = mediaInfoService.convertExternalSubtitleToVtt(subPath.toString());
+            log.info("Converted external subtitle {} for: {}", file, video.getFileName());
+        } else {
+            return ResponseEntity.badRequest().build();
         }
 
-        try {
-            Path vttPath = subtitleService.convertToVtt(subtitlePath);
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType("text/vtt; charset=utf-8"))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + vttPath.getFileName() + "\"")
-                    .body(new FileSystemResource(vttPath.toFile()));
-        } catch (Exception e) {
-            log.warn("Failed to convert subtitle {}: {}", fileName, e.getMessage());
-            return ResponseEntity.internalServerError().build();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/vtt; charset=utf-8"))
+                .body(vttContent);
+    }
+
+    @GetMapping("/{id:\\d+}/playlist.m3u")
+    @Operation(summary = "生成系列播放列表", description = "返回同系列所有集数的 M3U 播放列表，可用 PotPlayer/IINA 等播放器打开")
+    public ResponseEntity<Resource> getSeriesPlaylist(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            jakarta.servlet.http.HttpServletRequest request) {
+        Video video = service.getVideoById(id);
+
+        // 优先用配置的 base URL，否则自动检测服务器 IP
+        String baseUrl = getServerBaseUrl(request);
+
+        // 找同系列所有视频
+        List<Video> siblings;
+        if (video.getSeries() != null) {
+            siblings = videoRepository.findBySeries(video.getSeries());
+        } else if (video.getTmdbId() != null) {
+            siblings = videoRepository.findAllByTmdbId(video.getTmdbId());
+        } else {
+            siblings = List.of(video);
         }
+
+        // 按季数+集数排序
+        siblings.sort((a, b) -> {
+            int sa = a.getSeasonNumber() != null ? a.getSeasonNumber() : 1;
+            int sb = b.getSeasonNumber() != null ? b.getSeasonNumber() : 1;
+            if (sa != sb) return Integer.compare(sa, sb);
+            int ea = a.getEpisodeNumber() != null ? a.getEpisodeNumber() : 1;
+            int eb = b.getEpisodeNumber() != null ? b.getEpisodeNumber() : 1;
+            return Integer.compare(ea, eb);
+        });
+
+        // 生成 M3U（绝对 URL）
+        StringBuilder m3u = new StringBuilder("#EXTM3U\n");
+        String seriesTitle = video.getSeriesName() != null ? video.getSeriesName() : video.getTitle();
+        for (Video v : siblings) {
+            String title = v.getTitle();
+            if (v.getSeasonNumber() != null && v.getEpisodeNumber() != null) {
+                title = String.format("S%02dE%02d - %s", v.getSeasonNumber(), v.getEpisodeNumber(), v.getTitle());
+            }
+            m3u.append("#EXTINF:-1,").append(title).append("\n");
+            m3u.append(baseUrl).append("/api/v1/video/").append(v.getId()).append("/stream\n");
+        }
+
+        byte[] content = m3u.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("audio/x-mpegurl; charset=utf-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + seriesTitle + ".m3u\"")
+                .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(content.length))
+                .body(new org.springframework.core.io.ByteArrayResource(content));
+    }
+
+    private String getServerBaseUrl(jakarta.servlet.http.HttpServletRequest request) {
+        // 如果请求来自 localhost/127.0.0.1，自动替换为局域网 IP
+        String host = request.getServerName();
+        if ("localhost".equals(host) || "127.0.0.1".equals(host)) {
+            try {
+                var interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+                while (interfaces.hasMoreElements()) {
+                    var network = interfaces.nextElement();
+                    if (network.isLoopback() || !network.isUp()) continue;
+                    var addresses = network.getInetAddresses();
+                    while (addresses.hasMoreElements()) {
+                        var addr = addresses.nextElement();
+                        if (addr instanceof java.net.Inet4Address) {
+                            host = addr.getHostAddress();
+                            break;
+                        }
+                    }
+                    if (!"localhost".equals(host)) break;
+                }
+            } catch (Exception ignored) {}
+        }
+        return request.getScheme() + "://" + host + ":" + request.getServerPort();
     }
 
     private String getContentType(String fileName) {

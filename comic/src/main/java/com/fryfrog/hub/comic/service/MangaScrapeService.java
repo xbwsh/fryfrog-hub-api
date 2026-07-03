@@ -792,10 +792,6 @@ public class MangaScrapeService {
         return cleaned.isBlank() ? title : cleaned;
     }
 
-    public boolean isConfigured() {
-        return true;
-    }
-
     @Transactional
     public void saveBangumiCharacters(Long comicId, Integer subjectId) {
         try {

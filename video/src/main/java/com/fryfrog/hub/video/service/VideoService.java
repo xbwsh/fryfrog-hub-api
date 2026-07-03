@@ -2,6 +2,7 @@ package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
@@ -14,7 +15,9 @@ import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +36,7 @@ import java.util.stream.Stream;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class VideoService {
 
     private final VideoRepository repository;
@@ -43,6 +47,7 @@ public class VideoService {
     private final TransactionTemplate transactionTemplate;
     private final SystemSettingService settingService;
     private final VideoActorRepository actorRepository;
+    @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
     private final MediaInfoService mediaInfoService;
@@ -51,40 +56,7 @@ public class VideoService {
 
     private final java.util.concurrent.locks.ReentrantLock dbWriteLock = new java.util.concurrent.locks.ReentrantLock();
 
-    private volatile ExecutorService scrapeExecutor = createScraperPool();
-
-    private ExecutorService createScraperPool() {
-        return Executors.newVirtualThreadPerTaskExecutor();
-    }
-
-    private ExecutorService getScraperExecutor() {
-        return scrapeExecutor;
-    }
-
-    public VideoService(VideoRepository repository, TmdbService tmdbService,
-                       NfoService nfoService, CoverArtService coverArtService,
-                       SeriesService seriesService,
-                       TransactionTemplate transactionTemplate, SystemSettingService settingService,
-                       VideoActorRepository actorRepository,
-                       @org.springframework.beans.factory.annotation.Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate,
-                       ScrapeProgressService scrapeProgressService,
-                       MediaInfoService mediaInfoService,
-                       jakarta.persistence.EntityManager entityManager,
-                       MediaLibraryService mediaLibraryService) {
-        this.repository = repository;
-        this.tmdbService = tmdbService;
-        this.nfoService = nfoService;
-        this.coverArtService = coverArtService;
-        this.seriesService = seriesService;
-        this.transactionTemplate = transactionTemplate;
-        this.settingService = settingService;
-        this.actorRepository = actorRepository;
-        this.scraperRestTemplate = scraperRestTemplate;
-        this.scrapeProgressService = scrapeProgressService;
-        this.mediaInfoService = mediaInfoService;
-        this.entityManager = entityManager;
-        this.mediaLibraryService = mediaLibraryService;
-    }
+    private volatile ExecutorService scrapeExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
@@ -118,10 +90,6 @@ public class VideoService {
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
-
-    public String getRootPath() {
-        return getFirstRootPath();
-    }
 
     public List<Video> getAllVideos() {
         return repository.findAll();
@@ -372,14 +340,14 @@ public class VideoService {
                     existing.setFilePath(absolutePath);
                     existing.setFileName(fileName);
                     existing.setFileSize(file.length());
-                    existing.setFormat(getFileExtension(fileName).toUpperCase());
+                    existing.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
                     if (libraryId != null) {
                         existing.setLibraryId(libraryId);
                     }
                     Video updated = repository.save(existing);
                     log.debug("Updated video id={}, libraryId={}", updated.getId(), updated.getLibraryId());
                     if (isAutoScrape() && updated.getTmdbId() == null) {
-                        getScraperExecutor().submit(() -> tryScrapeVideo(updated));
+                        scrapeExecutor.submit(() -> tryScrapeVideo(updated));
                     }
                     return updated;
                 }
@@ -395,7 +363,7 @@ public class VideoService {
             video.setFilePath(absolutePath);
             video.setFileName(fileName);
             video.setFileSize(file.length());
-            video.setFormat(getFileExtension(fileName).toUpperCase());
+            video.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
 
             NfoService.NfoData nfoData = nfoService.readNfoForVideo(file.toPath());
             if (nfoData != null) {
@@ -416,11 +384,11 @@ public class VideoService {
             log.debug("Saved video id={}, title={}, libraryId={}, fileName={}",
                     saved.getId(), saved.getTitle(), saved.getLibraryId(), saved.getFileName());
 
-            // 用 ffprobe 分析技术元数据（异步，不阻塞）
-            getScraperExecutor().submit(() -> mediaInfoService.updateVideoMediaInfo(saved));
+            // 用 ffprobe 分析技术元数据（同步执行，避免 SQLite 并发写锁）
+            mediaInfoService.updateVideoMediaInfo(saved);
 
             if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
-                getScraperExecutor().submit(() -> tryScrapeVideo(saved));
+                scrapeExecutor.submit(() -> tryScrapeVideo(saved));
             }
 
             return saved;
@@ -579,11 +547,6 @@ public class VideoService {
         } finally {
             dbWriteLock.unlock();
         }
-    }
-
-    private String getFileExtension(String fileName) {
-        int lastDot = fileName.lastIndexOf('.');
-        return lastDot >= 0 ? fileName.substring(lastDot + 1) : "";
     }
 
     private static final String DOTTED_QUALITY =
@@ -920,8 +883,8 @@ public class VideoService {
                 return;
             }
 
-            String oldExtension = getFileExtension(video.getFileName());
-            String newExtension = getFileExtension(newFileName);
+            String oldExtension = TitleCleaner.getFileExtension(video.getFileName());
+            String newExtension = TitleCleaner.getFileExtension(newFileName);
             if (newExtension.isBlank()) {
                 newFileName = newFileName + "." + oldExtension;
             }
@@ -961,7 +924,7 @@ public class VideoService {
             return null;
         }
 
-        String extension = getFileExtension(video.getFileName());
+        String extension = TitleCleaner.getFileExtension(video.getFileName());
 
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
             int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
@@ -974,7 +937,7 @@ public class VideoService {
 
     private void renameAssociatedFile(Path dir, String oldBaseName, String newFileName) {
         try {
-            String ext = getFileExtension(oldBaseName);
+            String ext = TitleCleaner.getFileExtension(oldBaseName);
             String dottedExt = ext.isEmpty() ? "" : "." + ext;
             String newBaseName = nfoService.getBaseName(newFileName);
             Path oldFile = dir.resolve(oldBaseName);
@@ -1261,14 +1224,14 @@ public class VideoService {
             return repository.findAll();
         }
 
-        getScraperExecutor().submit(() -> {
+        scrapeExecutor.submit(() -> {
             java.util.concurrent.atomic.AtomicInteger scraped = new java.util.concurrent.atomic.AtomicInteger(0);
             java.util.concurrent.atomic.AtomicInteger skipped = new java.util.concurrent.atomic.AtomicInteger(0);
             scrapeProgressService.start("video", videos.size());
 
             List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
             for (Video video : videos) {
-                futures.add(getScraperExecutor().submit(() -> {
+                futures.add(scrapeExecutor.submit(() -> {
                     try {
                         String query = video.getTitle();
                         if (query == null || query.isBlank()) {

@@ -2,7 +2,6 @@ package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
-import com.fryfrog.hub.common.service.SystemSettingService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +23,6 @@ public class ComicWatcherService {
 
     private final ComicMetadataService metadataService;
     private final MangaScrapeService mangaScrapeService;
-    private final SystemSettingService settingService;
     private final PeriodicScanScheduler scanScheduler;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")

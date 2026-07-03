@@ -75,10 +75,6 @@ public class AnilistService {
         return settingService.getValue("hub.anilist.language", "zh-CN");
     }
 
-    public boolean isConfigured() {
-        return true;
-    }
-
     public List<AnilistSearchResult.MediaItem> searchManga(String query) {
         if (query == null || query.isBlank()) {
             return List.of();

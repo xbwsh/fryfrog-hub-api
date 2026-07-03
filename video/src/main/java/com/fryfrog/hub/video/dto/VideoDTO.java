@@ -10,6 +10,10 @@ import java.time.LocalDateTime;
 @Schema(description = "视频信息（含元数据路径）")
 public class VideoDTO {
 
+    private static final java.util.Set<String> INCOMPATIBLE_AUDIO = java.util.Set.of(
+            "eac3", "dts", "truehd", "dca", "mlp"
+    );
+
     @Schema(description = "视频ID")
     private Long id;
 
@@ -46,8 +50,20 @@ public class VideoDTO {
     @Schema(description = "视频编码", example = "H.265")
     private String videoCodec;
 
+    @Schema(description = "编码等级", example = "Main 10")
+    private String videoProfile;
+
+    @Schema(description = "像素格式", example = "yuv420p10le")
+    private String pixFmt;
+
+    @Schema(description = "显示比例", example = "16:9")
+    private String displayAspectRatio;
+
     @Schema(description = "音频编码", example = "AAC")
     private String audioCodec;
+
+    @Schema(description = "声道布局", example = "stereo")
+    private String audioChannelLayout;
 
     @Schema(description = "分辨率", example = "3840x2160")
     private String resolution;
@@ -136,6 +152,9 @@ public class VideoDTO {
     @Schema(description = "是否已看完")
     private Boolean watched;
 
+    @Schema(description = "音频是否浏览器不兼容（需用本地播放器）", example = "true")
+    private Boolean audioIncompatible;
+
     public static VideoDTO fromEntity(Video video, String nfoPath, String posterPath, String fanartPath, String metadataDir) {
         VideoDTO dto = new VideoDTO();
         dto.setId(video.getId());
@@ -150,7 +169,13 @@ public class VideoDTO {
         dto.setFileName(video.getFileName());
         dto.setFileSize(video.getFileSize());
         dto.setVideoCodec(video.getVideoCodec());
+        dto.setVideoProfile(video.getVideoProfile());
+        dto.setPixFmt(video.getPixFmt());
+        dto.setDisplayAspectRatio(video.getDisplayAspectRatio());
         dto.setAudioCodec(video.getAudioCodec());
+        dto.setAudioChannelLayout(video.getAudioChannelLayout());
+        dto.setAudioIncompatible(video.getAudioCodec() != null
+                && INCOMPATIBLE_AUDIO.stream().anyMatch(video.getAudioCodec().toLowerCase()::contains));
         dto.setResolution(video.getResolution());
         dto.setFrameRate(video.getFrameRate());
         dto.setBitrateKbps(video.getBitrateKbps());

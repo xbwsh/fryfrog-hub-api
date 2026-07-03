@@ -26,9 +26,6 @@ public class MediaWatcherService {
     private final SystemSettingService settingService;
     private final PeriodicScanScheduler scanScheduler;
 
-    @Value("${hub.music.root-paths:./media-library/music}")
-    private String rootPathsConfig;
-
     @Value("${hub.music.supported-formats}")
     private String supportedFormats;
 
@@ -37,17 +34,10 @@ public class MediaWatcherService {
     private volatile boolean running = true;
     private Set<String> supportedFormatSet;
 
-    private List<String> getRootPaths() {
-        return Arrays.stream(rootPathsConfig.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
-    }
-
     @PostConstruct
     public void startWatching() {
         supportedFormatSet = Set.of(supportedFormats.split(","));
-        List<String> rootPaths = getRootPaths();
+        List<String> rootPaths = metadataService.getRootPaths();
 
         for (String rootPath : rootPaths) {
             Path dir = Paths.get(rootPath);
@@ -76,7 +66,7 @@ public class MediaWatcherService {
 
     private void periodicScan() {
         try {
-            for (String rootPath : getRootPaths()) {
+            for (String rootPath : metadataService.getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
             }
         } catch (Exception e) {

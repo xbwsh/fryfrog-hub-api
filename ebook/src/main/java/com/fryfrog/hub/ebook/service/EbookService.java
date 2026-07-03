@@ -1,6 +1,7 @@
 package com.fryfrog.hub.ebook.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
@@ -122,7 +123,7 @@ public class EbookService {
                 throw new IllegalArgumentException("File not found: " + filePath);
             }
 
-            String absolutePath = file.getAbsolutePath();
+            String absolutePath = java.nio.file.Path.of(file.getAbsolutePath()).toAbsolutePath().normalize().toString();
             Ebook existing = repository.findByFilePath(absolutePath).orElse(null);
 
             Ebook ebook = existing != null ? existing : new Ebook();
@@ -135,7 +136,7 @@ public class EbookService {
             ebook.setFilePath(java.nio.file.Path.of(absolutePath).toAbsolutePath().normalize().toString());
             ebook.setFileName(fileName);
             ebook.setFileSize(file.length());
-            ebook.setFormat(getFileExtension(fileName).toUpperCase());
+            ebook.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
 
             if (EpubParser.isEpub(filePath)) {
                 try {
@@ -245,11 +246,6 @@ public class EbookService {
         }
     }
 
-    private String getFileExtension(String fileName) {
-        int lastDot = fileName.lastIndexOf('.');
-        return lastDot >= 0 ? fileName.substring(lastDot + 1) : "";
-    }
-
     private static final Pattern CHAPTER_PATTERN = Pattern.compile(
             "^\\s*(第[零一二三四五六七八九十百千万\\d]+[章节目回篇]|Chapter\\s+\\d+|CHAPTER\\s+\\d+).*",
             Pattern.MULTILINE
@@ -351,56 +347,6 @@ public class EbookService {
         }
     }
 
-    private void organizeEbookFile(Ebook ebook) {
-        try {
-            File file = new File(ebook.getFilePath());
-            if (!file.exists()) return;
-
-            String seriesName = ebook.getSeries();
-            if (seriesName == null || seriesName.isBlank()) {
-                seriesName = ebook.getTitle();
-            }
-            if (seriesName == null || seriesName.isBlank()) return;
-
-            Path targetDir = Paths.get(getFirstRootPath(), sanitizeFileName(seriesName));
-            Files.createDirectories(targetDir);
-
-            String newName = buildEbookFileName(ebook);
-            Path targetPath = targetDir.resolve(newName);
-
-            if (!file.toPath().toAbsolutePath().equals(targetPath.toAbsolutePath())) {
-                Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-                ebook.setFilePath(targetPath.toAbsolutePath().normalize().toString());
-                ebook.setFileName(newName);
-                repository.save(ebook);
-                log.debug("Organized ebook to: {}", targetPath);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to organize ebook file for {}: {}", ebook.getTitle(), e.getMessage());
-        }
-    }
-
-    private String buildEbookFileName(Ebook ebook) {
-        StringBuilder name = new StringBuilder();
-        String seriesName = ebook.getSeries();
-        if (seriesName != null && !seriesName.isBlank()) {
-            name.append(sanitizeFileName(seriesName));
-        } else {
-            name.append(sanitizeFileName(ebook.getTitle()));
-        }
-        if (ebook.getVolume() != null) {
-            name.append(" Vol.").append(ebook.getVolume());
-        }
-        String ext = ebook.getFormat() != null ? ebook.getFormat().toLowerCase() : "epub";
-        name.append(".").append(ext);
-        return name.toString();
-    }
-
-    private String sanitizeFileName(String name) {
-        if (name == null) return "Unknown";
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-    }
-
     private String cleanTitleForSearch(String title) {
         String clean = title;
         clean = clean.replaceAll("[\\[\\]［］]", " ").trim();
@@ -414,52 +360,4 @@ public class EbookService {
         return clean.isEmpty() ? title : clean;
     }
 
-    private String extractSeriesName(String fileName) {
-        String clean = fileName;
-        clean = clean.replaceAll("[\\[\\]［］]", "|").trim();
-        String[] parts = clean.split("\\|");
-        List<String> seriesParts = new ArrayList<>();
-
-        for (String part : parts) {
-            String trimmed = part.trim();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.matches("\\d+")) continue;
-            if (trimmed.matches("[台日港]版")) continue;
-            if (trimmed.toLowerCase().matches("(progressive|extra|online|alzation|unlasting|rainbow|clover|regret|mother|deepening|candid|calibur|divine|editorial|illustration|fanbox|doujin|dl版)")) continue;
-            if (trimmed.length() <= 4 && trimmed.matches("[\\p{IsHan}]+")) continue;
-            seriesParts.add(trimmed);
-        }
-
-        String result = String.join("", seriesParts).replaceAll("[\\s\\-_]+", "").trim();
-        if (result.isEmpty()) {
-            result = cleanTitleForSearch(fileName).replaceAll("[\\s\\-_]+", "").trim();
-        }
-        return result;
-    }
-
-    private Integer extractVolumeFromFileName(String fileName) {
-        if (fileName == null) return null;
-
-        Matcher m = Pattern.compile("卷(\\d+)").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-
-        m = Pattern.compile("[Vv]ol\\.?\\s*(\\d+)").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-
-        m = Pattern.compile("#(\\d+)").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-
-        m = Pattern.compile("[(\\[]\\s*(\\d+)\\s*[)\\]]").matcher(fileName);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-
-        return null;
-    }
 }

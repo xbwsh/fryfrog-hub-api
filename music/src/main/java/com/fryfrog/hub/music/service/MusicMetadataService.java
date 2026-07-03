@@ -2,6 +2,7 @@ package com.fryfrog.hub.music.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.service.SystemSettingService;
+import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.model.Playlist;
 import com.fryfrog.hub.music.model.PlaylistTrack;
@@ -237,8 +238,8 @@ public class MusicMetadataService {
                         ? track.getArtist() : "未知歌手";
                 String album = (track.getAlbum() != null && !track.getAlbum().isBlank())
                         ? track.getAlbum() : "未知专辑";
-                String safeArtist = sanitizeFileName(artist);
-                String safeAlbum = sanitizeFileName(album);
+                String safeArtist = TitleCleaner.sanitizeFileName(artist);
+                String safeAlbum = TitleCleaner.sanitizeFileName(album);
 
                 Path targetDir = Paths.get(firstRootPath, safeArtist, safeAlbum);
                 Path targetFile = targetDir.resolve(track.getFileName());
@@ -387,7 +388,7 @@ public class MusicMetadataService {
                 throw new IllegalArgumentException("File not found: " + filePath);
             }
 
-            String absolutePath = file.getAbsolutePath();
+            String absolutePath = java.nio.file.Path.of(file.getAbsolutePath()).toAbsolutePath().normalize().toString();
             MusicTrack existing = repository.findByFilePath(absolutePath).orElse(null);
             MusicTrack track = existing != null ? existing : new MusicTrack();
 
@@ -500,7 +501,7 @@ public class MusicMetadataService {
                     ? track.getArtist() : "未知歌手";
             String album = (track.getAlbum() != null && !track.getAlbum().isBlank())
                     ? track.getAlbum() : "未知专辑";
-            Path targetDir = Paths.get(firstRootPath, sanitizeFileName(artist), sanitizeFileName(album));
+            Path targetDir = Paths.get(firstRootPath, TitleCleaner.sanitizeFileName(artist), TitleCleaner.sanitizeFileName(album));
 
             if (!Files.exists(targetDir)) {
                 Files.createDirectories(targetDir);
@@ -517,10 +518,6 @@ public class MusicMetadataService {
             log.warn("Failed to organize folder for {}: {}", track.getFileName(), e.getMessage());
             return Paths.get(track.getFilePath()).getParent();
         }
-    }
-
-    private String sanitizeFileName(String name) {
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
 
     @Transactional
@@ -572,7 +569,7 @@ public class MusicMetadataService {
                         })
                         .forEach(path -> {
                             try {
-                                String absolutePath = path.toAbsolutePath().toString();
+                                String absolutePath = path.toAbsolutePath().normalize().toString();
 
                                 if (repository.findByFilePath(absolutePath).isPresent()) {
                                     log.debug("Skipping already indexed: {}", path.getFileName());
@@ -656,32 +653,6 @@ public class MusicMetadataService {
         }
     }
 
-    private void saveLyricsFile(File audioFile, String lyrics) {
-        try {
-            Path lyricsPath = audioFile.toPath().resolveSibling(
-                    audioFile.getName().replaceAll("\\.[^.]+$", ".lrc"));
-            if (!lyrics.endsWith("\n")) {
-                lyrics += "\n";
-            }
-            Files.writeString(lyricsPath, lyrics);
-        } catch (IOException e) {
-            log.warn("Failed to save lyrics file for: {}", audioFile.getName(), e);
-        }
-    }
-
-    private String saveCoverFile(File audioFile, byte[] coverData) {
-        try {
-            Path coverDir = audioFile.toPath().getParent();
-            String ext = guessImageExtension(coverData);
-            Path coverPath = coverDir.resolve("cover" + ext);
-            Files.write(coverPath, coverData);
-            return coverPath.toAbsolutePath().toString();
-        } catch (IOException e) {
-            log.warn("Failed to save cover file for: {}", audioFile.getName(), e);
-            return null;
-        }
-    }
-
     private String guessImageExtension(byte[] data) {
         if (data == null || data.length < 4) {
             return ".jpg";
@@ -696,72 +667,6 @@ public class MusicMetadataService {
             return ".gif";
         }
         return ".jpg";
-    }
-
-    private void writeMetadataToFile(File file, MusicTrack track) {
-        try {
-            org.jaudiotagger.audio.AudioFile audioFile = org.jaudiotagger.audio.AudioFileIO.read(file);
-            org.jaudiotagger.tag.Tag tag = audioFile.getTagOrCreateDefault();
-
-            boolean changed = false;
-
-            if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.TITLE), track.getTitle())) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.TITLE, track.getTitle());
-                changed = true;
-            }
-            if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST), track.getArtist())) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.ARTIST, track.getArtist());
-                changed = true;
-            }
-            if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM), track.getAlbum())) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.ALBUM, track.getAlbum());
-                changed = true;
-            }
-            if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST), track.getAlbumArtist())) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.ALBUM_ARTIST, track.getAlbumArtist());
-                changed = true;
-            }
-
-            String fileTrack = tag.getFirst(org.jaudiotagger.tag.FieldKey.TRACK);
-            String dbTrack = track.getTrackNumber() != null ? String.valueOf(track.getTrackNumber()) : null;
-            if (isDifferent(fileTrack, dbTrack)) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.TRACK, dbTrack);
-                changed = true;
-            }
-
-            String fileDisc = tag.getFirst(org.jaudiotagger.tag.FieldKey.DISC_NO);
-            String dbDisc = track.getDiscNumber() != null ? String.valueOf(track.getDiscNumber()) : null;
-            if (isDifferent(fileDisc, dbDisc)) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.DISC_NO, dbDisc);
-                changed = true;
-            }
-
-            String fileYear = tag.getFirst(org.jaudiotagger.tag.FieldKey.YEAR);
-            String dbYear = track.getYear() != null ? String.valueOf(track.getYear()) : null;
-            if (isDifferent(fileYear, dbYear)) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.YEAR, dbYear);
-                changed = true;
-            }
-            if (isDifferent(tag.getFirst(org.jaudiotagger.tag.FieldKey.GENRE), track.getGenre())) {
-                tag.setField(org.jaudiotagger.tag.FieldKey.GENRE, track.getGenre());
-                changed = true;
-            }
-
-            if (changed) {
-                audioFile.commit();
-                log.debug("Wrote metadata to file: {}", file.getName());
-            }
-        } catch (Exception e) {
-            log.warn("Failed to write metadata to file: {}", file.getName(), e);
-        }
-    }
-
-    private boolean isDifferent(String fileValue, String dbValue) {
-        String fv = (fileValue == null || fileValue.isBlank()) ? null : fileValue.trim();
-        String dv = (dbValue == null || dbValue.isBlank()) ? null : dbValue.trim();
-        if (fv == null && dv == null) return false;
-        if (fv == null || dv == null) return true;
-        return !fv.equals(dv);
     }
 
     private Integer parseInteger(String value) {

@@ -51,19 +51,19 @@ public class MediaLibrary extends BaseEntity {
     }
 
     public boolean isVideoType() {
-        return "VIDEO".equalsIgnoreCase(type);
+        return Type.VIDEO.name().equalsIgnoreCase(type);
     }
 
     public boolean isMovieSubType() {
-        return "MOVIE".equalsIgnoreCase(subType);
+        return VideoSubType.MOVIE.name().equalsIgnoreCase(subType);
     }
 
     public boolean isTvSubType() {
-        return "TV".equalsIgnoreCase(subType);
+        return VideoSubType.TV.name().equalsIgnoreCase(subType);
     }
 
     public boolean isMixedSubType() {
-        return subType == null || "MIXED".equalsIgnoreCase(subType);
+        return subType == null || VideoSubType.MIXED.name().equalsIgnoreCase(subType);
     }
 
     public String getMediaTypeFilter() {

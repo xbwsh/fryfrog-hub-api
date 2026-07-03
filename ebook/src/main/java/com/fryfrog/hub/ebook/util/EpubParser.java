@@ -161,18 +161,6 @@ public class EpubParser {
         }
     }
 
-    public static List<String> listImages(String filePath) throws Exception {
-        try (ZipFile zip = new ZipFile(filePath, StandardCharsets.UTF_8)) {
-            List<String> images = new ArrayList<>();
-            for (ZipEntry e : Collections.list(zip.entries())) {
-                if (!e.isDirectory() && isImageFile(e.getName().toLowerCase())) {
-                    images.add(e.getName());
-                }
-            }
-            return images;
-        }
-    }
-
     private static final Pattern IMG_SRC_PATTERN = Pattern.compile(
             "(<img[^>]*\\bsrc=[\"'])([^\"']+)([\"'])"
     );
@@ -190,33 +178,6 @@ public class EpubParser {
             m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(replacement));
         }
         m.appendTail(sb);
-        return sb.toString();
-    }
-
-    public static byte[] readCover(String filePath, EpubMetadata metadata) throws Exception {
-        if (metadata == null || metadata.coverEntryName() == null) return null;
-
-        try (ZipFile zip = new ZipFile(filePath, StandardCharsets.UTF_8)) {
-            ZipEntry entry = zip.getEntry(metadata.coverEntryName());
-            if (entry == null) return null;
-            try (InputStream is = zip.getInputStream(entry)) {
-                return is.readAllBytes();
-            }
-        }
-    }
-
-    public static String readAllContent(String filePath) throws Exception {
-        List<ChapterEntry> chapters = extractChapters(filePath);
-        if (chapters.isEmpty()) return "";
-
-        StringBuilder sb = new StringBuilder();
-        for (ChapterEntry ch : chapters) {
-            String content = readChapterContent(filePath, ch.href());
-            if (!content.isBlank()) {
-                if (!sb.isEmpty()) sb.append("\n\n");
-                sb.append(content);
-            }
-        }
         return sb.toString();
     }
 

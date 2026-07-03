@@ -6,6 +6,16 @@ public final class TitleCleaner {
 
     private TitleCleaner() {}
 
+    public static String sanitizeFileName(String name) {
+        if (name == null) return "Unknown";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+    }
+
+    public static String getFileExtension(String fileName) {
+        int lastDot = fileName.lastIndexOf('.');
+        return lastDot >= 0 ? fileName.substring(lastDot + 1) : "";
+    }
+
     private static final String DOTTED_QUALITY =
             "(?i)\\bH\\.?264\\b|\\bH\\.?265\\b|\\bDD[P+]\\s*\\.?\\s*\\d+(?:\\.\\d+)*\\b" +
             "|\\bDTS(?:\\s*-?\\s*HD)?(?:\\s*\\.?\\s*(?:MA|ES|RA))?(?:\\s*\\.?\\s*\\d+(?:\\.\\d+)*)?\\b" +
@@ -72,42 +82,4 @@ public final class TitleCleaner {
         return cleaned.isBlank() ? title : cleaned;
     }
 
-    public static String clean(String title) {
-        if (title == null || title.isBlank()) {
-            return title;
-        }
-
-        String cleaned = title;
-
-        cleaned = cleaned.replaceAll("\\[.*?\\]", " ");
-        cleaned = cleaned.replaceAll("【.*?】", " ");
-        cleaned = cleaned.replaceAll("\\(.*?\\)", " ");
-        cleaned = cleaned.replaceAll("（.*?）", " ");
-
-        cleaned = DOTTED_QUALITY_PATTERN.matcher(cleaned).replaceAll(" ");
-        cleaned = cleaned.replaceAll("[._]", " ");
-
-        cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\s*E\\d{1,4}\\b", " ");
-        cleaned = QUALITY_COMPILE_PATTERN.matcher(cleaned).replaceAll(" ");
-
-        cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:季|部|期)", " ");
-        cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:话|集|回|篇|章)", " ");
-
-        cleaned = cleaned.replaceAll("(?i)\\bSeason\\s*\\d+\\b", " ");
-        cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\b", " ");
-
-        cleaned = cleaned.replaceAll("(?i)\\bE(?:p(?:isode)?)?\\s*\\d{1,4}\\b", " ");
-        cleaned = cleaned.replaceAll("[＃#]\\s*\\d{1,4}\\b", " ");
-
-        cleaned = cleaned.replaceAll("\\s*[-–—]\\s*\\d{1,4}\\s*$", "");
-        cleaned = cleaned.replaceAll("\\s+\\d{1,4}\\s*$", "");
-        cleaned = cleaned.replaceAll("^\\d{1,4}\\s*[-–—]\\s*", "");
-        cleaned = cleaned.replaceAll("\\s*[-–—]\\s*$", "");
-        cleaned = cleaned.replaceAll("[,;]+\\s*$", "");
-
-        cleaned = cleaned.replaceAll("\\s*[-–—]+\\s*", " ");
-        cleaned = cleaned.replaceAll("\\s+", " ").trim();
-
-        return cleaned.isBlank() ? title : cleaned;
-    }
 }

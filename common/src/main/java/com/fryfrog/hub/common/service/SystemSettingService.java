@@ -63,6 +63,10 @@ public class SystemSettingService {
     }
 
     private void migrateKeys() {
+        boolean hasOldKeys = KEY_MIGRATION.keySet().stream()
+                .anyMatch(key -> repository.findByKey(key).isPresent());
+        if (!hasOldKeys) return;
+
         transactionTemplate.executeWithoutResult(status -> {
             int migrated = 0;
             for (Map.Entry<String, String> entry : KEY_MIGRATION.entrySet()) {

@@ -138,26 +138,8 @@ public class SeriesService {
         seriesRepository.save(series);
     }
 
-    public Map<String, List<Video>> groupVideosBySeries(List<Video> videos) {
-        Map<String, List<Video>> grouped = new LinkedHashMap<>();
-
-        for (Video video : videos) {
-            String cleanedTitle = cleanTitle(video.getTitle());
-            grouped.computeIfAbsent(cleanedTitle, k -> new ArrayList<>()).add(video);
-        }
-
-        return grouped.entrySet().stream()
-                .filter(e -> e.getValue().size() > 1)
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        Map.Entry::getValue,
-                        (e1, e2) -> e1,
-                        LinkedHashMap::new
-                ));
-    }
-
     public String cleanTitle(String title) {
-        String cleaned = com.fryfrog.hub.common.util.TitleCleaner.clean(title);
+        String cleaned = com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title);
         return (cleaned == null || cleaned.isBlank()) ? "Unknown" : cleaned;
     }
 

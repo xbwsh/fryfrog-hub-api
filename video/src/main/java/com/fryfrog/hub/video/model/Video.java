@@ -42,6 +42,9 @@ public class Video extends BaseEntity {
     @Schema(description = "时长（分钟）", example = "173")
     private Integer durationMinutes;
 
+    @Schema(description = "时长（秒，精确）", example = "10380.0")
+    private Double durationSeconds;
+
     @Schema(description = "文件完整路径")
     @Column(unique = true)
     private String filePath;
@@ -56,8 +59,20 @@ public class Video extends BaseEntity {
     @Schema(description = "视频编码", example = "H.265")
     private String videoCodec;
 
+    @Schema(description = "编码等级", example = "Main 10")
+    private String videoProfile;
+
+    @Schema(description = "像素格式", example = "yuv420p10le")
+    private String pixFmt;
+
+    @Schema(description = "显示比例", example = "16:9")
+    private String displayAspectRatio;
+
     @Schema(description = "音频编码", example = "AAC")
     private String audioCodec;
+
+    @Schema(description = "声道布局", example = "stereo")
+    private String audioChannelLayout;
 
     @Schema(description = "分辨率", example = "3840x2160")
     private String resolution;

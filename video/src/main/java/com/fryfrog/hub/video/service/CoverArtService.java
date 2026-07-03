@@ -93,24 +93,4 @@ public class CoverArtService {
         }
     }
 
-    public Resource getCoverArt(Long videoId, com.fryfrog.hub.video.repository.VideoRepository repository) {
-        Video video = repository.findById(videoId).orElse(null);
-        if (video == null) {
-            return null;
-        }
-
-        Path posterPath = nfoService.getPosterPath(video);
-        if (Files.exists(posterPath)) {
-            return new FileSystemResource(posterPath.toFile());
-        }
-
-        if (video.getCoverArtPath() != null) {
-            Path coverPath = Paths.get(video.getCoverArtPath());
-            if (Files.exists(coverPath)) {
-                return new FileSystemResource(coverPath.toFile());
-            }
-        }
-
-        return null;
-    }
 }

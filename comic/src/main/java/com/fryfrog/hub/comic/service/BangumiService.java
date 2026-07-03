@@ -85,26 +85,6 @@ public class BangumiService {
         return List.of();
     }
 
-    public List<Episode> getEpisodes(Integer subjectId) {
-        if (subjectId == null) return List.of();
-
-        String url = BASE_URL + "/v0/episodes?subject_id=" + subjectId + "&limit=200";
-        String body = httpGetWithRetry(url);
-        if (body == null) return List.of();
-
-        try {
-            var root = objectMapper.readTree(body);
-            var data = root.path("data");
-            if (data.isArray()) {
-                return objectMapper.convertValue(data,
-                        objectMapper.getTypeFactory().constructCollectionType(List.class, Episode.class));
-            }
-        } catch (Exception e) {
-            log.error("Failed to parse Bangumi episodes: subjectId={}: {}", subjectId, e.getMessage(), e);
-        }
-        return List.of();
-    }
-
     public List<Character> getCharacters(Integer subjectId) {
         if (subjectId == null) return List.of();
 

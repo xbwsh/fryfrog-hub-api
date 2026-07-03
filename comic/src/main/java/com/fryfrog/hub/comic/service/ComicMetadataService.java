@@ -1,6 +1,7 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
 import com.fryfrog.hub.comic.model.Comic;
@@ -155,7 +156,7 @@ public class ComicMetadataService {
                 throw new IllegalArgumentException("File not found: " + filePath);
             }
 
-            String absolutePath = file.getAbsolutePath();
+            String absolutePath = java.nio.file.Path.of(file.getAbsolutePath()).toAbsolutePath().normalize().toString();
             Comic existing = repository.findByFilePath(absolutePath).orElse(null);
 
             Comic comic = existing != null ? existing : new Comic();
@@ -169,7 +170,7 @@ public class ComicMetadataService {
             comic.setFilePath(Paths.get(absolutePath).toAbsolutePath().normalize().toString());
             comic.setFileName(fileName);
             comic.setFileSize(file.length());
-            comic.setFormat(getFileExtension(fileName).toUpperCase());
+            comic.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
 
             if (comic.getSeries() == null || comic.getSeries().isBlank()) {
                 comic.setSeries(extractSeriesName(fileName));
@@ -265,7 +266,7 @@ public class ComicMetadataService {
             throw new IllegalArgumentException("Comic file not found: " + comic.getFilePath());
         }
 
-        String ext = getFileExtension(file.getName()).toLowerCase();
+        String ext = TitleCleaner.getFileExtension(file.getName()).toLowerCase();
         try {
             if (isZipBased(ext)) {
                 return listZipPages(file);
@@ -283,7 +284,7 @@ public class ComicMetadataService {
             throw new IllegalArgumentException("Comic file not found: " + comic.getFilePath());
         }
 
-        String ext = getFileExtension(file.getName()).toLowerCase();
+        String ext = TitleCleaner.getFileExtension(file.getName()).toLowerCase();
         try {
             if (isZipBased(ext)) {
                 return readZipPage(file, pageNum);
@@ -326,7 +327,7 @@ public class ComicMetadataService {
             String seriesName = comic.getSeries();
             if (seriesName == null || seriesName.isBlank()) return false;
 
-            Path targetDir = Paths.get(getFirstRootPath(), sanitizeFileName(seriesName));
+            Path targetDir = Paths.get(getFirstRootPath(), TitleCleaner.sanitizeFileName(seriesName));
             Files.createDirectories(targetDir);
 
             String newName = buildComicFileName(comic);
@@ -361,9 +362,9 @@ public class ComicMetadataService {
         StringBuilder name = new StringBuilder();
         String seriesName = comic.getSeries();
         if (seriesName != null && !seriesName.isBlank()) {
-            name.append(sanitizeFileName(seriesName));
+            name.append(TitleCleaner.sanitizeFileName(seriesName));
         } else {
-            name.append(sanitizeFileName(comic.getTitle()));
+            name.append(TitleCleaner.sanitizeFileName(comic.getTitle()));
         }
         if (comic.getVolume() != null) {
             name.append(" Vol.").append(String.format("%02d", comic.getVolume()));
@@ -371,11 +372,6 @@ public class ComicMetadataService {
         String ext = comic.getFormat() != null ? comic.getFormat().toLowerCase() : "cbz";
         name.append(".").append(ext);
         return name.toString();
-    }
-
-    private String sanitizeFileName(String name) {
-        if (name == null) return "Unknown";
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
 
     private String cleanTitleForSearch(String title) {
@@ -487,7 +483,7 @@ public class ComicMetadataService {
     }
 
     private String extractCover(File file) throws IOException {
-        String ext = getFileExtension(file.getName()).toLowerCase();
+        String ext = TitleCleaner.getFileExtension(file.getName()).toLowerCase();
         if (isZipBased(ext)) {
             try (ZipFile zipFile = new ZipFile(file)) {
                 ZipEntry firstImage = null;
@@ -534,7 +530,7 @@ public class ComicMetadataService {
     }
 
     private int countPages(File file) throws IOException {
-        String ext = getFileExtension(file.getName()).toLowerCase();
+        String ext = TitleCleaner.getFileExtension(file.getName()).toLowerCase();
         if (isZipBased(ext)) {
             try (ZipFile zipFile = new ZipFile(file)) {
                 int count = 0;
@@ -556,11 +552,6 @@ public class ComicMetadataService {
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg")
                 || lower.endsWith(".png") || lower.endsWith(".gif")
                 || lower.endsWith(".webp");
-    }
-
-    private String getFileExtension(String fileName) {
-        int lastDot = fileName.lastIndexOf('.');
-        return lastDot >= 0 ? fileName.substring(lastDot + 1) : "";
     }
 
     private boolean isZipBased(String ext) {

@@ -10,6 +10,4 @@ public interface MediaLibraryRepository extends JpaRepository<MediaLibrary, Long
     List<MediaLibrary> findAllByOrderBySortOrderAsc();
 
     List<MediaLibrary> findByEnabledTrueOrderBySortOrderAsc();
-
-    List<MediaLibrary> findByType(String type);
 }

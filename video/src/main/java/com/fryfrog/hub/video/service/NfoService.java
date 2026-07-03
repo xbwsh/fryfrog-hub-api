@@ -118,7 +118,7 @@ public class NfoService {
     }
 
     private String cleanTitle(String title) {
-        String cleaned = com.fryfrog.hub.common.util.TitleCleaner.clean(title);
+        String cleaned = com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title);
         return (cleaned == null || cleaned.isBlank()) ? "Unknown" : cleaned;
     }
 

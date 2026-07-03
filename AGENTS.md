@@ -2,6 +2,12 @@
 
 统一媒体后端 API 服务，支持音乐、漫画、电子书、视频的元数据管理和流媒体播放。
 
+## Default Behavior
+
+**Ponytail mode: always active.** For all coding tasks (writing, refactoring, fixing, reviewing), use the simplest solution that works. Reach for stdlib before dependencies, native features before custom code. YAGNI first. Use `/ponytail ultra` only when explicitly asked.
+
+**Language: Chinese responses required.** All final summaries, explanations, and user-facing output must be in Chinese (中文), regardless of which skill is invoked or what language the code/comments use.
+
 ## Tech Stack
 
 - Java 21 + Spring Boot 3.x
