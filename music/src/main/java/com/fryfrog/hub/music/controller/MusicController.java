@@ -133,7 +133,9 @@ public class MusicController {
     @Operation(summary = "记录播放", description = "记录曲目播放次数和最后播放时间")
     public ResponseEntity<ApiResponse<MusicTrack>> recordPlay(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(service.recordPlay(id)));
+        MusicTrack track = service.recordPlay(id);
+        fillApiPaths(track);
+        return ResponseEntity.ok(ApiResponse.success(track));
     }
 
     @GetMapping("/recommendations")
@@ -266,10 +268,11 @@ public class MusicController {
 
         long fileLength = file.length();
         Resource resource = new FileSystemResource(file);
+        MediaType contentType = resolveAudioMediaType(file.getName());
 
         if (range == null) {
             return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentType(contentType)
                     .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(fileLength))
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                     .body(resource);
@@ -287,7 +290,7 @@ public class MusicController {
         response.setHeader(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + fileLength);
         response.setHeader(HttpHeaders.ACCEPT_RANGES, "bytes");
         response.setHeader(HttpHeaders.CONTENT_LENGTH, String.valueOf(contentLength));
-        response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+        response.setContentType(contentType.toString());
 
         try {
             java.io.InputStream inputStream = new java.io.FileInputStream(file);
@@ -376,10 +379,33 @@ public class MusicController {
         return MediaType.IMAGE_JPEG;
     }
 
+    private MediaType resolveAudioMediaType(String fileName) {
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".mp3")) return MediaType.parseMediaType("audio/mpeg");
+        if (lower.endsWith(".flac")) return MediaType.parseMediaType("audio/flac");
+        if (lower.endsWith(".ogg")) return MediaType.parseMediaType("audio/ogg");
+        if (lower.endsWith(".wav")) return MediaType.parseMediaType("audio/wav");
+        if (lower.endsWith(".aac")) return MediaType.parseMediaType("audio/aac");
+        if (lower.endsWith(".m4a")) return MediaType.parseMediaType("audio/mp4");
+        if (lower.endsWith(".wma")) return MediaType.parseMediaType("audio/x-ms-wma");
+        return MediaType.APPLICATION_OCTET_STREAM;
+    }
+
     private void fillApiPaths(MusicTrack track) {
         String basePath = "/api/v1/music/" + track.getId();
         track.setCoverApiPath(basePath + "/cover");
         track.setArtistImageApiPath(basePath + "/artist-image");
         track.setStreamApiPath(basePath + "/stream");
+
+        // 检查同目录下是否有 .lrc 文件
+        if (track.getFilePath() != null) {
+            Path audioPath = Path.of(track.getFilePath());
+            Path parent = audioPath.getParent();
+            if (parent != null) {
+                String baseName = audioPath.getFileName().toString().replaceAll("\\.[^.]+$", "");
+                Path lrcPath = parent.resolve(baseName + ".lrc");
+                track.setHasExternalLyrics(Files.exists(lrcPath));
+            }
+        }
     }
 }

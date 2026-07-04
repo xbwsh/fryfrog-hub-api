@@ -1,8 +1,5 @@
 spring:
+  application:
+    name: fryfrog-hub-api
   profiles:
-    active: dev
-
-server:
-  port: 20058
-
-spring.application.name: fryfrog-hub-api
+    active: default

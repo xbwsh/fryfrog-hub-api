@@ -655,18 +655,12 @@ public class VideoController {
     private VideoDTO toDTO(Video video, WatchProgress progress) {
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         String baseName = nfoService.getBaseName(video.getFileName());
-        Path nfoPath = videoDir.resolve(baseName + ".nfo");
-        Path posterPath = videoDir.resolve(baseName + "-poster.jpg");
-        Path fanartPath = videoDir.resolve(baseName + "-fanart.jpg");
-        Path metadataDir = nfoService.getMetadataDir(video);
+        boolean hasNfo = Files.exists(videoDir.resolve(baseName + ".nfo"));
+        boolean hasPoster = Files.exists(videoDir.resolve(baseName + "-poster.jpg"));
+        boolean hasFanart = Files.exists(videoDir.resolve(baseName + "-fanart.jpg"));
+        boolean hasMetadataDir = Files.exists(nfoService.getMetadataDir(video));
 
-        VideoDTO dto = VideoDTO.fromEntity(
-                video,
-                Files.exists(nfoPath) ? nfoPath.toString() : null,
-                Files.exists(posterPath) ? posterPath.toString() : null,
-                Files.exists(fanartPath) ? fanartPath.toString() : null,
-                Files.exists(metadataDir) ? metadataDir.toString() : null
-        );
+        VideoDTO dto = VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir);
 
         if (progress != null) {
             dto.setWatchPosition(progress.getPositionSeconds());

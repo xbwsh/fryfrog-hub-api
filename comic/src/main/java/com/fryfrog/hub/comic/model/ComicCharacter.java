@@ -29,6 +29,7 @@ public class ComicCharacter extends BaseEntity {
     private String imageUrl;
 
     @Schema(description = "角色图片本地路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String imagePath;
 
     @Schema(description = "角色描述")

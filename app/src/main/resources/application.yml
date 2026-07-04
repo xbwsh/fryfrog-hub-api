@@ -1,23 +1,33 @@
 server:
-  port: 20058
+  port: ${SERVER_PORT:20058}
 
 spring:
   application:
     name: fryfrog-hub-api
-  profiles:
-    active: dev
   threads:
     virtual:
       enabled: true
   datasource:
-    hikari:
-      maximum-pool-size: ${DB_POOL_SIZE:10}
+    url: jdbc:sqlite:${DB_PATH:./data/fryfrog.db}?journal_mode=WAL&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.community.dialect.SQLiteDialect
+  hikari:
+    maximum-pool-size: ${DB_POOL_SIZE:10}
 
 watcher:
   periodic-scan: true
   periodic-scan-interval: ${PERIODIC_SCAN_INTERVAL:300}
 
 hub:
+  auth:
+    enabled: ${AUTH_ENABLED:true}
+    password: ${AUTH_PASSWORD:1234}
   media:
     root-path: ${MEDIA_ROOT_PATH:./media-library}
   music:
@@ -57,6 +67,10 @@ hub:
   proxy:
     host: ${PROXY_HOST:127.0.0.1}
     port: ${PROXY_PORT:7890}
+
+logging:
+  level:
+    com.fryfrog: ${LOG_LEVEL:INFO}
 
 springdoc:
   api-docs:

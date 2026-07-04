@@ -6,6 +6,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import lombok.*;
 
 @Entity
@@ -82,6 +83,10 @@ public class MusicTrack extends BaseEntity {
 
     @Schema(description = "歌词来源", example = "embedded")
     private String lyricsSource;
+
+    @Schema(description = "是否有外挂歌词文件(.lrc)")
+    @Transient
+    private Boolean hasExternalLyrics;
 
     @Schema(description = "唱片公司", example = "Gold Typhoon")
     private String label;

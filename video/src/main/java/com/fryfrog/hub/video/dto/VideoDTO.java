@@ -110,17 +110,17 @@ public class VideoDTO {
     @Schema(description = "元数据最后更新时间")
     private LocalDateTime metadataUpdatedAt;
 
-    @Schema(description = "元数据目录路径")
-    private String metadataDir;
+    @Schema(description = "是否有元数据目录")
+    private Boolean hasMetadataDir;
 
-    @Schema(description = "NFO文件路径")
-    private String nfoPath;
+    @Schema(description = "是否有NFO文件")
+    private Boolean hasNfo;
 
-    @Schema(description = "竖屏海报路径")
-    private String posterPath;
+    @Schema(description = "是否有竖屏海报")
+    private Boolean hasPoster;
 
-    @Schema(description = "横屏背景图路径")
-    private String fanartPath;
+    @Schema(description = "是否有横屏背景图")
+    private Boolean hasFanart;
 
     @Schema(description = "是否已刮削元数据")
     private Boolean scraped;
@@ -155,7 +155,7 @@ public class VideoDTO {
     @Schema(description = "音频是否浏览器不兼容（需用本地播放器）", example = "true")
     private Boolean audioIncompatible;
 
-    public static VideoDTO fromEntity(Video video, String nfoPath, String posterPath, String fanartPath, String metadataDir) {
+    public static VideoDTO fromEntity(Video video, boolean hasNfo, boolean hasPoster, boolean hasFanart, boolean hasMetadataDir) {
         VideoDTO dto = new VideoDTO();
         dto.setId(video.getId());
         dto.setTitle(video.getTitle());
@@ -191,10 +191,10 @@ public class VideoDTO {
         dto.setStatus(video.getStatus());
         dto.setMetadataSource(video.getMetadataSource());
         dto.setMetadataUpdatedAt(video.getMetadataUpdatedAt());
-        dto.setNfoPath(nfoPath);
-        dto.setPosterPath(posterPath);
-        dto.setFanartPath(fanartPath);
-        dto.setMetadataDir(metadataDir);
+        dto.setHasNfo(hasNfo);
+        dto.setHasPoster(hasPoster);
+        dto.setHasFanart(hasFanart);
+        dto.setHasMetadataDir(hasMetadataDir);
         dto.setScraped(video.getTmdbId() != null);
         dto.setIsSeries(video.getIsSeries());
         dto.setLibraryId(video.getLibraryId());

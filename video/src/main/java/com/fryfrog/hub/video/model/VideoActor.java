@@ -26,6 +26,7 @@ public class VideoActor extends BaseEntity {
     private String character;
 
     @Schema(description = "演员头像本地路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String imagePath;
 
     @Schema(description = "演员头像远程URL")

@@ -123,17 +123,10 @@ public class SeriesController {
     }
 
     private VideoDTO toVideoDTO(Video video) {
-        java.nio.file.Path posterPath = nfoService.getPosterPath(video);
-        java.nio.file.Path fanartPath = nfoService.getFanartPath(video);
-        java.nio.file.Path nfoPath = nfoService.getNfoPath(video);
-        java.nio.file.Path metadataDir = nfoService.getMetadataDir(video);
-
-        return VideoDTO.fromEntity(
-                video,
-                Files.exists(nfoPath) ? nfoPath.toString() : null,
-                Files.exists(posterPath) ? posterPath.toString() : null,
-                Files.exists(fanartPath) ? fanartPath.toString() : null,
-                Files.exists(metadataDir) ? metadataDir.toString() : null
-        );
+        boolean hasNfo = Files.exists(nfoService.getNfoPath(video));
+        boolean hasPoster = Files.exists(nfoService.getPosterPath(video));
+        boolean hasFanart = Files.exists(nfoService.getFanartPath(video));
+        boolean hasMetadataDir = Files.exists(nfoService.getMetadataDir(video));
+        return VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir);
     }
 }
