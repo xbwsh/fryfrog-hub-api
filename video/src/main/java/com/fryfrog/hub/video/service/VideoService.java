@@ -6,6 +6,7 @@ import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
+import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
@@ -53,6 +54,7 @@ public class VideoService {
     private final MediaInfoService mediaInfoService;
     private final jakarta.persistence.EntityManager entityManager;
     private final MediaLibraryService mediaLibraryService;
+    private final HanimeScraperService hanimeScraperService;
 
     private final java.util.concurrent.locks.ReentrantLock dbWriteLock = new java.util.concurrent.locks.ReentrantLock();
 
@@ -383,9 +385,6 @@ public class VideoService {
             Video saved = repository.save(video);
             log.debug("Saved video id={}, title={}, libraryId={}, fileName={}",
                     saved.getId(), saved.getTitle(), saved.getLibraryId(), saved.getFileName());
-
-            // 用 ffprobe 分析技术元数据（同步执行，避免 SQLite 并发写锁）
-            mediaInfoService.updateVideoMediaInfo(saved);
 
             if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
                 scrapeExecutor.submit(() -> tryScrapeVideo(saved));
@@ -772,6 +771,70 @@ public class VideoService {
         }
 
         return saved;
+    }
+
+    /**
+     * 绑定 Hanime 元数据到视频
+     */
+    public Video scrapeAndBindHanime(Long videoId, String hanimeId) {
+        dbWriteLock.lock();
+        try {
+            return transactionTemplate.execute(status -> doScrapeAndBindHanime(videoId, hanimeId));
+        } finally {
+            dbWriteLock.unlock();
+        }
+    }
+
+    @Transactional
+    Video doScrapeAndBindHanime(Long videoId, String hanimeId) {
+        Video video = getVideoById(videoId);
+        HanimeMetadata metadata = hanimeScraperService.scrape(hanimeId);
+
+        if (metadata == null) {
+            throw new ResourceNotFoundException("Hanime metadata", "hanimeId", hanimeId);
+        }
+
+        // 填充视频元数据
+        if (metadata.getTitle() != null && !metadata.getTitle().isBlank()) {
+            video.setTitle(metadata.getTitle());
+        }
+        if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
+            video.setOverview(metadata.getDescription());
+        }
+        if (metadata.getStudio() != null && !metadata.getStudio().isBlank()) {
+            video.setStudio(metadata.getStudio());
+        }
+        if (metadata.getSubtitle() != null && !metadata.getSubtitle().isBlank()) {
+            video.setSubtitle(metadata.getSubtitle());
+        }
+        if (metadata.getViewCount() != null) {
+            video.setViewCount(metadata.getViewCount());
+        }
+        if (metadata.getTags() != null && !metadata.getTags().isEmpty()) {
+            video.setTags(String.join(",", metadata.getTags()));
+        }
+        if (metadata.getCoverUrl() != null && !metadata.getCoverUrl().isBlank()) {
+            video.setPosterUrl(metadata.getCoverUrl());
+        }
+
+        video.setHanimeId(hanimeId);
+        video.setMetadataSource("hanime");
+        video.setMetadataUpdatedAt(LocalDateTime.now());
+
+        Video saved = repository.save(video);
+
+        // 生成 NFO 和封面
+        generateNfoAndCovers(saved);
+
+        log.info("Bound Hanime metadata to video: {} -> hanimeId={}", saved.getTitle(), hanimeId);
+        return saved;
+    }
+
+    /**
+     * 仅刮削 Hanime 元数据（不绑定到视频）
+     */
+    public HanimeMetadata scrapeHanimeOnly(String hanimeId) {
+        return hanimeScraperService.scrape(hanimeId);
     }
 
     private void bindSiblingVideos(Video boundVideo, Long tmdbId) {
