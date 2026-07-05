@@ -50,8 +50,15 @@ public class FFmpegBinaryExtractor {
 
         try {
             Files.createDirectories(platformDirPath);
-            extractResource(platformDir + "/" + ffmpegName, ffmpegPath);
-            extractResource(platformDir + "/" + ffprobeName, ffprobePath);
+
+            // bytedeco JAR 中二进制在根目录，尝试多种路径
+            boolean ffmpegFound = extractBinary(ffmpegName, ffmpegPath);
+            boolean ffprobeFound = extractBinary(ffprobeName, ffprobePath);
+
+            if (!ffmpegFound || !ffprobeFound) {
+                throw new IOException("FFmpeg binary not found in classpath");
+            }
+
             setExecutable(ffmpegPath);
             setExecutable(ffprobePath);
             log.info("已提取内嵌 FFmpeg 到: {}", platformDir);
@@ -62,13 +69,19 @@ public class FFmpegBinaryExtractor {
         }
     }
 
-    private static void extractResource(String resourcePath, Path targetPath) throws IOException {
-        try (InputStream is = FFmpegBinaryExtractor.class.getResourceAsStream("/" + resourcePath)) {
-            if (is == null) {
-                throw new IOException("Resource not found: " + resourcePath);
+    private static boolean extractBinary(String name, Path targetPath) {
+        // 尝试多种路径
+        String[] paths = {name, "linux-x86_64/" + name, "bin/" + name};
+        for (String resourcePath : paths) {
+            try (InputStream is = FFmpegBinaryExtractor.class.getResourceAsStream("/" + resourcePath)) {
+                if (is != null) {
+                    Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                    return true;
+                }
+            } catch (IOException ignored) {
             }
-            Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
         }
+        return false;
     }
 
     private static void setExecutable(Path path) {
