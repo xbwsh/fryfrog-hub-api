@@ -104,10 +104,23 @@ public class MediaLibraryService {
     }
 
     public void deleteLibrary(Long id) {
-        if (!repository.existsById(id)) {
-            throw new ResourceNotFoundException("MediaLibrary", "id", id);
-        }
+        MediaLibrary library = getLibraryById(id);
+        int deletedOrder = library.getSortOrder() != null ? library.getSortOrder() : 0;
         repository.deleteById(id);
+
+        // 重排后续项的 sortOrder，保持连续
+        List<MediaLibrary> remaining = repository.findAllByOrderBySortOrderAsc();
+        boolean needUpdate = false;
+        for (MediaLibrary lib : remaining) {
+            int current = lib.getSortOrder() != null ? lib.getSortOrder() : 0;
+            if (current > deletedOrder) {
+                lib.setSortOrder(current - 1);
+                needUpdate = true;
+            }
+        }
+        if (needUpdate) {
+            repository.saveAll(remaining);
+        }
     }
 
     public MediaLibrary toggleLibrary(Long id) {

@@ -57,7 +57,7 @@ class MusicControllerStreamingTest {
     void streamTrack_returnsAudioContent() throws Exception {
         mockMvc.perform(get("/api/v1/music/{id}/stream", testTrack.getId()))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.APPLICATION_OCTET_STREAM))
+                .andExpect(content().contentType(MediaType.parseMediaType("audio/mpeg")))
                 .andExpect(header().exists(HttpHeaders.CONTENT_LENGTH));
     }
 

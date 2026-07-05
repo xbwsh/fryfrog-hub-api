@@ -3,9 +3,10 @@ services:
     image: ghcr.io/xbwsh/fryfrog-hub-api:latest
     container_name: fryfrog-hub-api
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "20058:20058"
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
+      - DB_PATH=/data/fryfrog.db
       # - TMDB_API_KEY=your_tmdb_api_key
       # - PROXY_HOST=127.0.0.1
       # - PROXY_PORT=7890

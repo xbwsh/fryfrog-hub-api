@@ -116,9 +116,7 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 1. 拉取镜像：`ghcr.io/xbwsh/fryfrog-hub-api:latest`
 2. 创建容器，**网络模式选择 host**
-3. **必须设置环境变量**：
-   - `SPRING_PROFILES_ACTIVE=prod`
-4. 添加挂载路径（在 UI 中配置你的实际路径）：
+3. 添加挂载路径（在 UI 中配置你的实际路径）：
 
 | 容器路径 | 用途 | 示例宿主机路径 |
 |---|---|---|
@@ -144,7 +142,7 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
+      - DB_PATH=/data/fryfrog.db
     volumes:
       - ./db:/data
       # - /your/music/path:/data/media/music
@@ -170,7 +168,7 @@ export PROXY_HOST=127.0.0.1            # 可选，代理地址
 export PROXY_PORT=7890                 # 可选，代理端口
 
 # 启动应用
-java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
+java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 ```
 
 ## API 文档 / API Documentation

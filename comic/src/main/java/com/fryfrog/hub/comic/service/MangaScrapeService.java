@@ -101,6 +101,7 @@ public class MangaScrapeService {
         log.info("Bound comic '{}' to Bangumi subject id={}", saved.getTitle(), bangumiId);
 
         downloadCoverFromBangumi(saved, detail);
+        repository.save(saved);
         saveBangumiCharacters(saved.getId(), bangumiId);
 
         if (bindSeries) {
@@ -134,6 +135,7 @@ public class MangaScrapeService {
         log.info("Bound comic '{}' to AniList manga id={}", saved.getTitle(), anilistId);
 
         downloadCoverFromAnilist(saved, detail);
+        repository.save(saved);
         saveAnilistCharacters(saved.getId(), detail);
 
         if (bindSeries) {

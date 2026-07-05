@@ -53,6 +53,7 @@ public class Ebook extends BaseEntity {
 
     @Schema(description = "文件完整路径")
     @Column(unique = true)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String filePath;
 
     @Schema(description = "文件名", example = "三体.epub")
@@ -72,8 +73,24 @@ public class Ebook extends BaseEntity {
     private String language;
 
     @Schema(description = "封面图片缓存路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String coverArtPath;
 
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
+
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        return "/api/v1/ebook/" + getId() + "/cover";
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("downloadUrl")
+    public String getDownloadUrl() {
+        return "/api/v1/ebook/" + getId() + "/download";
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("readUrl")
+    public String getReadUrl() {
+        return "/api/v1/ebook/" + getId() + "/read";
+    }
 }

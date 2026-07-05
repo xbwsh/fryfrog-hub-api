@@ -115,9 +115,7 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 1. Pull the image: `ghcr.io/xbwsh/fryfrog-hub-api:latest`
 2. Create a container, **set network mode to host**
-3. **Required environment variable**:
-   - `SPRING_PROFILES_ACTIVE=prod`
-4. Add volume mounts (configure your actual paths in the UI):
+3. Add volume mounts (configure your actual paths in the UI):
 
 | Container Path | Purpose | Example Host Path |
 |---|---|---|
@@ -143,7 +141,7 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
+      - DB_PATH=/data/fryfrog.db
     volumes:
       - ./db:/data
       # - /your/music/path:/data/media/music
@@ -169,7 +167,7 @@ export PROXY_HOST=127.0.0.1            # Optional, proxy address
 export PROXY_PORT=7890                 # Optional, proxy port
 
 # Start the application
-java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar --spring.profiles.active=prod
+java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 ```
 
 ## API Documentation

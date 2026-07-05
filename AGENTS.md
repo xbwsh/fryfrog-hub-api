@@ -10,28 +10,30 @@
 
 ## Tech Stack
 
-- Java 21 + Spring Boot 3.x
-- Spring Data JPA + H2（开发）/ PostgreSQL（生产）
-- Spring Security（可选认证）
+- Java 21 + Spring Boot 3.2.5
+- Spring Data JPA + **SQLite**（非 H2/PostgreSQL，生产也用 SQLite）
+- 虚拟线程已启用：`spring.threads.virtual.enabled: true`
 - FFmpeg + ProcessBuilder（音频/视频转码）
 - jaudiotagger（音乐元数据）
 - Thumbnails4j（漫画缩略图）
 - Apache Tika（漫画/电子书元数据）
-- Netty / Project Loom（高并发）
 - TMDB API（视频元数据刮削）
+- Springdoc OpenAPI（Swagger 文档）
 
 ## Module Structure
 
 ```
 fryfrog-hub-api/
-├── common/          # 共享实体、DTO、工具类
+├── common/          # 共享实体（BaseEntity）、DTO（ApiResponse）、工具类
 ├── music/           # 音乐 API（jaudiotagger + FFmpeg）
 ├── comic/           # 漫画 API（Thumbnails4j + Tika）
 ├── ebook/           # 电子书 API（Tika）
-├── video/           # 视频 API（FFmpeg）
-├── app/             # Spring Boot 启动模块
+├── video/           # 视频 API（FFmpeg + TMDB 刮削）
+├── app/             # Spring Boot 启动模块 + 全局配置/控制器
 └── pom.xml          # Parent POM
 ```
+
+`app/` 模块包含启动类 `FryfrogHubApplication`、全局配置（WebConfig、OpenApiConfig）和通用控制器（AuthController、SettingController、LogController）。
 
 ## Build & Run
 
@@ -42,31 +44,29 @@ mvn clean install
 # 跳过测试构建
 mvn clean install -DskipTests
 
-# 运行应用
+# 运行应用（端口 20058）
 mvn spring-boot:run -pl app
 
 # 运行单个模块测试
 mvn test -pl music
 
 # 运行单个测试类
-mvn test -pl music -Dtest=MusicMetadataServiceTest
+mvn test -pl music -Dtest=MusicControllerStreamingTest
 
 # 运行单个测试方法
-mvn test -pl music -Dtest=MusicMetadataServiceTest#testExtractMetadata
+mvn test -pl music -Dtest=MusicControllerStreamingTest#streamTrack_returnsAudioContent
 ```
 
 ## Testing
 
 - 单元测试：JUnit 5 + Mockito
-- 集成测试：Testcontainers（PostgreSQL）
+- 测试必须标注 `@ActiveProfiles("test")`
 - 测试配置：`src/test/resources/application-test.yml`
+- 测试很少：目前只有 music 模块有 1 个测试类
 
 ```bash
 # 运行所有测试
 mvn verify
-
-# 仅运行集成测试（需要 Docker）
-mvn verify -Pintegration
 ```
 
 ## Code Conventions
@@ -74,89 +74,50 @@ mvn verify -Pintegration
 - 包名：`com.fryfrog.hub.{module}.{layer}`
   - 层级：`controller` / `service` / `repository` / `model` / `dto`
 - REST 端点：`/api/v1/{resource}`
-- 响应格式：统一使用 `ResponseEntity<T>` 或自定义 `ApiResponse<T>`
+- 响应格式：统一使用 `ApiResponse<T>`（`com.fryfrog.hub.common.dto.ApiResponse`）
+- 实体继承 `BaseEntity`（包含 id、createdAt、updatedAt）
+- 认证：自定义 Bearer Token 认证（非 Spring Security），通过 `AuthManager` 管理
 - 异常处理：`@RestControllerAdvice` 全局异常处理器
 - 配置：`application.yml`，多环境用 `application-{profile}.yml`
+- Lombok：`lombok.config` 启用 `@Qualifier` 注解拷贝
 
-## Media File Handling
+## Key Configuration
 
-- 媒体文件路径通过 `application.yml` 配置：`hub.media.root-path`
-- 文件扫描：后台定时任务或手动触发
-- 元数据：读取后存入数据库，文件不移动
-- 转码：FFmpeg 进程通过 `ProcessBuilder` 调用，输出到临时目录
-
-## Environment
-
-- 必须：JDK 21、Maven 3.9+、Docker（Testcontainers 需要）
-- 可选：FFmpeg（音频/视频功能需要）
-- IDE：推荐 IntelliJ IDEA，导入为 Maven 项目
+- 端口：`20058`（`SERVER_PORT` 环境变量可覆盖）
+- 数据库：SQLite，路径 `./data/fryfrog.db`，启用 WAL 模式
+- 认证：`hub.auth.enabled` 默认开启，密码 `hub.auth.password` 默认 `1234`
+- 媒体路径：`hub.{music|video|comic|ebook}.root-paths`，支持逗号分隔多路径
+- `application-dev.yml` 已加入 `.gitignore`，开发时从模板复制
+- 开发配置模板：`app/src/main/resources/application-dev.yml.example`
 
 ## Common Pitfalls
 
-- H2 内存库不支持 `JSON` 类型字段，生产用 PostgreSQL
+- SQLite 不支持并发写入，高并发场景需注意 `busy_timeout=5000` 配置
+- `application-dev.yml` 不在仓库中，新建开发环境需从 `.example` 复制
+- 虚拟线程已启用，不要在代码中创建平台线程池
 - FFmpeg 路径需在配置中指定，不要硬编码
-- 大文件处理注意内存，使用流式读取
-- Testcontainers 需要 Docker daemon 运行
+- Docker 部署必须使用 `network_mode: host`，否则无法访问服务
+- Docker 镜像已内置 FFmpeg
+- Testcontainers 不在项目中使用，测试用 H2 内存库
 
-## TMDB Integration
+## Environment
 
-视频模块支持从 TMDB（The Movie Database）刮削元数据，包括电影和电视剧。
+- 必须：JDK 21、Maven 3.9+
+- 可选：FFmpeg（音频/视频功能需要，Docker 镜像已内置）
+- IDE：推荐 IntelliJ IDEA，导入为 Maven 项目
 
-### 配置
+## CI/CD
 
-在 `application.yml` 或环境变量中配置 TMDB API Key：
+- GitHub Actions：`docker.yml` 在 master 分支推送时构建 Docker 镜像
+- 镜像推送到 GHCR（`ghcr.io`）和 DockerHub
+- 构建命令：`mvn clean package -DskipTests`
 
-```yaml
-hub:
-  tmdb:
-    api-key: ${TMDB_API_KEY:}  # 必填，从 https://www.themoviedb.org/settings/api 获取
-    language: ${TMDB_LANGUAGE:zh-CN}  # 可选，默认中文
-    image-size: ${TMDB_IMAGE_SIZE:original}  # 可选，海报尺寸
-    auto-scrape: ${TMDB_AUTO_SCRAPE:false}  # 可选，扫描时自动刮削
-  proxy:
-    host: ${PROXY_HOST:127.0.0.1}  # 代理地址（国内需要）
-    port: ${PROXY_PORT:7890}  # 代理端口
+## Docker 部署
+
+```bash
+docker compose up -d
+# 或
+docker run -d --network host -e DB_PATH=/data/fryfrog.db \
+  -v ./db:/data -v /your/media:/data/media \
+  ghcr.io/xbwsh/fryfrog-hub-api:latest
 ```
-
-### API 端点
-
-- `GET /api/v1/video/tmdb/search?q={query}` - 搜索 TMDB 电影和电视剧
-- `POST /api/v1/video/{id}/tmdb/bind?tmdbId={tmdbId}&mediaType={movie|tv}` - 绑定 TMDB 元数据（自动生成 NFO 和下载封面）
-- `POST /api/v1/video/tmdb/auto-scrape` - 自动刮削所有未绑定的视频
-- `GET /api/v1/video/tmdb/status` - 检查 TMDB 配置状态
-- `POST /api/v1/video/{id}/nfo` - 手动生成 NFO 文件
-- `POST /api/v1/video/{id}/covers` - 手动下载封面图片
-- `GET /api/v1/video/{id}/poster` - 获取竖屏海报
-- `GET /api/v1/video/{id}/fanart` - 获取横屏背景图
-- `GET /api/v1/video/{id}/nfo` - 获取 NFO 文件内容
-
-### 使用流程
-
-1. 扫描视频目录：`POST /api/v1/video/scan?path={目录路径}`
-2. 搜索 TMDB：`GET /api/v1/video/tmdb/search?q={视频标题}`
-3. 绑定元数据：`POST /api/v1/video/{id}/tmdb/bind?tmdbId={搜索结果ID}&mediaType={movie|tv}`
-4. 或自动刮削：`POST /api/v1/video/tmdb/auto-scrape`
-
-### 文件命名规范
-
-刮削后会将视频和元数据整理到以清洗后标题命名的子文件夹：
-```
-media-library/video/
-└── 刀剑神域/
-    ├── 刀剑神域1.mp4      # 视频文件
-    ├── 刀剑神域1.nfo      # NFO 元数据文件
-    ├── 刀剑神域1-poster.jpg  # 竖屏海报
-    ├── 刀剑神域1-fanart.jpg  # 横屏背景图
-    ├── 刀剑神域2.mp4
-    ├── 刀剑神域2.nfo
-    ├── 刀剑神域2-poster.jpg
-    └── 刀剑神域2-fanart.jpg
-```
-
-### NFO 文件格式
-
-支持两种格式：
-- 电影：`<movie>` 标签
-- 电视剧：`<episodedetails>` 标签
-
-包含字段：title、originaltitle、year、plot、director、actor、genre、rating、votes、imdbid、tmdbid
