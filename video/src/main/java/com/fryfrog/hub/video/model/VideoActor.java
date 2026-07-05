@@ -30,8 +30,15 @@ public class VideoActor extends BaseEntity {
     private String imagePath;
 
     @Schema(description = "演员头像远程URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String imageUrl;
 
     @Schema(description = "TMDB演员ID", example = "12345")
     private Long sourceActorId;
+
+    @com.fasterxml.jackson.annotation.JsonGetter("imageUrl")
+    public String getActorImageUrl() {
+        if (getId() == null) return null;
+        return "/api/v1/video/actor/" + getId() + "/image";
+    }
 }

@@ -128,6 +128,17 @@ public class EpubParser {
     }
 
     public static String readChapterHtml(String filePath, String href) throws Exception {
+        return readChapterHtml(filePath, href, null);
+    }
+
+    /**
+     * 读取 epub 章节 HTML 内容，重写图片路径为 API 路径
+     *
+     * @param filePath epub 文件路径
+     * @param href     章节在 epub 内的路径
+     * @param ebookId  电子书 ID（用于构造图片 API 路径，为 null 时使用旧格式）
+     */
+    public static String readChapterHtml(String filePath, String href, Long ebookId) throws Exception {
         try (ZipFile zip = new ZipFile(filePath, StandardCharsets.UTF_8)) {
             String opfPath = findOpfPath(zip);
             if (opfPath == null) return "";
@@ -136,7 +147,12 @@ public class EpubParser {
             String fullPath = opfDir + href;
             String html = readEntryText(zip, fullPath);
             if (html == null) return "";
-            return rewriteImageSrc(html, opfDir, filePath);
+
+            if (ebookId != null) {
+                String imageBaseUrl = "/api/v1/ebook/" + ebookId + "/image?file=";
+                return rewriteImageSrc(html, opfDir, imageBaseUrl);
+            }
+            return rewriteImageSrc(html, opfDir, null);
         }
     }
 
@@ -165,9 +181,12 @@ public class EpubParser {
             "(<img[^>]*\\bsrc=[\"'])([^\"']+)([\"'])"
     );
 
-    private static String rewriteImageSrc(String html, String opfDir, String epubFilePath) {
-        String encodedPath = java.net.URLEncoder.encode(epubFilePath, StandardCharsets.UTF_8);
-        String baseUrl = "/api/v1/ebook/epub-image?filePath=" + encodedPath + "&file=";
+    private static String rewriteImageSrc(String html, String opfDir, String imageBaseUrl) {
+        // 如果没有提供 imageBaseUrl，使用旧格式（兼容）
+        if (imageBaseUrl == null) {
+            imageBaseUrl = "/api/v1/ebook/image?filePath=__LEGACY__&file=";
+        }
+        String baseUrl = imageBaseUrl;
         Matcher m = IMG_SRC_PATTERN.matcher(html);
         StringBuffer sb = new StringBuffer();
         while (m.find()) {

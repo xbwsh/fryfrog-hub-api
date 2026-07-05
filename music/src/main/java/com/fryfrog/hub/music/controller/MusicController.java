@@ -51,7 +51,7 @@ public class MusicController {
     @Operation(summary = "获取所有曲目", description = "返回数据库中所有已索引的音乐曲目列表")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getAllTracks() {
         List<MusicTrack> tracks = service.getAllTracks();
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -60,7 +60,7 @@ public class MusicController {
     public ResponseEntity<ApiResponse<MusicTrack>> getTrackById(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
         MusicTrack track = service.getTrackById(id);
-        fillApiPaths(track);
+        checkExternalLyrics(track);
         return ResponseEntity.ok(ApiResponse.success(track));
     }
 
@@ -69,7 +69,7 @@ public class MusicController {
     public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q) {
         List<MusicTrack> tracks = service.searchByTitle(q);
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -78,7 +78,7 @@ public class MusicController {
     public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByArtist(
             @Parameter(description = "艺术家名称关键词") @RequestParam String q) {
         List<MusicTrack> tracks = service.searchByArtist(q);
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -86,7 +86,7 @@ public class MusicController {
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getFavorites() {
         List<MusicTrack> tracks = service.getFavorites();
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -109,7 +109,7 @@ public class MusicController {
     @Operation(summary = "最近播放", description = "返回最近播放过的音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getRecentlyPlayed() {
         List<MusicTrack> tracks = service.getRecentlyPlayed();
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -117,7 +117,7 @@ public class MusicController {
     @Operation(summary = "最常播放", description = "返回播放次数最多的音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getMostPlayed() {
         List<MusicTrack> tracks = service.getMostPlayed();
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -125,7 +125,7 @@ public class MusicController {
     @Operation(summary = "最近添加", description = "返回最近添加的音乐曲目")
     public ResponseEntity<ApiResponse<List<MusicTrack>>> getRecentlyAdded() {
         List<MusicTrack> tracks = service.getRecentlyAdded();
-        tracks.forEach(this::fillApiPaths);
+        tracks.forEach(this::checkExternalLyrics);
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
@@ -134,7 +134,7 @@ public class MusicController {
     public ResponseEntity<ApiResponse<MusicTrack>> recordPlay(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
         MusicTrack track = service.recordPlay(id);
-        fillApiPaths(track);
+        checkExternalLyrics(track);
         return ResponseEntity.ok(ApiResponse.success(track));
     }
 
@@ -142,7 +142,7 @@ public class MusicController {
     @Operation(summary = "推荐歌单", description = "根据听歌习惯生成多个推荐分类")
     public ResponseEntity<ApiResponse<Map<String, List<MusicTrack>>>> getRecommendations() {
         Map<String, List<MusicTrack>> recommendations = service.getRecommendations();
-        recommendations.values().forEach(list -> list.forEach(this::fillApiPaths));
+        recommendations.values().forEach(list -> list.forEach(this::checkExternalLyrics));
         return ResponseEntity.ok(ApiResponse.success(recommendations));
     }
 
@@ -229,22 +229,29 @@ public class MusicController {
     }
 
     @GetMapping("/{id:\\d+}/cover")
-    @Operation(summary = "获取封面图片", description = "返回曲目内嵌的封面图片")
+    @Operation(summary = "获取封面图片", description = "返回曲目内嵌的封面图片，无封面时返回标题占位图")
     @ApiResponses(value = {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无封面")
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在")
     })
     public ResponseEntity<Resource> getCoverArt(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
         MusicTrack track = service.getTrackById(id);
         File coverFile = findCoverFile(track);
-        if (coverFile == null) {
+        if (coverFile != null) {
+            MediaType mediaType = resolveImageMediaType(coverFile.getName());
+            return ResponseEntity.ok()
+                    .contentType(mediaType)
+                    .body(new FileSystemResource(coverFile));
+        }
+        try {
+            byte[] placeholder = com.fryfrog.hub.common.util.PlaceholderImageGenerator.generate(track.getTitle(), 300, 300);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.IMAGE_JPEG)
+                    .body(new org.springframework.core.io.ByteArrayResource(placeholder));
+        } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
-        MediaType mediaType = resolveImageMediaType(coverFile.getName());
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .body(new FileSystemResource(coverFile));
     }
 
     @GetMapping("/{id:\\d+}/stream")
@@ -308,7 +315,7 @@ public class MusicController {
         return null;
     }
 
-    @GetMapping("/{id:\\d+}/artist-image")
+    @GetMapping("/{id:\\d+}/artist/image")
     @Operation(summary = "获取歌手图片", description = "返回歌手的图片（歌手文件夹下的artist.jpg）")
     @ApiResponses(value = {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
@@ -330,7 +337,7 @@ public class MusicController {
                 .body(new FileSystemResource(imageFile));
     }
 
-    @PostMapping("/{id:\\d+}/artist-image/scrape")
+    @PostMapping("/{id:\\d+}/artist/image/scrape")
     @Operation(summary = "刮削歌手图片", description = "从在线源获取歌手图片并保存到歌手文件夹")
     public ResponseEntity<ApiResponse<String>> scrapeArtistImage(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
@@ -391,13 +398,7 @@ public class MusicController {
         return MediaType.APPLICATION_OCTET_STREAM;
     }
 
-    private void fillApiPaths(MusicTrack track) {
-        String basePath = "/api/v1/music/" + track.getId();
-        track.setCoverApiPath(basePath + "/cover");
-        track.setArtistImageApiPath(basePath + "/artist-image");
-        track.setStreamApiPath(basePath + "/stream");
-
-        // 检查同目录下是否有 .lrc 文件
+    private void checkExternalLyrics(MusicTrack track) {
         if (track.getFilePath() != null) {
             Path audioPath = Path.of(track.getFilePath());
             Path parent = audioPath.getParent();

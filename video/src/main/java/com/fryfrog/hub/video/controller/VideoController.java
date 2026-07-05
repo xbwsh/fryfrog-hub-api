@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
+import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.VideoBindRequest;
 import com.fryfrog.hub.video.dto.VideoDTO;
@@ -232,6 +233,33 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("video")));
     }
 
+    // ==================== Hanime ====================
+
+    @PostMapping("/{id:\\d+}/hanime/bind")
+    @Operation(summary = "绑定 Hanime 元数据", description = "将 Hanime 视频元数据绑定到指定视频")
+    public ResponseEntity<ApiResponse<VideoDTO>> bindHanime(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "Hanime 视频ID") @RequestParam String hanimeId) {
+        Video video = service.scrapeAndBindHanime(id, hanimeId);
+        boolean hasNfo = nfoService.readNfoForVideo(Path.of(video.getFilePath())) != null;
+        boolean hasPoster = Files.exists(nfoService.getPosterPath(video));
+        boolean hasFanart = Files.exists(nfoService.getFanartPath(video));
+        boolean hasMetadataDir = Files.exists(nfoService.getMetadataDir(video));
+        return ResponseEntity.ok(ApiResponse.success(
+                VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir)));
+    }
+
+    @GetMapping("/hanime/scrape")
+    @Operation(summary = "刮削 Hanime 元数据", description = "根据 Hanime ID 获取视频元数据（不绑定到已有视频）")
+    public ResponseEntity<ApiResponse<HanimeMetadata>> scrapeHanime(
+            @Parameter(description = "Hanime 视频ID") @RequestParam String hanimeId) {
+        HanimeMetadata metadata = service.scrapeHanimeOnly(hanimeId);
+        if (metadata == null) {
+            return ResponseEntity.ok(ApiResponse.error("Failed to scrape Hanime metadata"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(metadata));
+    }
+
     @PostMapping("/{id:\\d+}/nfo")
     @Operation(summary = "生成NFO文件", description = "为指定视频生成NFO元数据文件")
     public ResponseEntity<ApiResponse<Map<String, String>>> generateNfo(
@@ -254,26 +282,6 @@ public class VideoController {
                 "videoId", String.valueOf(id),
                 "success", String.valueOf(success)
         )));
-    }
-
-    @GetMapping("/{id:\\d+}/poster")
-    @Operation(summary = "获取竖屏海报", description = "返回视频的竖屏海报图片")
-    public ResponseEntity<Resource> getPoster(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        Video video = service.getVideoById(id);
-        // 优先查找实际文件所在目录
-        Path videoDir = Paths.get(video.getFilePath()).getParent();
-        String baseName = nfoService.getBaseName(video.getFileName());
-        Path posterPath = videoDir.resolve(baseName + "-poster.jpg");
-        if (!Files.exists(posterPath)) {
-            posterPath = nfoService.getPosterPath(video);
-        }
-        if (!Files.exists(posterPath)) {
-            return ResponseEntity.notFound().build();
-        }
-        return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
-                .body(new FileSystemResource(posterPath.toFile()));
     }
 
     @GetMapping("/{id:\\d+}/fanart")
@@ -418,39 +426,6 @@ public class VideoController {
         }
     }
 
-    @GetMapping("/{id:\\d+}/media-info")
-    @Operation(summary = "获取媒体技术信息", description = "使用 ffprobe 分析视频的编码、分辨率、帧率等技术信息")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getMediaInfo(
-            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
-        Video video = service.getVideoById(id);
-        MediaInfoService.MediaInfo info = mediaInfoService.extractMediaInfo(video.getFilePath());
-
-        Map<String, Object> result = new java.util.HashMap<>();
-        result.put("videoCodec", info.videoCodec != null ? info.videoCodec : "unknown");
-        result.put("videoCodecLong", info.videoCodecLong != null ? info.videoCodecLong : "");
-        result.put("audioCodec", info.audioCodec != null ? info.audioCodec : "unknown");
-        result.put("audioCodecLong", info.audioCodecLong != null ? info.audioCodecLong : "");
-        result.put("audioChannels", info.audioChannels);
-        result.put("audioSampleRate", info.audioSampleRate != null ? info.audioSampleRate : "");
-        result.put("resolution", info.resolution != null ? info.resolution : "unknown");
-        result.put("frameRate", info.frameRate);
-        result.put("bitrateKbps", info.bitrateKbps);
-        result.put("durationSeconds", info.durationSeconds);
-        result.put("durationMinutes", info.durationMinutes);
-        result.put("format", info.formatName != null ? info.formatName : "unknown");
-
-        return ResponseEntity.ok(ApiResponse.success(result));
-    }
-
-    @GetMapping("/{id:\\d+}/subtitles")
-    @Operation(summary = "获取内嵌字幕列表", description = "列出视频中所有内嵌字幕轨道（语言、编码等）")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSubtitles(
-            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
-        Video video = service.getVideoById(id);
-        List<Map<String, Object>> tracks = mediaInfoService.getSubtitleTracks(video.getFilePath());
-        return ResponseEntity.ok(ApiResponse.success(tracks));
-    }
-
     @GetMapping("/{id:\\d+}/subtitle/external")
     @Operation(summary = "获取外挂字幕列表", description = "列出视频同目录下的外挂字幕文件（.srt/.ass/.ssa等）")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getExternalSubtitles(
@@ -458,47 +433,6 @@ public class VideoController {
         Video video = service.getVideoById(id);
         List<Map<String, Object>> subs = mediaInfoService.getExternalSubtitles(video.getFilePath());
         return ResponseEntity.ok(ApiResponse.success(subs));
-    }
-
-    @GetMapping("/{id:\\d+}/subtitle/vtt")
-    @Operation(summary = "获取字幕WebVTT", description = "将内嵌或外挂字幕转换为WebVTT格式返回，内嵌用index参数，外挂用file参数")
-    public ResponseEntity<String> getSubtitleVtt(
-            @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "内嵌字幕流索引（内嵌字幕时使用）") @RequestParam(required = false) Integer index,
-            @Parameter(description = "外挂字幕文件名（外挂字幕时使用，如 xxx.zh.srt）") @RequestParam(required = false) String file) throws Exception {
-        Video video = service.getVideoById(id);
-
-        String videoDir = new File(video.getFilePath()).getParent();
-        String baseName = nfoService.getBaseName(video.getFileName());
-
-        String vttContent;
-        String vttFileName;
-
-        if (index != null) {
-            vttFileName = baseName + ".sub" + index + ".vtt";
-            Path vttPath = Path.of(videoDir, vttFileName);
-            if (Files.exists(vttPath)) {
-                vttContent = Files.readString(vttPath);
-            } else {
-                vttContent = mediaInfoService.extractSubtitleAsVtt(video.getFilePath(), index);
-                Files.writeString(vttPath, vttContent);
-                log.info("Converted embedded subtitle index={} for: {}", index, video.getFileName());
-            }
-        } else if (file != null) {
-            Path subPath = Path.of(videoDir, file);
-            if (!Files.exists(subPath)) {
-                return ResponseEntity.notFound().build();
-            }
-            vttFileName = file;
-            vttContent = mediaInfoService.convertExternalSubtitleToVtt(subPath.toString());
-            log.info("Converted external subtitle {} for: {}", file, video.getFileName());
-        } else {
-            return ResponseEntity.badRequest().build();
-        }
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("text/vtt; charset=utf-8"))
-                .body(vttContent);
     }
 
     @GetMapping("/{id:\\d+}/playlist.m3u")

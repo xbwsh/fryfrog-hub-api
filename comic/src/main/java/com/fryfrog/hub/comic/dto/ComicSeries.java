@@ -7,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.File;
 import java.util.List;
 
 @Data
@@ -24,8 +25,8 @@ public class ComicSeries {
     @JsonIgnore
     private String coverArtPath;
 
-    @Schema(description = "封面图片URL（API地址）")
-    private String coverUrl;
+    @Schema(description = "是否有本地封面文件")
+    private Boolean hasCover;
 
     @Schema(description = "卷数")
     private Integer volumeCount;
@@ -37,5 +38,15 @@ public class ComicSeries {
     private String serializationStart;
 
     @Schema(description = "该系列下的所有漫画")
-    private List<Comic> comics;
+    private List<ComicDTO> comics;
+
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        if (!Boolean.TRUE.equals(hasCover)) return null;
+        try {
+            return "/api/v1/comic/series/cover?series=" + java.net.URLEncoder.encode(name, "UTF-8");
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }

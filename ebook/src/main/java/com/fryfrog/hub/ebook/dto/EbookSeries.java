@@ -21,6 +21,7 @@ public class EbookSeries {
     private String author;
 
     @Schema(description = "封面图片路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String coverArtPath;
 
     @Schema(description = "卷数")

@@ -30,6 +30,11 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // 放行图片/媒体资源端点（<img> 标签无法携带 Authorization 头）
+        if (isStaticResource(path)) {
+            return true;
+        }
+
         String authHeader = request.getHeader("Authorization");
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
@@ -43,5 +48,16 @@ public class AuthInterceptor implements HandlerInterceptor {
         response.getWriter().write(objectMapper.writeValueAsString(
                 Map.of("success", false, "message", "Unauthorized")));
         return false;
+    }
+
+    private boolean isStaticResource(String path) {
+        return path.matches(".*/cover")
+                || path.matches(".*/fanart")
+                || path.matches(".*/pages/\\d+")
+                || path.matches(".*/artist/image")
+                || path.matches(".*/character/.*/image")
+                || path.matches(".*/actor/.*/image")
+                || path.matches(".*/image")
+                || path.matches(".*/stream");
     }
 }

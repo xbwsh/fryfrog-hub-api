@@ -121,15 +121,18 @@ public class MusicTrack extends BaseEntity {
     @Schema(description = "最后播放时间")
     private java.time.LocalDateTime lastPlayedAt;
 
-    @Schema(description = "封面图片API路径", example = "/api/v1/music/1/cover")
-    @jakarta.persistence.Transient
-    private String coverApiPath;
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        return "/api/v1/music/" + getId() + "/cover";
+    }
 
-    @Schema(description = "歌手图片API路径", example = "/api/v1/music/1/artist-image")
-    @jakarta.persistence.Transient
-    private String artistImageApiPath;
+    @com.fasterxml.jackson.annotation.JsonGetter("imageUrl")
+    public String getArtistImageUrl() {
+        return "/api/v1/music/" + getId() + "/artist/image";
+    }
 
-    @Schema(description = "音频播放API路径", example = "/api/v1/music/1/stream")
-    @jakarta.persistence.Transient
-    private String streamApiPath;
+    @com.fasterxml.jackson.annotation.JsonGetter("streamUrl")
+    public String getStreamUrl() {
+        return "/api/v1/music/" + getId() + "/stream";
+    }
 }

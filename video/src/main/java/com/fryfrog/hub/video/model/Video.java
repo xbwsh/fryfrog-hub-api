@@ -123,6 +123,22 @@ public class Video extends BaseEntity {
     @Schema(description = "简介来源", example = "tmdb")
     private String metadataSource;
 
+    @Schema(description = "Hanime ID", example = "123456")
+    private String hanimeId;
+
+    @Schema(description = "标签（逗号分隔）", example = "无码,步兵")
+    @Column(columnDefinition = "TEXT")
+    private String tags;
+
+    @Schema(description = "观看次数", example = "12345")
+    private Integer viewCount;
+
+    @Schema(description = "制作商", example = "S1 NO.1 STYLE")
+    private String studio;
+
+    @Schema(description = "副标题", example = "超高清 4K")
+    private String subtitle;
+
     @Schema(description = "元数据最后更新时间")
     private java.time.LocalDateTime metadataUpdatedAt;
 

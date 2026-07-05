@@ -48,9 +48,11 @@ public class VideoSeries extends BaseEntity {
     private Integer year;
 
     @Schema(description = "海报URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterUrl;
 
     @Schema(description = "背景图URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropUrl;
 
     @Schema(description = "元数据来源")
@@ -78,5 +80,17 @@ public class VideoSeries extends BaseEntity {
 
     public int getEpisodeCount() {
         return videos != null ? videos.size() : 0;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        if (getId() == null) return null;
+        return "/api/v1/video/series/" + getId() + "/cover";
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("fanartUrl")
+    public String getFanartUrl() {
+        if (getId() == null) return null;
+        return "/api/v1/video/series/" + getId() + "/fanart";
     }
 }

@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.comic.dto.ComicBindRequest;
+import com.fryfrog.hub.comic.dto.ComicDTO;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressRequest;
 import com.fryfrog.hub.comic.dto.ComicSeries;
@@ -61,8 +62,11 @@ public class ComicController {
 
     @GetMapping
     @Operation(summary = "获取所有漫画", description = "返回数据库中所有已索引的漫画列表")
-    public ResponseEntity<ApiResponse<List<Comic>>> getAllComics() {
-        return ResponseEntity.ok(ApiResponse.success(service.getAllComics()));
+    public ResponseEntity<ApiResponse<List<ComicDTO>>> getAllComics() {
+        return ResponseEntity.ok(ApiResponse.success(
+                service.getAllComics().stream()
+                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
+                        .toList()));
     }
 
     @GetMapping("/series")
@@ -73,37 +77,48 @@ public class ComicController {
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取漫画详情", description = "根据ID获取单个漫画的详细信息")
-    public ResponseEntity<ApiResponse<Comic>> getComicById(
+    public ResponseEntity<ApiResponse<ComicDTO>> getComicById(
             @Parameter(description = "漫画ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(service.getComicById(id)));
+        Comic comic = service.getComicById(id);
+        return ResponseEntity.ok(ApiResponse.success(ComicDTO.fromEntity(comic, hasCover(comic))));
     }
 
     @GetMapping("/search/title")
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索漫画")
-    public ResponseEntity<ApiResponse<List<Comic>>> searchByTitle(
+    public ResponseEntity<ApiResponse<List<ComicDTO>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchByTitle(q)));
+        return ResponseEntity.ok(ApiResponse.success(
+                service.searchByTitle(q).stream()
+                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
+                        .toList()));
     }
 
     @GetMapping("/search/author")
     @Operation(summary = "按作者搜索", description = "根据作者名称模糊搜索漫画")
-    public ResponseEntity<ApiResponse<List<Comic>>> searchByAuthor(
+    public ResponseEntity<ApiResponse<List<ComicDTO>>> searchByAuthor(
             @Parameter(description = "作者名称关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchByAuthor(q)));
+        return ResponseEntity.ok(ApiResponse.success(
+                service.searchByAuthor(q).stream()
+                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
+                        .toList()));
     }
 
     @GetMapping("/favorites")
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的漫画")
-    public ResponseEntity<ApiResponse<List<Comic>>> getFavorites() {
-        return ResponseEntity.ok(ApiResponse.success(service.getFavorites()));
+    public ResponseEntity<ApiResponse<List<ComicDTO>>> getFavorites() {
+        return ResponseEntity.ok(ApiResponse.success(
+                service.getFavorites().stream()
+                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
+                        .toList()));
     }
 
     @PutMapping("/{id:\\d+}/favorite")
     @Operation(summary = "设置收藏状态", description = "设置漫画的收藏状态")
-    public ResponseEntity<ApiResponse<Comic>> setFavorite(
+    public ResponseEntity<ApiResponse<ComicDTO>> setFavorite(
             @Parameter(description = "漫画ID") @PathVariable Long id,
             @Parameter(description = "收藏状态") @RequestParam boolean status) {
-        return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
+        Comic comic = service.setFavorite(id, status);
+        return ResponseEntity.ok(ApiResponse.success(ComicDTO.fromEntity(comic, hasCover(comic))));
     }
 
     @GetMapping("/{id:\\d+}/pages")
@@ -115,30 +130,39 @@ public class ComicController {
 
     @GetMapping("/{id:\\d+}/pages/{pageNum}")
     @Operation(summary = "获取页面图片", description = "返回漫画指定页码的图片数据")
-    public ResponseEntity<byte[]> getPageImage(
+    public ResponseEntity<Resource> getPageImage(
             @Parameter(description = "漫画ID") @PathVariable Long id,
             @Parameter(description = "页码（从1开始）") @PathVariable int pageNum) {
         byte[] imageBytes = service.getPageImage(id, pageNum);
         return ResponseEntity.ok()
                 .contentType(MediaType.IMAGE_JPEG)
-                .body(imageBytes);
+                .body(new org.springframework.core.io.ByteArrayResource(imageBytes));
     }
 
     @GetMapping("/{id:\\d+}/cover")
-    @Operation(summary = "获取封面图片", description = "返回漫画的封面图片")
+    @Operation(summary = "获取封面图片", description = "返回漫画的封面图片，无封面时返回标题占位图")
     public ResponseEntity<Resource> getCoverArt(
             @Parameter(description = "漫画ID") @PathVariable Long id) {
         Comic comic = service.getComicById(id);
-        if (comic == null || comic.getCoverArtPath() == null) {
+        if (comic == null) {
             return ResponseEntity.notFound().build();
         }
-        File coverFile = new File(comic.getCoverArtPath());
-        if (!coverFile.exists()) {
+        if (comic.getCoverArtPath() != null) {
+            File coverFile = new File(comic.getCoverArtPath());
+            if (coverFile.exists()) {
+                return ResponseEntity.ok()
+                        .contentType(resolveImageMediaType(coverFile.getName()))
+                        .body(new FileSystemResource(coverFile));
+            }
+        }
+        try {
+            byte[] placeholder = com.fryfrog.hub.common.util.PlaceholderImageGenerator.generate(comic.getTitle(), 300, 400);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.IMAGE_JPEG)
+                    .body(new org.springframework.core.io.ByteArrayResource(placeholder));
+        } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok()
-                .contentType(resolveImageMediaType(coverFile.getName()))
-                .body(new FileSystemResource(coverFile));
     }
 
     @GetMapping("/series/cover")
@@ -206,22 +230,7 @@ public class ComicController {
         return ResponseEntity.notFound().build();
     }
 
-    @GetMapping("/cover-image")
-    @Operation(summary = "按路径获取封面图片", description = "根据coverArtPath返回封面图片")
-    public ResponseEntity<Resource> getCoverImage(
-            @Parameter(description = "封面图片完整路径") @RequestParam String path) {
-        File coverFile = new File(path);
-        if (!coverFile.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-        String name = coverFile.getName().toLowerCase();
-        MediaType mediaType = MediaType.IMAGE_JPEG;
-        if (name.endsWith(".png")) mediaType = MediaType.IMAGE_PNG;
-        else if (name.endsWith(".webp")) mediaType = MediaType.parseMediaType("image/webp");
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .body(new FileSystemResource(coverFile));
-    }
+    // 旧的 cover-image 端点已移除，请使用 /{id}/cover 端点
 
     @GetMapping("/{id:\\d+}/progress")
     @Operation(summary = "获取阅读进度", description = "获取指定漫画的阅读进度")
@@ -299,5 +308,9 @@ public class ComicController {
         if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
         if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
         return MediaType.IMAGE_JPEG;
+    }
+
+    private boolean hasCover(Comic comic) {
+        return comic.getCoverArtPath() != null;
     }
 }

@@ -39,9 +39,11 @@ public class SeriesDTO {
     private Integer year;
 
     @Schema(description = "海报URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterUrl;
 
     @Schema(description = "背景图URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropUrl;
 
     @Schema(description = "季数")
@@ -108,5 +110,23 @@ public class SeriesDTO {
         dto.setStatus(video.getStatus());
         dto.setEpisodes(List.of(episode));
         return dto;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        if (id == null) return null;
+        if ("standalone".equals(type)) {
+            return "/api/v1/video/" + id + "/cover";
+        }
+        return "/api/v1/video/series/" + id + "/cover";
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("fanartUrl")
+    public String getFanartUrl() {
+        if (id == null) return null;
+        if ("standalone".equals(type)) {
+            return "/api/v1/video/" + id + "/fanart";
+        }
+        return "/api/v1/video/series/" + id + "/fanart";
     }
 }

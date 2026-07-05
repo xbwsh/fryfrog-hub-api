@@ -87,9 +87,11 @@ public class VideoDTO {
     private String mediaType;
 
     @Schema(description = "海报图片URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterUrl;
 
     @Schema(description = "背景图片URL")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropUrl;
 
     @Schema(description = "IMDB ID", example = "tt1454468")
@@ -205,5 +207,20 @@ public class VideoDTO {
             dto.setSeriesTitle(video.getSeries().getTitle());
         }
         return dto;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        return id != null ? "/api/v1/video/" + id + "/cover" : null;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("fanartUrl")
+    public String getFanartUrl() {
+        return id != null ? "/api/v1/video/" + id + "/fanart" : null;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("streamUrl")
+    public String getStreamUrl() {
+        return id != null ? "/api/v1/video/" + id + "/stream" : null;
     }
 }

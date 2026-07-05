@@ -2,6 +2,7 @@ package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.util.TitleCleaner;
+import com.fryfrog.hub.comic.dto.ComicDTO;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
 import com.fryfrog.hub.comic.model.Comic;
@@ -95,6 +96,7 @@ public class ComicMetadataService {
             series.setName(entry.getKey());
             series.setComics(entry.getValue().stream()
                     .sorted(Comparator.comparing(c -> c.getVolume() != null ? c.getVolume() : 0))
+                    .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
                     .toList());
             series.setVolumeCount(entry.getValue().size());
 
@@ -125,12 +127,7 @@ public class ComicMetadataService {
                 } catch (Exception ignored) {}
             }
             series.setCoverArtPath(coverPath);
-            if (coverPath != null) {
-                try {
-                    series.setCoverUrl("/api/v1/comic/series/cover?series=" +
-                            java.net.URLEncoder.encode(entry.getKey(), "UTF-8"));
-                } catch (Exception ignored) {}
-            }
+            series.setHasCover(coverPath != null);
 
             Optional<Comic> withSummary = entry.getValue().stream()
                     .filter(c -> c.getSeriesSummary() != null && !c.getSeriesSummary().isBlank())

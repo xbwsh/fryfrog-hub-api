@@ -54,7 +54,9 @@ public class EbookController {
     @GetMapping
     @Operation(summary = "获取所有电子书", description = "返回数据库中所有已索引的电子书列表")
     public ResponseEntity<ApiResponse<List<Ebook>>> getAllEbooks() {
-        return ResponseEntity.ok(ApiResponse.success(service.getAllEbooks()));
+        List<Ebook> ebooks = service.getAllEbooks();
+        
+        return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @GetMapping("/series")
@@ -67,27 +69,34 @@ public class EbookController {
     @Operation(summary = "获取电子书详情", description = "根据ID获取单个电子书的详细信息")
     public ResponseEntity<ApiResponse<Ebook>> getEbookById(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(service.getEbookById(id)));
+        Ebook ebook = service.getEbookById(id);
+        return ResponseEntity.ok(ApiResponse.success(ebook));
     }
 
     @GetMapping("/search/title")
     @Operation(summary = "按书名搜索", description = "根据书名关键词模糊搜索电子书")
     public ResponseEntity<ApiResponse<List<Ebook>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchByTitle(q)));
+        List<Ebook> ebooks = service.searchByTitle(q);
+        
+        return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @GetMapping("/search/author")
     @Operation(summary = "按作者搜索", description = "根据作者名称模糊搜索电子书")
     public ResponseEntity<ApiResponse<List<Ebook>>> searchByAuthor(
             @Parameter(description = "作者名称关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(service.searchByAuthor(q)));
+        List<Ebook> ebooks = service.searchByAuthor(q);
+        
+        return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @GetMapping("/favorites")
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的电子书")
     public ResponseEntity<ApiResponse<List<Ebook>>> getFavorites() {
-        return ResponseEntity.ok(ApiResponse.success(service.getFavorites()));
+        List<Ebook> ebooks = service.getFavorites();
+        
+        return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @PutMapping("/{id:\\d+}/favorite")
@@ -95,7 +104,8 @@ public class EbookController {
     public ResponseEntity<ApiResponse<Ebook>> setFavorite(
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "收藏状态") @RequestParam boolean status) {
-        return ResponseEntity.ok(ApiResponse.success(service.setFavorite(id, status)));
+        Ebook ebook = service.setFavorite(id, status);
+        return ResponseEntity.ok(ApiResponse.success(ebook));
     }
 
     @GetMapping("/{id:\\d+}/cover")
@@ -123,22 +133,7 @@ public class EbookController {
         }
     }
 
-    @GetMapping("/cover-image")
-    @Operation(summary = "按路径获取封面图片", description = "根据coverArtPath返回封面图片")
-    public ResponseEntity<Resource> getCoverImage(
-            @Parameter(description = "封面图片完整路径") @RequestParam String path) {
-        File coverFile = new File(path);
-        if (!coverFile.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-        String name = coverFile.getName().toLowerCase();
-        MediaType mediaType = MediaType.IMAGE_JPEG;
-        if (name.endsWith(".png")) mediaType = MediaType.IMAGE_PNG;
-        else if (name.endsWith(".webp")) mediaType = MediaType.parseMediaType("image/webp");
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .body(new FileSystemResource(coverFile));
-    }
+    // 旧的 cover-image 端点已移除，请使用 /{id}/cover 端点
 
     @GetMapping("/{id:\\d+}/read")
     @Operation(summary = "在线阅读", description = "返回电子书的内容，epub返回HTML，其他返回纯文本")
@@ -154,7 +149,7 @@ public class EbookController {
                 List<EpubParser.ChapterEntry> chapters = EpubParser.extractChapters(ebook.getFilePath());
                 StringBuilder sb = new StringBuilder();
                 for (EpubParser.ChapterEntry ch : chapters) {
-                    String html = EpubParser.readChapterHtml(ebook.getFilePath(), ch.href());
+                    String html = EpubParser.readChapterHtml(ebook.getFilePath(), ch.href(), ebook.getId());
                     if (!html.isBlank()) {
                         if (!sb.isEmpty()) sb.append("\n<hr>\n");
                         sb.append(html);
@@ -174,12 +169,16 @@ public class EbookController {
         }
     }
 
-    @GetMapping("/epub-image")
+    @GetMapping("/{id:\\d+}/image")
     @Operation(summary = "获取epub内嵌图片", description = "从epub文件中提取指定路径的图片")
-    public ResponseEntity<byte[]> getEpubImage(
-            @Parameter(description = "电子书文件完整路径") @RequestParam String filePath,
+    public ResponseEntity<Resource> getEpubImage(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "图片在epub内的路径") @RequestParam String file) {
-        validatePath(filePath);
+        Ebook ebook = service.getEbookById(id);
+        String filePath = ebook.getFilePath();
+        if (filePath == null || !new File(filePath).exists()) {
+            return ResponseEntity.notFound().build();
+        }
         try {
             byte[] image = EpubParser.readImage(filePath, file);
             if (image == null) {
@@ -192,7 +191,7 @@ public class EbookController {
             else if (lower.endsWith(".webp")) mediaType = MediaType.parseMediaType("image/webp");
             return ResponseEntity.ok()
                     .contentType(mediaType)
-                    .body(image);
+                    .body(new ByteArrayResource(image));
         } catch (Exception e) {
             throw new RuntimeException("Failed to read epub image: " + e.getMessage(), e);
         }
@@ -218,7 +217,7 @@ public class EbookController {
                     throw new IllegalArgumentException("Chapter number out of range: " + chapterNum);
                 }
                 EpubParser.ChapterEntry chapter = chapters.get(chapterNum - 1);
-                String html = EpubParser.readChapterHtml(ebook.getFilePath(), chapter.href());
+                String html = EpubParser.readChapterHtml(ebook.getFilePath(), chapter.href(), ebook.getId());
                 return ResponseEntity.ok()
                         .contentType(MediaType.TEXT_HTML)
                         .body(html);

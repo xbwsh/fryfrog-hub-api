@@ -1,32 +1,19 @@
-package com.fryfrog.hub.comic.model;
+package com.fryfrog.hub.comic.dto;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fryfrog.hub.common.model.BaseEntity;
+import com.fryfrog.hub.comic.model.Comic;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Index;
-import jakarta.persistence.Table;
-import lombok.*;
+import lombok.Data;
 
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "comics", indexes = {
-    @Index(name = "idx_comic_title", columnList = "title"),
-    @Index(name = "idx_comic_series", columnList = "series"),
-    @Index(name = "idx_comic_favorite", columnList = "favorite"),
-    @Index(name = "idx_comic_file_path", columnList = "filePath")
-})
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Schema(description = "漫画信息")
-public class Comic extends BaseEntity {
+@Data
+@Schema(description = "漫画信息（含API路径）")
+public class ComicDTO {
+
+    @Schema(description = "漫画ID")
+    private Long id;
 
     @Schema(description = "漫画标题", example = "进击的巨人")
-    @Column(nullable = false)
     private String title;
 
     @Schema(description = "作者", example = "谏山创")
@@ -39,28 +26,18 @@ public class Comic extends BaseEntity {
     private Integer volume;
 
     @Schema(description = "发行年份", example = "2009")
-    @Column(name = "\"year\"")
     private Integer year;
 
     @Schema(description = "类型/标签", example = "少年漫画")
     private String genre;
 
     @Schema(description = "摘要描述（单行本）")
-    @Column(columnDefinition = "TEXT")
     private String summary;
 
     @Schema(description = "系列简介（总览）")
-    @Column(columnDefinition = "TEXT")
     private String seriesSummary;
 
-    @Schema(description = "文件完整路径")
-    @JsonIgnore
-    @Getter(AccessLevel.NONE)
-    @Column(unique = true)
-    private String filePath;
-
     @Schema(description = "文件名", example = "进击的巨人 Vol.1.cbz")
-    @Column(nullable = false)
     private String fileName;
 
     @Schema(description = "文件大小（字节）", example = "52428800")
@@ -72,17 +49,8 @@ public class Comic extends BaseEntity {
     @Schema(description = "漫画格式", example = "CBZ")
     private String format;
 
-    @Schema(description = "封面图片缓存路径")
-    @JsonIgnore
-    @Getter(AccessLevel.NONE)
-    private String coverArtPath;
-
-    @Schema(description = "缩略图缓存目录")
-    @JsonIgnore
-    private String thumbnailDirPath;
-
     @Schema(description = "是否收藏", example = "false")
-    private Boolean favorite = false;
+    private Boolean favorite;
 
     @Schema(description = "元数据来源（anilist）", example = "anilist")
     private String metadataSource;
@@ -99,10 +67,6 @@ public class Comic extends BaseEntity {
     @Schema(description = "评分", example = "8.3")
     private Double rating;
 
-    @Schema(description = "封面图片URL")
-    @JsonIgnore
-    private String posterUrl;
-
     @Schema(description = "出版社", example = "集英社")
     private String publisher;
 
@@ -115,13 +79,41 @@ public class Comic extends BaseEntity {
     @Schema(description = "连载开始日期", example = "2019-03-25")
     private String serializationStart;
 
-    @JsonIgnore
-    public String getCoverArtPath() {
-        return coverArtPath;
+    @Schema(description = "是否有本地封面文件")
+    private Boolean hasCover;
+
+    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
+    public String getCoverUrl() {
+        return id != null && Boolean.TRUE.equals(hasCover)
+                ? "/api/v1/comic/" + id + "/cover" : null;
     }
 
-    @JsonIgnore
-    public String getFilePath() {
-        return filePath;
+    public static ComicDTO fromEntity(Comic comic, boolean hasCover) {
+        ComicDTO dto = new ComicDTO();
+        dto.setId(comic.getId());
+        dto.setTitle(comic.getTitle());
+        dto.setAuthor(comic.getAuthor());
+        dto.setSeries(comic.getSeries());
+        dto.setVolume(comic.getVolume());
+        dto.setYear(comic.getYear());
+        dto.setGenre(comic.getGenre());
+        dto.setSummary(comic.getSummary());
+        dto.setSeriesSummary(comic.getSeriesSummary());
+        dto.setFileName(comic.getFileName());
+        dto.setFileSize(comic.getFileSize());
+        dto.setPageCount(comic.getPageCount());
+        dto.setFormat(comic.getFormat());
+        dto.setFavorite(comic.getFavorite());
+        dto.setMetadataSource(comic.getMetadataSource());
+        dto.setMetadataSourceId(comic.getMetadataSourceId());
+        dto.setMetadataUpdatedAt(comic.getMetadataUpdatedAt());
+        dto.setOriginalTitle(comic.getOriginalTitle());
+        dto.setRating(comic.getRating());
+        dto.setPublisher(comic.getPublisher());
+        dto.setIsbn(comic.getIsbn());
+        dto.setReleaseDate(comic.getReleaseDate());
+        dto.setSerializationStart(comic.getSerializationStart());
+        dto.setHasCover(hasCover);
+        return dto;
     }
 }

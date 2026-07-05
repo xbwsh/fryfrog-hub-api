@@ -71,9 +71,9 @@ public class SeriesController {
         return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes)));
     }
 
-    @GetMapping("/{id}/poster")
-    @Operation(summary = "获取系列海报", description = "返回系列的竖屏海报图片")
-    public ResponseEntity<Resource> getSeriesPoster(
+    @GetMapping("/{id}/cover")
+    @Operation(summary = "获取系列封面", description = "返回系列的竖屏封面图片")
+    public ResponseEntity<Resource> getSeriesCover(
             @Parameter(description = "系列ID") @PathVariable Long id) {
         VideoSeries series = seriesService.getSeriesById(id).orElse(null);
         if (series == null || series.getPosterUrl() == null) {
