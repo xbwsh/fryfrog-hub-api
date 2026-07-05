@@ -16,6 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.*;
 import java.util.*;
 
 @RestController
@@ -153,47 +155,70 @@ public class MediaLibraryController {
     // ── 目录浏览 ──
 
     @GetMapping("/browse")
-    @Operation(summary = "浏览服务器目录", description = "列出指定路径下的子目录，用于前端目录选择器")
+    @Operation(summary = "浏览服务器目录", description = "列出指定路径下的子目录，用于前端目录选择器。不传 path 时返回磁盘根目录列表")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> browse(
-            @Parameter(description = "目录路径，不传则从用户主目录开始浏览")
+            @Parameter(description = "目录路径，不传则列出所有磁盘根目录")
             @RequestParam(required = false) String path) {
-        File dir;
         if (path == null || path.isBlank()) {
-            File home = new File(System.getProperty("user.home"));
-            if (home.exists() && home.isDirectory()) {
-                return ResponseEntity.ok(ApiResponse.success(listChildren(home)));
-            }
-            File[] roots = File.listRoots();
-            List<Map<String, Object>> result = new ArrayList<>();
-            for (File root : roots) {
+            return ResponseEntity.ok(ApiResponse.success(listRoots()));
+        }
+        Path dirPath = Paths.get(path);
+        if (!Files.isDirectory(dirPath)) {
+            return ResponseEntity.ok(ApiResponse.success(List.of()));
+        }
+        return ResponseEntity.ok(ApiResponse.success(listChildren(dirPath.toFile())));
+    }
+
+    private List<Map<String, Object>> listRoots() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        Set<String> added = new HashSet<>();
+
+        // Docker 环境优先暴露媒体挂载路径
+        String[] mediaPaths = {
+                "/data/media/music", "/data/media/video", "/data/media/comic", "/data/media/ebook",
+                "/data/media", "/data"
+        };
+        for (String p : mediaPaths) {
+            File dir = new File(p);
+            if (dir.exists() && dir.isDirectory() && added.add(dir.getAbsolutePath())) {
                 Map<String, Object> item = new LinkedHashMap<>();
-                item.put("name", root.getAbsolutePath());
-                item.put("path", root.getAbsolutePath());
+                item.put("name", p);
+                item.put("path", dir.getAbsolutePath());
+                item.put("writable", dir.canWrite());
+                result.add(item);
+            }
+        }
+
+        // 补充系统根目录（Linux 下 / 通常对用户无意义，但 Windows 盘符有用）
+        for (File root : File.listRoots()) {
+            String rootPath = root.getAbsolutePath();
+            if (added.add(rootPath)) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("name", rootPath);
+                item.put("path", rootPath);
                 item.put("writable", root.canWrite());
                 result.add(item);
             }
-            return ResponseEntity.ok(ApiResponse.success(result));
         }
-        dir = new File(path);
-        if (!dir.exists() || !dir.isDirectory()) {
-            return ResponseEntity.ok(ApiResponse.success(List.of()));
-        }
-        return ResponseEntity.ok(ApiResponse.success(listChildren(dir)));
+
+        return result;
     }
 
     private List<Map<String, Object>> listChildren(File dir) {
-        File[] children = dir.listFiles(File::isDirectory);
-        if (children == null) {
-            return List.of();
-        }
         List<Map<String, Object>> result = new ArrayList<>();
-        for (File child : children) {
-            if (child.isHidden()) continue;
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("name", child.getName());
-            item.put("path", child.getAbsolutePath());
-            item.put("writable", child.canWrite());
-            result.add(item);
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir.toPath(), Files::isDirectory)) {
+            for (Path child : stream) {
+                String name = child.getFileName().toString();
+                if (name.startsWith(".")) continue;
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("name", name);
+                item.put("path", child.toAbsolutePath().toString());
+                item.put("writable", Files.isWritable(child));
+                result.add(item);
+            }
+        } catch (IOException e) {
+            log.warn("Failed to list directory: {}", dir.getAbsolutePath(), e);
+            return List.of();
         }
         result.sort((a, b) -> ((String) a.get("name")).compareToIgnoreCase((String) b.get("name")));
         return result;
