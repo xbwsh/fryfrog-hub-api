@@ -15,6 +15,7 @@ RUN mvn clean package -DskipTests -B
 # Stage 2: Run
 FROM eclipse-temurin:21-jre
 WORKDIR /app
+RUN mkdir -p /app/data
 COPY --from=build /app/app/target/*.jar app.jar
 EXPOSE 20058
 ENTRYPOINT ["java", "-jar", "app.jar"]
