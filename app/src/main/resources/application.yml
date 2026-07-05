@@ -50,6 +50,18 @@ hub:
   video:
     root-paths: ${VIDEO_ROOT_PATHS:./media-library/video}
     supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
+    ffprobe-path: ${FFMPEG_FFPROBE_PATH:ffprobe}
+    ffmpeg-path: ${FFMPEG_FFMPEG_PATH:ffmpeg}
+  hanime:
+    base-url: ${HANIME_BASE_URL:https://hanime1.me}
+    cf-bypass-url: ${HANIME_CF_BYPASS_URL:http://localhost:8000}
+    use-proxy: ${HANIME_USE_PROXY:false}
+    scraper:
+      request-interval: ${HANIME_REQUEST_INTERVAL:1500}
+      max-retries: ${HANIME_MAX_RETRIES:3}
+      timeout: ${HANIME_TIMEOUT:30}
+      cache-ttl: ${HANIME_CACHE_TTL:60}
+      cache-max-size: ${HANIME_CACHE_MAX_SIZE:1000}
   ebook:
     root-paths: ${EBOOK_ROOT_PATHS:./media-library/ebook}
     supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt

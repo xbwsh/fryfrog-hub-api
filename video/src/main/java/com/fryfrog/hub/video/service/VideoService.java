@@ -386,6 +386,9 @@ public class VideoService {
             log.debug("Saved video id={}, title={}, libraryId={}, fileName={}",
                     saved.getId(), saved.getTitle(), saved.getLibraryId(), saved.getFileName());
 
+            // 用 ffprobe 分析技术元数据（同步执行，避免 SQLite 并发写锁）
+            mediaInfoService.updateVideoMediaInfo(saved);
+
             if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
                 scrapeExecutor.submit(() -> tryScrapeVideo(saved));
             }

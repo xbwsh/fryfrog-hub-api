@@ -426,6 +426,39 @@ public class VideoController {
         }
     }
 
+    @GetMapping("/{id:\\d+}/media-info")
+    @Operation(summary = "获取媒体技术信息", description = "使用 ffprobe 分析视频的编码、分辨率、帧率等技术信息")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getMediaInfo(
+            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
+        Video video = service.getVideoById(id);
+        MediaInfoService.MediaInfo info = mediaInfoService.extractMediaInfo(video.getFilePath());
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("videoCodec", info.videoCodec != null ? info.videoCodec : "unknown");
+        result.put("videoCodecLong", info.videoCodecLong != null ? info.videoCodecLong : "");
+        result.put("audioCodec", info.audioCodec != null ? info.audioCodec : "unknown");
+        result.put("audioCodecLong", info.audioCodecLong != null ? info.audioCodecLong : "");
+        result.put("audioChannels", info.audioChannels);
+        result.put("audioSampleRate", info.audioSampleRate != null ? info.audioSampleRate : "");
+        result.put("resolution", info.resolution != null ? info.resolution : "unknown");
+        result.put("frameRate", info.frameRate);
+        result.put("bitrateKbps", info.bitrateKbps);
+        result.put("durationSeconds", info.durationSeconds);
+        result.put("durationMinutes", info.durationMinutes);
+        result.put("format", info.formatName != null ? info.formatName : "unknown");
+
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @GetMapping("/{id:\\d+}/subtitles")
+    @Operation(summary = "获取内嵌字幕列表", description = "列出视频中所有内嵌字幕轨道（语言、编码等）")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSubtitles(
+            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
+        Video video = service.getVideoById(id);
+        List<Map<String, Object>> tracks = mediaInfoService.getSubtitleTracks(video.getFilePath());
+        return ResponseEntity.ok(ApiResponse.success(tracks));
+    }
+
     @GetMapping("/{id:\\d+}/subtitle/external")
     @Operation(summary = "获取外挂字幕列表", description = "列出视频同目录下的外挂字幕文件（.srt/.ass/.ssa等）")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getExternalSubtitles(
@@ -433,6 +466,67 @@ public class VideoController {
         Video video = service.getVideoById(id);
         List<Map<String, Object>> subs = mediaInfoService.getExternalSubtitles(video.getFilePath());
         return ResponseEntity.ok(ApiResponse.success(subs));
+    }
+
+    @GetMapping("/{id:\\d+}/subtitle/vtt")
+    @Operation(summary = "获取字幕WebVTT", description = "将内嵌或外挂字幕转换为WebVTT格式返回")
+    public ResponseEntity<String> getSubtitleVtt(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "内嵌字幕流索引") @RequestParam(required = false) Integer index,
+            @Parameter(description = "外挂字幕文件名") @RequestParam(required = false) String file) throws Exception {
+        Video video = service.getVideoById(id);
+
+        String videoDir = new File(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+
+        String vttContent;
+
+        if (index != null) {
+            String vttFileName = baseName + ".sub" + index + ".vtt";
+            Path vttPath = Path.of(videoDir, vttFileName);
+            if (Files.exists(vttPath)) {
+                vttContent = Files.readString(vttPath);
+            } else {
+                vttContent = mediaInfoService.extractSubtitleAsVtt(video.getFilePath(), index);
+                Files.writeString(vttPath, vttContent);
+            }
+        } else if (file != null) {
+            Path subPath = Path.of(videoDir, file);
+            if (!Files.exists(subPath)) {
+                return ResponseEntity.notFound().build();
+            }
+            vttContent = mediaInfoService.convertExternalSubtitleToVtt(subPath.toString());
+        } else {
+            return ResponseEntity.badRequest().build();
+        }
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/vtt; charset=utf-8"))
+                .body(vttContent);
+    }
+
+    @PostMapping("/{id:\\d+}/audio/transcode")
+    @Operation(summary = "音频转码", description = "将不兼容的音频编码（eac3/dts/truehd等）转为AAC")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> transcodeAudio(
+            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
+        Video video = service.getVideoById(id);
+        String filePath = video.getFilePath();
+
+        if (!mediaInfoService.isAudioIncompatible(filePath)) {
+            return ResponseEntity.ok(ApiResponse.success(Map.of(
+                    "alreadyCompatible", true,
+                    "message", "音频编码已兼容，无需转码"
+            )));
+        }
+
+        String incompatibleCodec = mediaInfoService.getIncompatibleCodec(filePath);
+        String outputPath = mediaInfoService.transcodeAudio(filePath);
+
+        return ResponseEntity.ok(ApiResponse.success(Map.of(
+                "originalCodec", incompatibleCodec,
+                "transcodedPath", outputPath,
+                "message", "转码完成"
+        )));
     }
 
     @GetMapping("/{id:\\d+}/playlist.m3u")
