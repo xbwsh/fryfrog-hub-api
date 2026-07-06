@@ -8,7 +8,7 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: jdbc:sqlite:${DB_PATH:./data/fryfrog.db}?journal_mode=WAL&busy_timeout=5000
+    url: jdbc:sqlite:${DB_PATH:./data/fryfrog.db}?journal_mode=WAL&busy_timeout=10000&shared_cache=false
     driver-class-name: org.sqlite.JDBC
   jpa:
     hibernate:
@@ -18,7 +18,9 @@ spring:
       hibernate:
         dialect: org.hibernate.community.dialect.SQLiteDialect
   hikari:
-    maximum-pool-size: ${DB_POOL_SIZE:10}
+    maximum-pool-size: ${DB_POOL_SIZE:5}
+    connection-timeout: 30000
+    read-only: false
 
 watcher:
   periodic-scan: true
