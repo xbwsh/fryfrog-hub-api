@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/settings")
@@ -22,20 +23,32 @@ public class SettingController {
     private final SystemSettingService settingService;
     private final PeriodicScanScheduler scanScheduler;
 
+    private static final Set<String> SENSITIVE_KEYS = Set.of(
+            "tmdb.api-key",
+            "hub.tmdb.api-key"
+    );
+
     public SettingController(SystemSettingService settingService, PeriodicScanScheduler scanScheduler) {
         this.settingService = settingService;
         this.scanScheduler = scanScheduler;
     }
 
     @GetMapping
-    @Operation(summary = "获取所有设置")
+    @Operation(summary = "获取所有设置", description = "返回所有设置，敏感字段（如api-key）只返回是否配置")
     public ResponseEntity<ApiResponse<List<SystemSetting>>> getAllSettings() {
         List<SystemSetting> settings = settingService.getAll().stream()
                 .map(s -> {
                     SystemSetting dto = new SystemSetting();
                     dto.setId(s.getId());
-                    dto.setKey(s.getKey().startsWith("hub.") ? s.getKey().substring(4) : s.getKey());
-                    dto.setValue(s.getValue());
+                    String displayKey = s.getKey().startsWith("hub.") ? s.getKey().substring(4) : s.getKey();
+                    dto.setKey(displayKey);
+
+                    if (SENSITIVE_KEYS.contains(displayKey) || SENSITIVE_KEYS.contains(s.getKey())) {
+                        dto.setValue(s.getValue().isBlank() ? "" : "***已配置***");
+                    } else {
+                        dto.setValue(s.getValue());
+                    }
+
                     dto.setDescription(s.getDescription());
                     return dto;
                 })
@@ -44,11 +57,24 @@ public class SettingController {
     }
 
     @GetMapping("/{key}")
-    @Operation(summary = "获取单个设置")
+    @Operation(summary = "获取单个设置", description = "获取设置值，敏感字段只返回是否配置")
     public ResponseEntity<ApiResponse<SystemSetting>> getSetting(@PathVariable String key) {
         String dbKey = key.startsWith("hub.") ? key : "hub." + key;
         return settingService.getByKey(dbKey)
-                .map(s -> ResponseEntity.ok(ApiResponse.success(s)))
+                .map(s -> {
+                    SystemSetting dto = new SystemSetting();
+                    dto.setId(s.getId());
+                    dto.setKey(key);
+
+                    if (SENSITIVE_KEYS.contains(key) || SENSITIVE_KEYS.contains(s.getKey())) {
+                        dto.setValue(s.getValue().isBlank() ? "" : "***已配置***");
+                    } else {
+                        dto.setValue(s.getValue());
+                    }
+
+                    dto.setDescription(s.getDescription());
+                    return ResponseEntity.ok(ApiResponse.success(dto));
+                })
                 .orElse(ResponseEntity.ok(ApiResponse.error("Setting not found: " + key)));
     }
 
@@ -65,6 +91,13 @@ public class SettingController {
                 int interval = Integer.parseInt(request.getValue());
                 scanScheduler.updateInterval(interval);
             } catch (NumberFormatException ignored) {}
+        }
+
+        String displayKey = setting.getKey().startsWith("hub.") ? setting.getKey().substring(4) : setting.getKey();
+        setting.setKey(displayKey);
+
+        if (SENSITIVE_KEYS.contains(key) || SENSITIVE_KEYS.contains(dbKey)) {
+            setting.setValue("***已配置***");
         }
 
         return ResponseEntity.ok(ApiResponse.success("设置已更新", setting));

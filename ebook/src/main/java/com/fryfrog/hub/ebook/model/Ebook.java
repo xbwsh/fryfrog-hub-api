@@ -79,6 +79,9 @@ public class Ebook extends BaseEntity {
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
 
+    @Schema(description = "Bangumi条目ID")
+    private Integer bangumiId;
+
     @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
     public String getCoverUrl() {
         return "/api/v1/ebook/" + getId() + "/cover";

@@ -3,8 +3,11 @@ package com.fryfrog.hub.ebook.service;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
+import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
+import com.fryfrog.hub.ebook.model.EbookReadingProgress;
+import com.fryfrog.hub.ebook.repository.EbookReadingProgressRepository;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +33,7 @@ import java.util.stream.Stream;
 public class EbookService {
 
     private final EbookRepository repository;
+    private final EbookReadingProgressRepository readingProgressRepository;
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
     private String rootPathsConfig;
@@ -67,6 +71,26 @@ public class EbookService {
 
     public List<Ebook> getFavorites() {
         return repository.findByFavoriteTrue();
+    }
+
+    public List<Ebook> getRecentlyAdded() {
+        return repository.findAllByOrderByCreatedAtDesc();
+    }
+
+    public List<EbookReadingProgressDTO> getRecentlyRead() {
+        List<EbookReadingProgress> progressList = readingProgressRepository.findAllByOrderByUpdatedAtDesc();
+        return progressList.stream()
+                .map(EbookReadingProgressDTO::fromEntity)
+                .toList();
+    }
+
+    public Map<String, Object> getStats() {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("totalBooks", repository.countAll());
+        stats.put("totalFavorites", repository.countFavorites());
+        stats.put("totalReading", readingProgressRepository.count() - readingProgressRepository.countByCompletedTrue());
+        stats.put("totalCompleted", readingProgressRepository.countByCompletedTrue());
+        return stats;
     }
 
     public Ebook setFavorite(Long id, boolean status) {
@@ -349,15 +373,128 @@ public class EbookService {
 
     private String cleanTitleForSearch(String title) {
         String clean = title;
-        clean = clean.replaceAll("[\\[\\]［］]", " ").trim();
-        clean = clean.replaceAll("[（(][^）)]*[）)]", " ").trim();
-        clean = clean.replaceAll("[台日港]版", " ").trim();
-        clean = clean.replaceAll("[Vv]ol\\.?\\s*\\d+", " ").trim();
-        clean = clean.replaceAll("卷\\s*\\d+", " ").trim();
-        clean = clean.replaceAll("#\\s*\\d+", " ").trim();
-        clean = clean.replaceAll("\\d+\\.epub$", " ").trim();
+
+        // 移除包含标签的方括号: [台版] [digital] [Uncensored] [DL版]
+        clean = clean.replaceAll("(?i)\\[.*?(?:台版|日版|港版|简中|繁中|中文版|digital|uncensored|dl版|raw|scanned).*?\\]", " ");
+
+        // 移除纯数字/卷号方括号: [01] [1] [Vol.1] [第1卷]
+        clean = clean.replaceAll("(?i)\\[\\s*(?:第?\\s*)?\\d+\\s*(?:卷|集|话|期)?\\s*\\]", " ");
+        clean = clean.replaceAll("(?i)\\[\\s*Vol\\.?\\s*\\d+\\s*\\]", " ");
+
+        // 移除数字文件扩展名
+        clean = clean.replaceAll("\\d+\\.epub$", " ");
+
+        // 移除所有剩余方括号
+        clean = clean.replaceAll("[\\[\\]［］]", " ");
+
+        // 移除圆括号内容
+        clean = clean.replaceAll("[（(][^）)]*[）)]", " ");
+
+        // 移除卷号格式: Vol.1, 卷1, 第1卷, #1
+        clean = clean.replaceAll("(?i)Vol\\.?\\s*\\d+", " ");
+        clean = clean.replaceAll("卷\\s*\\d+", " ");
+        clean = clean.replaceAll("第\\s*\\d+\\s*卷", " ");
+        clean = clean.replaceAll("#\\s*\\d+", " ");
+
+        // 移除末尾的纯数字（卷号）: 001, 002, 01
+        clean = clean.replaceAll("[\\s]*\\d{1,3}$", " ");
+
+        // 压缩空格
         clean = clean.replaceAll("\\s+", " ").trim();
         return clean.isEmpty() ? title : clean;
+    }
+
+    public String extractSeriesName(Ebook ebook) {
+        String title = ebook.getTitle();
+        if (title == null || title.isBlank()) {
+            title = ebook.getFileName();
+        }
+        return cleanTitleForSearch(title);
+    }
+
+    @Transactional
+    public void organizeAll() {
+        List<Ebook> allEbooks = repository.findAll();
+        int moved = 0;
+
+        for (Ebook ebook : allEbooks) {
+            try {
+                if (moveEbookToSeriesFolder(ebook)) {
+                    moved++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to organize ebook '{}': {}", ebook.getTitle(), e.getMessage());
+            }
+        }
+
+        if (moved > 0) {
+            log.info("Organized {} ebooks into series folders", moved);
+        }
+    }
+
+    @Transactional
+    public boolean moveEbookToSeriesFolder(Ebook ebook) {
+        try {
+            if (ebook.getFilePath() == null || ebook.getFilePath().isBlank()) return false;
+
+            Path currentPath = Paths.get(ebook.getFilePath());
+            if (!Files.exists(currentPath)) {
+                log.warn("Ebook file not found: {}", ebook.getFilePath());
+                return false;
+            }
+
+            Path currentDir = currentPath.getParent();
+            if (currentDir == null) return false;
+
+            Path rootDir = findRootDir(currentDir);
+            if (rootDir == null) return false;
+
+            String seriesName = extractSeriesName(ebook);
+            if (seriesName.isBlank()) return false;
+
+            Path seriesDir = rootDir.resolve(sanitizeFolderName(seriesName));
+            Files.createDirectories(seriesDir);
+
+            Path targetPath = seriesDir.resolve(currentPath.getFileName());
+            if (currentPath.equals(targetPath)) {
+                return false;
+            }
+
+            if (Files.exists(targetPath)) {
+                log.warn("Target file already exists, skipping: {}", targetPath);
+                return false;
+            }
+
+            Files.move(currentPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            ebook.setFilePath(targetPath.toAbsolutePath().toString());
+
+            if (ebook.getSeries() == null || ebook.getSeries().isBlank()) {
+                ebook.setSeries(seriesName);
+            }
+
+            repository.save(ebook);
+            log.info("Moved ebook '{}' to series folder: {}", ebook.getTitle(), seriesDir);
+            return true;
+        } catch (IOException e) {
+            log.error("Failed to move ebook '{}': {}", ebook.getTitle(), e.getMessage());
+            return false;
+        }
+    }
+
+    private Path findRootDir(Path currentDir) {
+        for (String rootPath : getRootPaths()) {
+            Path root = Paths.get(rootPath).toAbsolutePath().normalize();
+            if (currentDir.toAbsolutePath().normalize().startsWith(root)) {
+                return root;
+            }
+        }
+        return null;
+    }
+
+    private String sanitizeFolderName(String name) {
+        if (name == null) return "Unknown";
+        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        return sanitized.isBlank() ? "Unknown" : sanitized;
     }
 
 }

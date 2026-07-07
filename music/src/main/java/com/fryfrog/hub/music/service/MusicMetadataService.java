@@ -139,11 +139,6 @@ public class MusicMetadataService {
             }
         }
 
-        List<MusicTrack> hot = repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0);
-        if (!hot.isEmpty()) {
-            recommendations.put("热门歌曲", hot.stream().limit(20).toList());
-        }
-
         List<MusicTrack> unplayed = repository.findUnplayedTracks();
         if (!unplayed.isEmpty()) {
             recommendations.put("新歌发现", unplayed.stream().limit(20).toList());

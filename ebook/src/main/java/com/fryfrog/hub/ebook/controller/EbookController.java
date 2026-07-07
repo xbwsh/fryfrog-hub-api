@@ -1,13 +1,17 @@
 package com.fryfrog.hub.ebook.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
+import com.fryfrog.hub.ebook.dto.EbookBindRequest;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressRequest;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
+import com.fryfrog.hub.ebook.service.EbookMetadataScrapeService;
 import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
 import com.fryfrog.hub.ebook.service.EbookService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -29,6 +33,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -40,6 +45,8 @@ public class EbookController {
 
     private final EbookService service;
     private final EbookReadingProgressService readingProgressService;
+    private final EbookMetadataScrapeService scrapeService;
+    private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
     private String rootPathsConfig;
@@ -95,8 +102,25 @@ public class EbookController {
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的电子书")
     public ResponseEntity<ApiResponse<List<Ebook>>> getFavorites() {
         List<Ebook> ebooks = service.getFavorites();
-        
         return ResponseEntity.ok(ApiResponse.success(ebooks));
+    }
+
+    @GetMapping("/recently-added")
+    @Operation(summary = "最近添加", description = "返回最近添加的电子书")
+    public ResponseEntity<ApiResponse<List<Ebook>>> getRecentlyAdded() {
+        return ResponseEntity.ok(ApiResponse.success(service.getRecentlyAdded()));
+    }
+
+    @GetMapping("/recently-read")
+    @Operation(summary = "最近阅读", description = "返回最近阅读过的电子书")
+    public ResponseEntity<ApiResponse<List<EbookReadingProgressDTO>>> getRecentlyRead() {
+        return ResponseEntity.ok(ApiResponse.success(service.getRecentlyRead()));
+    }
+
+    @GetMapping("/stats")
+    @Operation(summary = "阅读统计", description = "返回电子书阅读统计数据")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getStats() {
+        return ResponseEntity.ok(ApiResponse.success(service.getStats()));
     }
 
     @PutMapping("/{id:\\d+}/favorite")
@@ -278,6 +302,50 @@ public class EbookController {
             @Parameter(description = "电子书ID") @PathVariable Long id) {
         readingProgressService.deleteProgress(id);
         return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @GetMapping("/bangumi/search")
+    @Operation(summary = "搜索 Bangumi 书籍", description = "在 Bangumi 上搜索书籍（小说、漫画等）")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> searchBangumi(
+            @Parameter(description = "搜索关键词") @RequestParam String q) {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.searchBooks(q)));
+    }
+
+    @PostMapping("/{id:\\d+}/bangumi/bind")
+    @Operation(summary = "绑定 Bangumi 元数据", description = "将 Bangumi 条目的元数据绑定到指定电子书，下载封面到本地。支持 query param 或 JSON body 两种方式")
+    public ResponseEntity<ApiResponse<Ebook>> bindBangumi(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
+            @RequestParam(required = false) Integer bangumiId,
+            @RequestBody(required = false) EbookBindRequest request) {
+        Integer idParam = bangumiId;
+        if (idParam == null && request != null) {
+            idParam = request.getBangumiId();
+        }
+        if (idParam == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("bangumiId is required"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAndBind(id, idParam)));
+    }
+
+    @PostMapping("/bangumi/auto-scrape")
+    @Operation(summary = "批量自动刮削", description = "自动刮削所有未绑定的电子书（异步执行）")
+    public ResponseEntity<ApiResponse<Void>> autoScrape() {
+        scrapeService.autoScrapeAll();
+        return ResponseEntity.ok(ApiResponse.success("批量刮削已开始", null));
+    }
+
+    @GetMapping("/scrape/progress")
+    @Operation(summary = "刮削进度", description = "返回当前电子书刮削任务的进度")
+    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
+        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("ebook")));
+    }
+
+    @PutMapping("/{id:\\d+}/metadata")
+    @Operation(summary = "手动更新元数据", description = "手动更新电子书的元数据信息")
+    public ResponseEntity<ApiResponse<Ebook>> updateMetadata(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
+            @RequestBody Map<String, Object> metadata) {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.updateMetadata(id, metadata)));
     }
 
     private void validatePath(String path) {

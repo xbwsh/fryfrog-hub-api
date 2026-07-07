@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 public class EbookWatcherService {
 
     private final EbookService metadataService;
+    private final EbookMetadataScrapeService scrapeService;
     private final SystemSettingService settingService;
     private final PeriodicScanScheduler scanScheduler;
 
@@ -77,6 +78,8 @@ public class EbookWatcherService {
             for (String rootPath : getRootPaths()) {
                 metadataService.scanDirectory(rootPath);
             }
+            metadataService.organizeAll();
+            scrapeService.autoScrapeAll();
         } catch (Exception e) {
             log.warn("Periodic ebook scan failed: {}", e.getMessage());
         }
@@ -132,8 +135,11 @@ public class EbookWatcherService {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
-                                        metadataService.extractAndSaveMetadata(fullPath.toString());
+                                        Ebook ebook = metadataService.extractAndSaveMetadata(fullPath.toString());
                                         log.debug("Auto-indexed ebook: {}", fileName);
+                                        if (ebook != null) {
+                                            metadataService.moveEbookToSeriesFolder(ebook);
+                                        }
                                     }
                                 } catch (Exception e) {
                                     log.warn("Failed to auto-index ebook: {}", fileName, e);

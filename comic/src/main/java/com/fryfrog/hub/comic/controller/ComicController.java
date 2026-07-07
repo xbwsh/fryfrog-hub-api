@@ -9,12 +9,11 @@ import com.fryfrog.hub.comic.dto.ComicReadingProgressDTO;
 import com.fryfrog.hub.comic.dto.ComicReadingProgressRequest;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
-import com.fryfrog.hub.comic.dto.anilist.AnilistSearchResult;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.model.ComicCharacter;
 import com.fryfrog.hub.comic.model.ComicReadingProgress;
 import com.fryfrog.hub.comic.repository.ComicCharacterRepository;
-import com.fryfrog.hub.comic.service.BangumiService;
+import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.comic.service.ComicMetadataService;
 import com.fryfrog.hub.comic.service.ComicReadingProgressService;
 import com.fryfrog.hub.comic.service.MangaScrapeService;
@@ -278,21 +277,6 @@ public class ComicController {
             @Parameter(description = "漫画ID") @PathVariable Long id,
             @RequestBody ComicBindRequest request) {
         return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindBangumi(id, request.getBangumiId(), request.isBindSeries())));
-    }
-
-    @GetMapping("/anilist/search")
-    @Operation(summary = "搜索 AniList 漫画", description = "在 AniList 上搜索日漫（兜底源）")
-    public ResponseEntity<ApiResponse<List<AnilistSearchResult.MediaItem>>> searchAnilist(
-            @Parameter(description = "搜索关键词（漫画标题）") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.searchFromAnilist(q)));
-    }
-
-    @PostMapping("/{id:\\d+}/anilist/bind")
-    @Operation(summary = "绑定 AniList 元数据", description = "将指定 AniList 漫画的元数据绑定到本地漫画。bindSeries=true 时同步系列级元数据到同系列所有卷")
-    public ResponseEntity<ApiResponse<Comic>> bindAnilist(
-            @Parameter(description = "漫画ID") @PathVariable Long id,
-            @RequestBody ComicBindRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindAnilist(id, request.getAnilistId(), request.isBindSeries())));
     }
 
     @GetMapping("/scrape/progress")

@@ -1,9 +1,9 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
-import com.fryfrog.hub.comic.dto.anilist.AnilistSearchResult;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.model.ComicCharacter;
 import com.fryfrog.hub.comic.repository.ComicCharacterRepository;
@@ -33,7 +33,6 @@ import java.util.regex.Pattern;
 public class MangaScrapeService {
 
     private final BangumiService bangumiService;
-    private final AnilistService anilistService;
     private final ComicRepository repository;
     private final ComicCharacterRepository characterRepository;
     private final ComicMetadataService comicMetadataService;
@@ -63,20 +62,6 @@ public class MangaScrapeService {
         return sorted;
     }
 
-    public List<AnilistSearchResult.MediaItem> searchFromAnilist(String query) {
-        String cleaned = cleanTitleForSearch(query);
-        List<AnilistSearchResult.MediaItem> results = anilistService.searchManga(cleaned);
-        if (results.isEmpty() && !cleaned.equals(query)) {
-            results = anilistService.searchManga(query);
-        }
-        List<AnilistSearchResult.MediaItem> sorted = new ArrayList<>(results);
-        sorted.sort(Comparator.comparingInt(item -> {
-            int score = item.getMeanScore() != null ? item.getMeanScore() : 0;
-            return -score;
-        }));
-        return sorted;
-    }
-
     @Transactional
     public Comic bindBangumi(Long comicId, Integer bangumiId, boolean bindSeries) {
         Comic comic = comicMetadataService.getComicById(comicId);
@@ -103,40 +88,6 @@ public class MangaScrapeService {
         downloadCoverFromBangumi(saved, detail);
         repository.save(saved);
         saveBangumiCharacters(saved.getId(), bangumiId);
-
-        if (bindSeries) {
-            propagateSeriesMetadata(saved);
-        }
-
-        return saved;
-    }
-
-    @Transactional
-    public Comic bindAnilist(Long comicId, Integer anilistId, boolean bindSeries) {
-        Comic comic = comicMetadataService.getComicById(comicId);
-        AnilistSearchResult.MediaItem detail = anilistService.getMangaDetail(anilistId);
-        if (detail == null) {
-            throw new ResourceNotFoundException("AniList Manga", "id", anilistId);
-        }
-
-        updateComicFromAnilistDetail(comic, detail);
-
-        if (detail.getDescription() != null && !detail.getDescription().isBlank()) {
-            comic.setSeriesSummary(detail.getDescription());
-        }
-
-        comic.setMetadataSource("anilist");
-        comic.setMetadataSourceId(anilistId);
-        comic.setMetadataUpdatedAt(LocalDateTime.now());
-
-        moveComicToSeriesFolder(comic);
-
-        Comic saved = repository.save(comic);
-        log.info("Bound comic '{}' to AniList manga id={}", saved.getTitle(), anilistId);
-
-        downloadCoverFromAnilist(saved, detail);
-        repository.save(saved);
-        saveAnilistCharacters(saved.getId(), detail);
 
         if (bindSeries) {
             propagateSeriesMetadata(saved);
@@ -337,16 +288,7 @@ public class MangaScrapeService {
             return bindBangumi(comic.getId(), best.getId(), true);
         }
 
-        log.info("Bangumi returned no results for '{}', trying AniList", query);
-        List<AnilistSearchResult.MediaItem> aniResults = searchFromAnilist(query);
-        if (!aniResults.isEmpty()) {
-            AnilistSearchResult.MediaItem best = aniResults.get(0);
-            if (best.getMeanScore() != null && best.getMeanScore() >= getMinScore() * 10) {
-                return bindAnilist(comic.getId(), best.getId(), true);
-            }
-        }
-
-        log.info("No results for comic '{}' from any source", query);
+        log.info("No results for comic '{}' from Bangumi", query);
         return comic;
     }
 
@@ -426,67 +368,6 @@ public class MangaScrapeService {
         }
     }
 
-    private void updateComicFromAnilistDetail(Comic comic, AnilistSearchResult.MediaItem detail) {
-        AnilistSearchResult.MediaItem.MediaTitle title = detail.getTitle();
-        if (title != null) {
-            if (title.getNativeTitle() != null && !title.getNativeTitle().isBlank()) {
-                comic.setTitle(title.getNativeTitle());
-            } else if (title.getRomaji() != null && !title.getRomaji().isBlank()) {
-                comic.setTitle(title.getRomaji());
-            }
-            if (title.getEnglish() != null && !title.getEnglish().isBlank()) {
-                comic.setOriginalTitle(title.getEnglish());
-            } else if (title.getRomaji() != null && !title.getRomaji().isBlank()) {
-                comic.setOriginalTitle(title.getRomaji());
-            }
-        }
-
-        if (detail.getStaff() != null && detail.getStaff().getEdges() != null) {
-            String author = detail.getStaff().getEdges().stream()
-                    .filter(edge -> "Story & Art".equals(edge.getRole()) || "Story".equals(edge.getRole()) || "Art".equals(edge.getRole()))
-                    .map(edge -> edge.getNode() != null && edge.getNode().getName() != null ? edge.getNode().getName().getFull() : null)
-                    .filter(Objects::nonNull)
-                    .reduce((a, b) -> a + ", " + b)
-                    .orElse(null);
-            if (author != null) {
-                comic.setAuthor(author);
-            }
-        }
-
-        if (detail.getMeanScore() != null) {
-            comic.setRating(detail.getMeanScore() / 10.0);
-        }
-
-        if (detail.getGenres() != null && !detail.getGenres().isEmpty()) {
-            comic.setGenre(String.join(", ", detail.getGenres()));
-        }
-
-        if (detail.getStartDate() != null && detail.getStartDate().getYear() != null) {
-            comic.setYear(detail.getStartDate().getYear());
-        }
-
-        Integer localVolume = extractVolumeFromFileName(comic.getFileName());
-        if (localVolume != null) {
-            comic.setVolume(localVolume);
-        }
-
-        if (comic.getSeries() == null || comic.getSeries().isBlank()) {
-            if (title != null && title.getBestTitle() != null) {
-                comic.setSeries(title.getBestTitle());
-            }
-        }
-
-        if (detail.getDescription() != null) {
-            String desc = detail.getDescription()
-                    .replaceAll("<br\\s*/?>", "\n")
-                    .replaceAll("<[^>]+>", "")
-                    .trim();
-            if (!desc.isBlank()) {
-                comic.setSummary(desc);
-            }
-        }
-    }
-
     private void downloadCoverFromBangumi(Comic comic, BangumiService.SubjectDetail detail) {
         String coverUrl = null;
         if (detail.getImages() != null) {
@@ -496,17 +377,6 @@ public class MangaScrapeService {
             }
         }
         downloadCover(comic, coverUrl, "bangumi_" + detail.getId());
-    }
-
-    private void downloadCoverFromAnilist(Comic comic, AnilistSearchResult.MediaItem detail) {
-        String coverUrl = null;
-        if (detail.getCoverImage() != null) {
-            coverUrl = detail.getCoverImage().getLarge();
-            if (coverUrl == null || coverUrl.isBlank()) {
-                coverUrl = detail.getCoverImage().getMedium();
-            }
-        }
-        downloadCover(comic, coverUrl, "anilist_" + detail.getId());
     }
 
     private void downloadCover(Comic comic, String coverUrl, String filePrefix) {
@@ -875,52 +745,5 @@ public class MangaScrapeService {
             log.debug("Failed to find series subject for {}: {}", subjectId, e.getMessage());
         }
         return null;
-    }
-
-    @Transactional
-    public void saveAnilistCharacters(Long comicId, AnilistSearchResult.MediaItem detail) {
-        try {
-            if (detail.getCharacters() == null || detail.getCharacters().getEdges() == null) {
-                log.debug("No characters found for AniList manga {}", detail.getId());
-                return;
-            }
-
-            characterRepository.deleteAll(characterRepository.findByComicId(comicId));
-
-            Comic comic = repository.findById(comicId).orElse(null);
-
-            for (AnilistSearchResult.MediaItem.CharacterEdge edge : detail.getCharacters().getEdges()) {
-                AnilistSearchResult.MediaItem.CharacterNode node = edge.getNode();
-                if (node == null || node.getName() == null) continue;
-
-                ComicCharacter character = new ComicCharacter();
-                character.setComicId(comicId);
-                character.setName(node.getName().getFull());
-                character.setRole(edge.getRole());
-                character.setSourceCharacterId(node.getId());
-                character.setSource("anilist");
-
-                if (node.getImage() != null) {
-                    String imageUrl = node.getImage().getLarge();
-                    if (imageUrl == null || imageUrl.isBlank()) {
-                        imageUrl = node.getImage().getMedium();
-                    }
-                    if (imageUrl != null && !imageUrl.isBlank()) {
-                        character.setImageUrl(imageUrl);
-                        if (comic != null) {
-                            String localPath = downloadCharacterImage(comic, imageUrl, node.getName().getFull());
-                            if (localPath != null) {
-                                character.setImagePath(localPath);
-                            }
-                        }
-                    }
-                }
-
-                characterRepository.save(character);
-            }
-            log.info("Saved {} characters for comic id={} from AniList", detail.getCharacters().getEdges().size(), comicId);
-        } catch (Exception e) {
-            log.warn("Failed to save AniList characters for comic id={}: {}", comicId, e.getMessage());
-        }
     }
 }

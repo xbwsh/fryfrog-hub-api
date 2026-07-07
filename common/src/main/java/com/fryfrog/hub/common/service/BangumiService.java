@@ -1,4 +1,4 @@
-package com.fryfrog.hub.comic.service;
+package com.fryfrog.hub.common.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
