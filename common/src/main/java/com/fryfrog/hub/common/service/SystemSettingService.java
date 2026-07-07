@@ -40,26 +40,77 @@ public class SystemSettingService {
             entry("tmdb.include-adult", "hub.tmdb.include-adult"),
             entry("comic.auto-scrape", "hub.comic.auto-scrape"),
             entry("comic.min-score", "hub.comic.min-score"),
-            entry("anilist.language", "hub.anilist.language"),
             entry("music.auto-scrape", "hub.music.scrape.auto-scrape"),
             entry("music.auto-writeback", "hub.music.auto-writeback"),
             entry("music.use-folder-structure", "hub.music.use-folder-structure"),
             entry("music.default-artist", "hub.music.default-artist"),
             entry("music.scrape.enabled", "hub.music.scrape.enabled"),
             entry("music.scrape.lyrics-fallback", "hub.music.scrape.lyrics-fallback"),
-            entry("music.scrape.cover-fallback", "hub.music.scrape.cover-fallback"),
-            entry("proxy.host", "hub.proxy.host"),
-            entry("proxy.port", "hub.proxy.port")
+            entry("music.scrape.cover-fallback", "hub.music.scrape.cover-fallback")
+    );
+
+    private static final Map<String, String> DEFAULT_SETTINGS = Map.ofEntries(
+            // TMDB
+            entry("tmdb.api-key", ""),
+            entry("tmdb.language", "zh-CN"),
+            entry("tmdb.image-size", "original"),
+            entry("tmdb.auto-scrape", "false"),
+            entry("tmdb.min-score", "0.0"),
+            entry("tmdb.include-adult", "true"),
+            // Comic
+            entry("comic.auto-scrape", "false"),
+            entry("comic.min-score", "0.0"),
+            // Music
+            entry("music.scrape.enabled", "true"),
+            entry("music.scrape.auto-scrape", "true"),
+            entry("music.auto-writeback", "true"),
+            entry("music.use-folder-structure", "true"),
+            entry("music.default-artist", ""),
+            entry("music.scrape.lyrics-fallback", "true"),
+            entry("music.scrape.cover-fallback", "true"),
+            // Watcher
+            entry("watcher.periodic-scan", "true"),
+            entry("watcher.periodic-scan-interval", "300"),
+            // Hanime
+            entry("hanime.cf-bypass-url", "http://localhost:8000"),
+            entry("hanime.use-proxy", "false"),
+            entry("hanime.scraper.request-interval", "1500"),
+            entry("hanime.scraper.max-retries", "3"),
+            entry("hanime.scraper.timeout", "30"),
+            entry("hanime.scraper.cache-ttl", "60"),
+            entry("hanime.scraper.cache-max-size", "1000")
     );
 
     @PostConstruct
     public void init() {
         migrateKeys();
+        seedDefaults();
         List<SystemSetting> settings = repository.findAll();
         for (SystemSetting setting : settings) {
             cache.put(setting.getKey(), setting.getValue());
         }
         log.info("Loaded {} system settings from database", settings.size());
+    }
+
+    private void seedDefaults() {
+        if (repository.count() > 0) return;
+
+        transactionTemplate.executeWithoutResult(status -> {
+            int seeded = 0;
+            for (Map.Entry<String, String> entry : DEFAULT_SETTINGS.entrySet()) {
+                String key = entry.getKey();
+                if (repository.findByKey(key).isEmpty()) {
+                    SystemSetting setting = new SystemSetting();
+                    setting.setKey(key);
+                    setting.setValue(entry.getValue());
+                    repository.save(setting);
+                    seeded++;
+                }
+            }
+            if (seeded > 0) {
+                log.info("Seeded {} default system settings", seeded);
+            }
+        });
     }
 
     private void migrateKeys() {

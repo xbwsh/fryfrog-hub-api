@@ -82,6 +82,9 @@ public class Ebook extends BaseEntity {
     @Schema(description = "Bangumi条目ID")
     private Integer bangumiId;
 
+    @Schema(description = "Open Library Work ID", example = "OL123456W")
+    private String openLibraryId;
+
     @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
     public String getCoverUrl() {
         return "/api/v1/ebook/" + getId() + "/cover";

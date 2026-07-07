@@ -220,19 +220,6 @@ curl http://localhost:20058/api/v1/settings/performance
 | music.scrape.lyrics-fallback | Boolean | true | 歌词回退 |
 | music.scrape.cover-fallback | Boolean | true | 封面回退 |
 
-### AniList 设置
-
-| 键名 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| anilist.language | String | zh-CN | AniList语言 |
-
-### 代理设置
-
-| 键名 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| proxy.host | String | 127.0.0.1 | 代理主机 |
-| proxy.port | int | 7890 | 代理端口 |
-
 ### 文件监控
 
 | 键名 | 类型 | 默认值 | 说明 |
@@ -263,13 +250,6 @@ await fetch('/api/v1/settings/tmdb.api-key', {
   method: 'PUT',
   headers: {'Content-Type': 'application/json'},
   body: JSON.stringify({value: 'new_api_key'})
-});
-
-// 更新代理设置
-await fetch('/api/v1/settings/proxy.host', {
-  method: 'PUT',
-  headers: {'Content-Type': 'application/json'},
-  body: JSON.stringify({value: '192.168.1.100'})
 });
 ```
 
@@ -303,16 +283,20 @@ if (!status.configured) {
       <setting-item key="music.auto-scrape" label="自动刮削" type="switch" />
       <setting-item key="music.use-folder-structure" label="使用文件夹结构" type="switch" />
     </section>
-
-    <!-- 代理设置 -->
-    <section>
-      <h2>网络代理</h2>
-      <setting-item key="proxy.host" label="代理主机" type="text" />
-      <setting-item key="proxy.port" label="代理端口" type="number" />
-    </section>
   </div>
 </template>
 ```
+
+---
+
+## 环境变量配置
+
+以下设置通过环境变量配置（修改后需重启）：
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| PROXY_HOST | 空 | HTTP 代理主机 |
+| PROXY_PORT | 0 | HTTP 代理端口 |
 
 ---
 

@@ -1,7 +1,6 @@
 package com.fryfrog.hub.ebook.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
-import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
@@ -25,139 +24,14 @@ import java.util.*;
 public class EbookMetadataScrapeService {
 
     private final EbookRepository repository;
-    private final BangumiService bangumiService;
     private final EbookService ebookService;
+    private final OpenLibraryService openLibraryService;
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
 
-    public List<Map<String, Object>> searchBooks(String keyword) {
-        List<BangumiService.SearchResult> results = bangumiService.searchManga(keyword);
-
-        List<Map<String, Object>> books = new ArrayList<>();
-        for (BangumiService.SearchResult result : results) {
-            Map<String, Object> book = new LinkedHashMap<>();
-            book.put("id", result.getId());
-            book.put("name", result.getNameCn() != null ? result.getNameCn() : result.getName());
-            book.put("nameOriginal", result.getName());
-            book.put("summary", result.getSummary());
-            book.put("date", result.getDate());
-            book.put("score", result.getScore());
-            book.put("rank", result.getRank());
-
-            if (result.getImages() != null) {
-                String coverUrl = result.getImages().getLarge();
-                if (coverUrl == null || coverUrl.isBlank()) {
-                    coverUrl = result.getImages().getCommon();
-                }
-                book.put("coverUrl", coverUrl);
-            }
-
-            if (result.getTags() != null) {
-                book.put("tags", result.getTags().stream()
-                        .map(BangumiService.SearchResult.Tag::getName)
-                        .toList());
-            }
-
-            books.add(book);
-        }
-
-        log.info("Bangumi search for '{}' returned {} results", keyword, books.size());
-        return books;
-    }
-
-    public Ebook scrapeAndBind(Long ebookId, Integer bangumiId) {
-        Ebook ebook = repository.findById(ebookId)
-                .orElseThrow(() -> new com.fryfrog.hub.common.exception.ResourceNotFoundException("Ebook", "id", ebookId));
-
-        BangumiService.SubjectDetail detail = bangumiService.getSubjectDetail(bangumiId);
-        if (detail == null) {
-            log.warn("Bangumi subject not found: {}", bangumiId);
-            return ebook;
-        }
-
-        // 中文名优先
-        if (detail.getNameCn() != null && !detail.getNameCn().isBlank()) {
-            ebook.setTitle(detail.getNameCn());
-        } else if (detail.getName() != null && !detail.getName().isBlank()) {
-            ebook.setTitle(detail.getName());
-        }
-
-        // 简介
-        if (detail.getSummary() != null && !detail.getSummary().isBlank()) {
-            String summary = detail.getSummary();
-            ebook.setDescription(summary.length() > 2000 ? summary.substring(0, 2000) : summary);
-        }
-
-        // 封面
-        if (detail.getImages() != null) {
-            String coverUrl = detail.getImages().getLarge();
-            if (coverUrl == null || coverUrl.isBlank()) {
-                coverUrl = detail.getImages().getCommon();
-            }
-            if (coverUrl != null && !coverUrl.isBlank()) {
-                String localPath = downloadCover(ebook, coverUrl, bangumiId);
-                if (localPath != null) {
-                    ebook.setCoverArtPath(localPath);
-                } else {
-                    ebook.setCoverArtPath(coverUrl);
-                }
-            }
-        }
-
-        // 从 infobox 提取作者、出版社、ISBN 等
-        if (detail.getInfobox() != null) {
-            for (BangumiService.SubjectDetail.InfoboxEntry entry : detail.getInfobox()) {
-                String key = entry.getKey();
-                String value = entry.getValue() instanceof String s ? s : (entry.getValue() != null ? entry.getValue().toString() : null);
-                if (value == null || value.isBlank()) continue;
-
-                switch (key) {
-                    case "作者", "原作" -> {
-                        if (ebook.getAuthor() == null || ebook.getAuthor().isBlank()) {
-                            ebook.setAuthor(value);
-                        }
-                    }
-                    case "出版社" -> {
-                        if (ebook.getPublisher() == null || ebook.getPublisher().isBlank()) {
-                            ebook.setPublisher(value);
-                        }
-                    }
-                    case "发售日", "出版日期" -> {
-                        if (ebook.getYear() == null) {
-                            try {
-                                ebook.setYear(Integer.parseInt(value.substring(0, 4)));
-                            } catch (Exception ignored) {}
-                        }
-                    }
-                    case "ISBN" -> {
-                        if (ebook.getIsbn() == null || ebook.getIsbn().isBlank()) {
-                            ebook.setIsbn(value);
-                        }
-                    }
-                    case "页数" -> {
-                        try {
-                            ebook.setPageCount(Integer.parseInt(value.replaceAll("[^0-9]", "")));
-                        } catch (Exception ignored) {}
-                    }
-                }
-            }
-        }
-
-        // 标签作为类型
-        if (detail.getTags() != null && !detail.getTags().isEmpty() && (ebook.getGenre() == null || ebook.getGenre().isBlank())) {
-            ebook.setGenre(detail.getTags().get(0).getName());
-        }
-
-        ebook.setBangumiId(bangumiId);
-
-        Ebook saved = repository.save(ebook);
-        log.info("Successfully bound Bangumi metadata to ebook: {} (bangumiId={})", saved.getTitle(), bangumiId);
-        return saved;
-    }
-
     public Ebook updateMetadata(Long ebookId, Map<String, Object> metadata) {
         Ebook ebook = repository.findById(ebookId)
-                .orElseThrow(() -> new com.fryfrog.hub.common.exception.ResourceNotFoundException("Ebook", "id", ebookId));
+                .orElseThrow(() -> new ResourceNotFoundException("Ebook", "id", ebookId));
 
         if (metadata.containsKey("title") && metadata.get("title") != null) {
             ebook.setTitle(metadata.get("title").toString());
@@ -189,7 +63,7 @@ public class EbookMetadataScrapeService {
     @Async
     public void autoScrapeAll() {
         List<Ebook> unboundEbooks = repository.findAll().stream()
-                .filter(e -> e.getBangumiId() == null)
+                .filter(e -> e.getOpenLibraryId() == null)
                 .toList();
 
         if (unboundEbooks.isEmpty()) {
@@ -218,7 +92,7 @@ public class EbookMetadataScrapeService {
 
     @Transactional
     public Ebook autoScrapeEbook(Ebook ebook) {
-        if (ebook.getBangumiId() != null) {
+        if (ebook.getOpenLibraryId() != null) {
             return ebook;
         }
 
@@ -227,17 +101,62 @@ public class EbookMetadataScrapeService {
             query = ebook.getTitle();
         }
 
-        List<BangumiService.SearchResult> results = bangumiService.searchManga(query);
+        List<OpenLibraryService.SearchResult> results = openLibraryService.searchBooks(query);
         if (results.isEmpty()) {
-            log.debug("No Bangumi results for '{}'", query);
+            log.debug("No Open Library results for '{}'", query);
             return ebook;
         }
 
-        BangumiService.SearchResult best = results.get(0);
-        return scrapeAndBind(ebook.getId(), best.getId());
+        OpenLibraryService.SearchResult best = results.get(0);
+        return scrapeAndBindFromOpenLibrary(ebook.getId(), best);
     }
 
-    private String downloadCover(Ebook ebook, String coverUrl, Integer bangumiId) {
+    @Transactional
+    public Ebook scrapeAndBindFromOpenLibrary(Long ebookId, OpenLibraryService.SearchResult result) {
+        Ebook ebook = repository.findById(ebookId)
+                .orElseThrow(() -> new ResourceNotFoundException("Ebook", "id", ebookId));
+
+        if (result.getTitle() != null && !result.getTitle().isBlank()) {
+            ebook.setTitle(result.getTitle());
+        }
+        if (result.getAuthorName() != null && !result.getAuthorName().isBlank()) {
+            ebook.setAuthor(result.getAuthorName());
+        }
+        if (result.getFirstPublishYear() != null) {
+            ebook.setYear(result.getFirstPublishYear());
+        }
+        if (result.getPublishers() != null && !result.getPublishers().isEmpty()) {
+            ebook.setPublisher(result.getPublishers().get(0));
+        }
+        if (result.getIsbns() != null && !result.getIsbns().isEmpty()) {
+            ebook.setIsbn(result.getIsbns().get(0));
+        }
+
+        String coverUrl = null;
+        if (result.getIsbns() != null && !result.getIsbns().isEmpty()) {
+            coverUrl = openLibraryService.getCoverUrlByIsbn(result.getIsbns().get(0));
+        }
+        if (coverUrl == null && result.getOlid() != null) {
+            coverUrl = openLibraryService.getCoverUrlByOlid(result.getOlid());
+        }
+
+        if (coverUrl != null) {
+            String localPath = downloadCover(ebook, coverUrl, "ol_" + result.getOlid());
+            if (localPath != null) {
+                ebook.setCoverArtPath(localPath);
+            } else {
+                ebook.setCoverArtPath(coverUrl);
+            }
+        }
+
+        ebook.setOpenLibraryId(result.getOlid());
+
+        Ebook saved = repository.save(ebook);
+        log.info("Successfully bound Open Library metadata to ebook: {} (olid={})", saved.getTitle(), result.getOlid());
+        return saved;
+    }
+
+    private String downloadCover(Ebook ebook, String coverUrl, String prefix) {
         if (coverUrl == null || coverUrl.isBlank() || ebook.getFilePath() == null) {
             return null;
         }
@@ -247,7 +166,7 @@ public class EbookMetadataScrapeService {
             if (ebookDir == null) return null;
             Files.createDirectories(ebookDir);
 
-            Path coverPath = ebookDir.resolve("bangumi_" + bangumiId + "_cover.jpg");
+            Path coverPath = ebookDir.resolve(prefix + "_cover.jpg");
             if (Files.exists(coverPath)) {
                 return coverPath.toAbsolutePath().toString();
             }

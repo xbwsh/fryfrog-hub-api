@@ -5,7 +5,6 @@ import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
-import com.fryfrog.hub.ebook.dto.EbookBindRequest;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressRequest;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
@@ -13,6 +12,7 @@ import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
 import com.fryfrog.hub.ebook.service.EbookMetadataScrapeService;
 import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
+import com.fryfrog.hub.ebook.service.OpenLibraryService;
 import com.fryfrog.hub.ebook.service.EbookService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -46,6 +46,7 @@ public class EbookController {
     private final EbookService service;
     private final EbookReadingProgressService readingProgressService;
     private final EbookMetadataScrapeService scrapeService;
+    private final OpenLibraryService openLibraryService;
     private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
@@ -304,34 +305,34 @@ public class EbookController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    @GetMapping("/bangumi/search")
-    @Operation(summary = "搜索 Bangumi 书籍", description = "在 Bangumi 上搜索书籍（小说、漫画等）")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> searchBangumi(
-            @Parameter(description = "搜索关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(scrapeService.searchBooks(q)));
-    }
-
-    @PostMapping("/{id:\\d+}/bangumi/bind")
-    @Operation(summary = "绑定 Bangumi 元数据", description = "将 Bangumi 条目的元数据绑定到指定电子书，下载封面到本地。支持 query param 或 JSON body 两种方式")
-    public ResponseEntity<ApiResponse<Ebook>> bindBangumi(
-            @Parameter(description = "电子书ID") @PathVariable Long id,
-            @RequestParam(required = false) Integer bangumiId,
-            @RequestBody(required = false) EbookBindRequest request) {
-        Integer idParam = bangumiId;
-        if (idParam == null && request != null) {
-            idParam = request.getBangumiId();
-        }
-        if (idParam == null) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("bangumiId is required"));
-        }
-        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAndBind(id, idParam)));
-    }
-
-    @PostMapping("/bangumi/auto-scrape")
+    @PostMapping("/auto-scrape")
     @Operation(summary = "批量自动刮削", description = "自动刮削所有未绑定的电子书（异步执行）")
     public ResponseEntity<ApiResponse<Void>> autoScrape() {
         scrapeService.autoScrapeAll();
         return ResponseEntity.ok(ApiResponse.success("批量刮削已开始", null));
+    }
+
+    @GetMapping("/openlibrary/search")
+    @Operation(summary = "搜索 Open Library 书籍", description = "在 Open Library 上搜索已出版的图书")
+    public ResponseEntity<ApiResponse<List<OpenLibraryService.SearchResult>>> searchOpenLibrary(
+            @Parameter(description = "搜索关键词") @RequestParam String q) {
+        return ResponseEntity.ok(ApiResponse.success(openLibraryService.searchBooks(q)));
+    }
+
+    @PostMapping("/{id:\\d+}/openlibrary/bind")
+    @Operation(summary = "绑定 Open Library 元数据", description = "将 Open Library 条目的元数据绑定到指定电子书，下载封面到本地")
+    public ResponseEntity<ApiResponse<Ebook>> bindOpenLibrary(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
+            @RequestParam String olid) {
+        List<OpenLibraryService.SearchResult> results = openLibraryService.searchBooks(olid);
+        if (results.isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("No Open Library results for: " + olid));
+        }
+        OpenLibraryService.SearchResult match = results.stream()
+                .filter(r -> olid.equals(r.getOlid()))
+                .findFirst()
+                .orElse(results.get(0));
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAndBindFromOpenLibrary(id, match)));
     }
 
     @GetMapping("/scrape/progress")

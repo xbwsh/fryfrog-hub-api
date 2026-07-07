@@ -2,6 +2,7 @@ package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.service.SystemSettingService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
@@ -22,6 +23,12 @@ public class CfBypassClient {
 
     private final RestTemplate restTemplate;
     private final SystemSettingService settingService;
+
+    @Value("${PROXY_HOST:}")
+    private String envProxyHost;
+
+    @Value("${PROXY_PORT:0}")
+    private int envProxyPort;
 
     // CF 挑战页面特征码
     private static final String[] CF_CHALLENGE_MARKERS = {
@@ -80,9 +87,9 @@ public class CfBypassClient {
                 }
 
                 if (isUseProxy()) {
-                    String proxyHost = settingService.getValue("hub.proxy.host", "127.0.0.1");
-                    int proxyPort = settingService.getInteger("hub.proxy.port", 7890);
-                    headers.set("x-proxy", "http://" + proxyHost + ":" + proxyPort);
+                    String host = envProxyHost != null && !envProxyHost.isBlank() ? envProxyHost : "127.0.0.1";
+                    int port = envProxyPort > 0 ? envProxyPort : 7890;
+                    headers.set("x-proxy", "http://" + host + ":" + port);
                 }
 
                 String fullUrl = bypassUrl;
