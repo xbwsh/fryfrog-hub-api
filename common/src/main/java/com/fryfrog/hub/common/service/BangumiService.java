@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -52,6 +54,69 @@ public class BangumiService {
             log.error("Failed to search manga on Bangumi: {}", e.getMessage(), e);
         }
         return List.of();
+    }
+
+    /**
+     * 搜索书籍（type=1），按子类型过滤
+     * @param subType "novel"=轻小说/小说, "manga"=漫画, null=不过滤
+     */
+    public List<SearchResult> searchBooks(String query, String subType) {
+        // 先用 v0 搜索 API 获取含 tags 的结果
+        List<SearchResult> all = searchV0Books(query);
+        if (subType == null || subType.isBlank()) return all;
+
+        List<SearchResult> filtered = all.stream()
+                .filter(r -> r.getTags() != null)
+                .filter(r -> {
+                    boolean hasNovel = r.getTags().stream().anyMatch(t ->
+                            "轻小说".equals(t.getName()) || "小说".equals(t.getName()));
+                    boolean hasManga = r.getTags().stream().anyMatch(t ->
+                            "漫画".equals(t.getName()));
+                    if ("novel".equalsIgnoreCase(subType)) {
+                        return hasNovel;
+                    } else if ("manga".equalsIgnoreCase(subType)) {
+                        return hasManga;
+                    }
+                    return true;
+                })
+                .collect(Collectors.toList());
+
+        return filtered.isEmpty() ? all : filtered;
+    }
+
+    /**
+     * 使用 Bangumi v0 API 搜索书籍，返回含 tags 的完整结果
+     */
+    public List<SearchResult> searchV0Books(String query) {
+        if (query == null || query.isBlank()) return List.of();
+
+        try {
+            String url = BASE_URL + "/v0/search/subjects";
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+            headers.set("User-Agent", "FryfrogHub/0.1.0");
+
+            String bodyJson = "{\"keyword\":\"" + query.replace("\"", "\\\"") + "\",\"filter\":{\"type\":[1]}}";
+            org.springframework.http.HttpEntity<String> request = new org.springframework.http.HttpEntity<>(bodyJson, headers);
+
+            ResponseEntity<String> response = restTemplate.exchange(url, org.springframework.http.HttpMethod.POST, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                // 回退到旧版 API
+                return searchManga(query);
+            }
+
+            var root = objectMapper.readTree(response.getBody());
+            var data = root.path("data");
+            if (data.isArray()) {
+                List<SearchResult> results = objectMapper.convertValue(data,
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, SearchResult.class));
+                log.info("Bangumi v0 search for '{}' returned {} results", query, results.size());
+                return results;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to search v0 books on Bangumi: {}, fallback to old API", e.getMessage());
+        }
+        return searchManga(query);
     }
 
     public SubjectDetail getSubjectDetail(Integer subjectId) {

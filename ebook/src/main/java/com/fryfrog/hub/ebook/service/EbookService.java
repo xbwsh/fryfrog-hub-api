@@ -16,12 +16,16 @@ import org.springframework.stereotype.Service;
 
 import com.fryfrog.hub.ebook.util.EpubParser;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -34,6 +38,12 @@ public class EbookService {
 
     private final EbookRepository repository;
     private final EbookReadingProgressRepository readingProgressRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    private final TransactionTemplate transactionTemplate;
+    private final ReentrantLock dbWriteLock = new ReentrantLock();
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
     private String rootPathsConfig;
@@ -141,6 +151,15 @@ public class EbookService {
     }
 
     public Ebook extractAndSaveMetadata(String filePath) {
+        dbWriteLock.lock();
+        try {
+            return transactionTemplate.execute(status -> doExtractAndSaveMetadata(filePath));
+        } finally {
+            dbWriteLock.unlock();
+        }
+    }
+
+    private Ebook doExtractAndSaveMetadata(String filePath) {
         try {
             File file = new File(filePath);
             if (!file.exists()) {
@@ -179,7 +198,21 @@ public class EbookService {
                         ebook.setYear(meta.year());
 
                         if (meta.coverEntryName() != null) {
-                            log.debug("Skipping cover extraction for epub: {}", fileName);
+                            try {
+                                byte[] coverBytes = EpubParser.readImage(filePath, meta.coverEntryName());
+                                if (coverBytes != null && coverBytes.length > 0) {
+                                    String coverExt = meta.coverEntryName().contains(".")
+                                            ? meta.coverEntryName().substring(meta.coverEntryName().lastIndexOf('.') + 1)
+                                            : "jpg";
+                                    Path ebookDir = Paths.get(filePath).getParent();
+                                    Path coverPath = ebookDir.resolve(baseName + "_cover." + coverExt);
+                                    Files.write(coverPath, coverBytes);
+                                    ebook.setCoverArtPath(coverPath.toAbsolutePath().normalize().toString());
+                                    log.debug("Extracted cover from epub: {}", fileName);
+                                }
+                            } catch (Exception e) {
+                                log.warn("Failed to extract cover from epub {}: {}", fileName, e.getMessage());
+                            }
                         }
 
                         try {
@@ -243,6 +276,7 @@ public class EbookService {
     public void scanDirectory(String directoryPath) {
         try {
             cleanupInvalidRecords();
+            entityManager.clear();  // 清除 session 中 batch delete 残留的实体引用
             Path dir = Paths.get(directoryPath);
             if (!Files.isDirectory(dir)) {
                 throw new IllegalArgumentException("Not a directory: " + directoryPath);
@@ -268,6 +302,34 @@ public class EbookService {
             log.error("Failed to scan directory: {}", directoryPath, e);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
         }
+    }
+
+    private static final Pattern VOLUME_PATTERN = Pattern.compile(
+            "(?i)(?:卷|Vol\\.?|Volume|#)[\\s]*(\\d+)|[\\s]*(\\d+)\\s*(?:卷|卷目)"
+    );
+
+    private static final Pattern TRAILING_NUMBER_PATTERN = Pattern.compile(
+            "[\\s]*(\\d{1,3})$"
+    );
+
+    private Integer extractVolumeFromName(String fileName) {
+        if (fileName == null) return null;
+        // 先试带标记的卷号（卷01、Vol.1、#1）
+        Matcher m = VOLUME_PATTERN.matcher(fileName);
+        if (m.find()) {
+            for (int i = 1; i <= m.groupCount(); i++) {
+                if (m.group(i) != null) return Integer.parseInt(m.group(i));
+            }
+        }
+        // 回退到文件名末尾的数字（如 刀剑神域进击篇 01）
+        String baseName = fileName.contains(".")
+                ? fileName.substring(0, fileName.lastIndexOf('.'))
+                : fileName;
+        Matcher tm = TRAILING_NUMBER_PATTERN.matcher(baseName);
+        if (tm.find()) {
+            return Integer.parseInt(tm.group(1));
+        }
+        return null;
     }
 
     private static final Pattern CHAPTER_PATTERN = Pattern.compile(
@@ -405,11 +467,33 @@ public class EbookService {
     }
 
     public String extractSeriesName(Ebook ebook) {
-        String title = ebook.getTitle();
-        if (title == null || title.isBlank()) {
-            title = ebook.getFileName();
+        // 优先从文件名提取系列名 —— 文件名是用户可控的，命名更一致
+        String fileName = ebook.getFileName();
+        if (fileName != null && !fileName.isBlank()) {
+            // 去掉扩展名再提取
+            String fileBase = fileName.contains(".")
+                    ? fileName.substring(0, fileName.lastIndexOf('.'))
+                    : fileName;
+            String fromFile = cleanTitleForSearch(fileBase);
+            if (fromFile != null && !fromFile.isBlank()) {
+                // 文件名含中日文字符 → 说明命名有意义，直接用它
+                if (fromFile.codePoints().anyMatch(cp ->
+                        (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF)
+                        || (cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF))) {
+                    return fromFile;
+                }
+            }
         }
-        return cleanTitleForSearch(title);
+
+        // 文件名不含中文字符（如英文数字命名），回退到 EPUB 内嵌标题
+        String title = ebook.getTitle();
+        if (title != null && !title.isBlank()) {
+            String fromTitle = cleanTitleForSearch(title);
+            if (fromTitle != null && !fromTitle.isBlank()) {
+                return fromTitle;
+            }
+        }
+        return "Unknown";
     }
 
     @Transactional
@@ -432,10 +516,23 @@ public class EbookService {
         }
     }
 
-    @Transactional
     public boolean moveEbookToSeriesFolder(Ebook ebook) {
+        dbWriteLock.lock();
         try {
-            if (ebook.getFilePath() == null || ebook.getFilePath().isBlank()) return false;
+            return transactionTemplate.execute(status -> {
+                try {
+                    return doMoveEbookToSeriesFolder(ebook);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to move ebook: " + e.getMessage(), e);
+                }
+            });
+        } finally {
+            dbWriteLock.unlock();
+        }
+    }
+
+    private boolean doMoveEbookToSeriesFolder(Ebook ebook) throws IOException {
+        if (ebook.getFilePath() == null || ebook.getFilePath().isBlank()) return false;
 
             Path currentPath = Paths.get(ebook.getFilePath());
             if (!Files.exists(currentPath)) {
@@ -465,20 +562,72 @@ public class EbookService {
                 return false;
             }
 
+            // 清除目标路径可能存在的重复记录（同一文件被 watcher 和 periodic scan 重复索引）
+            String targetPathStr = targetPath.toAbsolutePath().normalize().toString();
+            repository.findByFilePath(targetPathStr).ifPresent(dup -> {
+                if (!dup.getId().equals(ebook.getId())) {
+                    repository.delete(dup);
+                    log.debug("Removed duplicate record for target path: {}", targetPathStr);
+                }
+            });
+
             Files.move(currentPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            ebook.setFilePath(targetPath.toAbsolutePath().toString());
+            ebook.setFilePath(targetPathStr);
+
+            // 同步移动封面文件
+            if (ebook.getCoverArtPath() != null) {
+                Path oldCover = Paths.get(ebook.getCoverArtPath());
+                if (Files.exists(oldCover)) {
+                    Path newCover = seriesDir.resolve(oldCover.getFileName());
+                    Files.move(oldCover, newCover, StandardCopyOption.REPLACE_EXISTING);
+                    ebook.setCoverArtPath(newCover.toAbsolutePath().normalize().toString());
+                    log.debug("Moved cover for '{}': {}", ebook.getTitle(), newCover.getFileName());
+                }
+            }
 
             if (ebook.getSeries() == null || ebook.getSeries().isBlank()) {
                 ebook.setSeries(seriesName);
             }
 
+            // 按 {系列名} Vol.{卷号}.{ext} 格式重命名文件
+            String ext = TitleCleaner.getFileExtension(ebook.getFileName());
+            String newBaseName = seriesName;
+            if (ebook.getVolume() != null) {
+                newBaseName = seriesName + " Vol." + String.format("%02d", ebook.getVolume());
+            } else {
+                // 尝试从文件名提取卷号
+                Integer vol = extractVolumeFromName(ebook.getFileName());
+                if (vol != null) {
+                    ebook.setVolume(vol);
+                    newBaseName = seriesName + " Vol." + String.format("%02d", vol);
+                }
+            }
+            String newFileName = newBaseName + "." + ext;
+            Path renamedPath = seriesDir.resolve(newFileName);
+            if (!Files.exists(renamedPath) && !ebook.getFileName().equals(newFileName)) {
+                Files.move(seriesDir.resolve(ebook.getFileName()), renamedPath);
+                ebook.setFileName(newFileName);
+                ebook.setFilePath(renamedPath.toAbsolutePath().normalize().toString());
+                // 同步重命名封面文件
+                if (ebook.getCoverArtPath() != null) {
+                    Path oldCover = Paths.get(ebook.getCoverArtPath());
+                    if (Files.exists(oldCover)) {
+                        String coverExt = oldCover.getFileName().toString().contains(".")
+                                ? oldCover.getFileName().toString().substring(oldCover.getFileName().toString().lastIndexOf('.'))
+                                : ".jpg";
+                        Path newCover = seriesDir.resolve(newBaseName + "_cover" + coverExt);
+                        if (!Files.exists(newCover)) {
+                            Files.move(oldCover, newCover);
+                            ebook.setCoverArtPath(newCover.toAbsolutePath().normalize().toString());
+                        }
+                    }
+                }
+                log.debug("Renamed ebook to: {}", newFileName);
+            }
+
             repository.save(ebook);
             log.info("Moved ebook '{}' to series folder: {}", ebook.getTitle(), seriesDir);
             return true;
-        } catch (IOException e) {
-            log.error("Failed to move ebook '{}': {}", ebook.getTitle(), e.getMessage());
-            return false;
-        }
     }
 
     private Path findRootDir(Path currentDir) {

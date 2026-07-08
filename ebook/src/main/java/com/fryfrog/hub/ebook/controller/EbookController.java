@@ -11,9 +11,11 @@ import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
 import com.fryfrog.hub.ebook.service.EbookMetadataScrapeService;
+import com.fryfrog.hub.ebook.service.EbookBangumiScrapeService;
 import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
 import com.fryfrog.hub.ebook.service.OpenLibraryService;
 import com.fryfrog.hub.ebook.service.EbookService;
+import com.fryfrog.hub.common.service.BangumiService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,6 +27,8 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import com.fryfrog.hub.ebook.util.EpubParser;
 
@@ -46,8 +50,11 @@ public class EbookController {
     private final EbookService service;
     private final EbookReadingProgressService readingProgressService;
     private final EbookMetadataScrapeService scrapeService;
+    private final EbookBangumiScrapeService bangumiScrapeService;
     private final OpenLibraryService openLibraryService;
     private final ScrapeProgressService scrapeProgressService;
+    @Qualifier("scraperRestTemplate")
+    private final RestTemplate scraperRestTemplate;
 
     @Value("${hub.ebook.root-paths:./media-library/ebook}")
     private String rootPathsConfig;
@@ -333,6 +340,47 @@ public class EbookController {
                 .findFirst()
                 .orElse(results.get(0));
         return ResponseEntity.ok(ApiResponse.success(scrapeService.scrapeAndBindFromOpenLibrary(id, match)));
+    }
+
+    @GetMapping("/{id:\\d+}/bangumi/search")
+    @Operation(summary = "搜索 Bangumi 轻小说", description = "在 Bangumi 上搜索轻小说/小说条目（默认过滤轻小说，subType=manga 为漫画）")
+    public ResponseEntity<ApiResponse<List<BangumiService.SearchResult>>> searchBangumi(
+            @Parameter(description = "搜索关键词") @RequestParam String q,
+            @Parameter(description = "子类型：novel=轻小说, manga=漫画, 默认不过滤") @RequestParam(required = false) String subType) {
+        return ResponseEntity.ok(ApiResponse.success(bangumiScrapeService.searchFromBangumi(q, subType)));
+    }
+
+    @PostMapping("/{id:\\d+}/bangumi/bind")
+    @Operation(summary = "绑定 Bangumi 元数据", description = "将指定 Bangumi 条目的元数据绑定到电子书，下载封面到本地")
+    public ResponseEntity<ApiResponse<Ebook>> bindBangumi(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
+            @Parameter(description = "Bangumi 条目 ID") @RequestParam Integer bangumiId) {
+        return ResponseEntity.ok(ApiResponse.success(bangumiScrapeService.bindBangumi(id, bangumiId)));
+    }
+
+    @GetMapping("/image-proxy")
+    @Operation(summary = "代理远程图片", description = "代理加载远程封面图片（Bangumi CDN 前端无法直连时使用）")
+    public ResponseEntity<Resource> imageProxy(
+            @Parameter(description = "图片 URL") @RequestParam String url) {
+        try {
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.set("User-Agent", "FryfrogHub/0.1.0");
+            org.springframework.http.HttpEntity<Void> request = new org.springframework.http.HttpEntity<>(headers);
+            ResponseEntity<byte[]> response = scraperRestTemplate.exchange(
+                    url, org.springframework.http.HttpMethod.GET, request, byte[].class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                org.springframework.http.MediaType mediaType = org.springframework.http.MediaType.IMAGE_JPEG;
+                if (url.toLowerCase().contains(".png")) mediaType = org.springframework.http.MediaType.IMAGE_PNG;
+                else if (url.toLowerCase().contains(".gif")) mediaType = org.springframework.http.MediaType.IMAGE_GIF;
+                else if (url.toLowerCase().contains(".webp")) mediaType = org.springframework.http.MediaType.parseMediaType("image/webp");
+                return ResponseEntity.ok()
+                        .contentType(mediaType)
+                        .body(new org.springframework.core.io.ByteArrayResource(response.getBody()));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to proxy image: {}", e.getMessage());
+        }
+        return ResponseEntity.notFound().build();
     }
 
     @GetMapping("/scrape/progress")

@@ -24,6 +24,8 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
 
     List<Ebook> findAllByOrderByCreatedAtDesc();
 
+    List<Ebook> findBySeriesIgnoreCase(String series);
+
     @Query("SELECT e FROM Ebook e JOIN EbookReadingProgress p ON e.id = p.ebook.id ORDER BY p.updatedAt DESC")
     List<Ebook> findRecentlyRead();
 

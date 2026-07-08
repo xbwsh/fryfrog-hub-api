@@ -56,7 +56,7 @@ public final class TitleCleaner {
         cleaned = cleaned.replaceAll("（.*?）", " ");
 
         cleaned = DOTTED_QUALITY_PATTERN.matcher(cleaned).replaceAll(" ");
-        cleaned = cleaned.replaceAll("[._]", " ");
+        cleaned = cleaned.replaceAll("[._。．]", " ");
 
         cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\s*E\\d{1,4}\\b", " ");
         cleaned = QUALITY_COMPILE_PATTERN.matcher(cleaned).replaceAll(" ");

@@ -138,7 +138,10 @@ public class MediaLibraryController {
                 case "VIDEO" -> videoService.scanDirectory(library.getPath(), library.getId());
                 case "MUSIC" -> musicMetadataService.scanDirectory(library.getPath());
                 case "COMIC" -> comicMetadataService.scanDirectory(library.getPath());
-                case "EBOOK" -> ebookService.scanDirectory(library.getPath());
+                case "EBOOK" -> {
+                    ebookService.scanDirectory(library.getPath());
+                    ebookService.organizeAll();
+                }
                 default -> {
                     scanResult.put(key, "skip: unknown type " + library.getType());
                     return;

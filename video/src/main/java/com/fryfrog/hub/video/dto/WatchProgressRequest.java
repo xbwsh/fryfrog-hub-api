@@ -12,4 +12,7 @@ public class WatchProgressRequest {
 
     @Schema(description = "视频总时长（秒）", example = "7200.0")
     private Double duration;
+
+    @Schema(description = "是否已看完", example = "true")
+    private Boolean completed;
 }

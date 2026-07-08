@@ -83,12 +83,23 @@ public class WatchProgressService {
 
     @Transactional
     public WatchProgress markAsUnwatched(Long videoId) {
-        WatchProgress progress = repository.findByVideoId(videoId).orElse(null);
-        if (progress != null) {
-            progress.setCompleted(false);
-            repository.save(progress);
-            log.info("Marked video {} as unwatched", videoId);
+        return setWatched(videoId, false);
+    }
+
+    @Transactional
+    public WatchProgress setWatched(Long videoId, boolean completed) {
+        Video video = videoService.getVideoById(videoId);
+
+        WatchProgress progress = repository.findByVideoId(videoId).orElse(new WatchProgress());
+        progress.setVideo(video);
+        progress.setCompleted(completed);
+
+        if (completed && progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
+            progress.setPositionSeconds(progress.getDurationSeconds());
         }
-        return progress;
+
+        WatchProgress saved = repository.save(progress);
+        log.info("Set video {} watched={}", videoId, completed);
+        return saved;
     }
 }

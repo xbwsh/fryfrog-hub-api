@@ -75,7 +75,7 @@ public class NfoService {
             // 向上查找是否已在 showName 目录下
             Path checkDir = videoDir;
             while (checkDir != null) {
-                if (checkDir.getFileName() != null && checkDir.getFileName().toString().equals(showName)) {
+                if (checkDir.getFileName() != null && cleanTitle(checkDir.getFileName().toString()).equals(showName)) {
                     // 已在 showName 目录下，直接构建季/集目录
                     String seasonDirName = "第 " + season + " 季";
                     return checkDir.resolve(seasonDirName).resolve(correctEpisodeDirName);
@@ -91,7 +91,7 @@ public class NfoService {
         // 对于电影，在视频目录下创建以清洗后标题命名的子目录
         Path checkDir = videoDir;
         while (checkDir != null) {
-            if (checkDir.getFileName() != null && checkDir.getFileName().toString().equals(showName)) {
+            if (checkDir.getFileName() != null && cleanTitle(checkDir.getFileName().toString()).equals(showName)) {
                 return checkDir;
             }
             checkDir = checkDir.getParent();

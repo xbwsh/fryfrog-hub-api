@@ -1,6 +1,7 @@
 package com.fryfrog.hub.ebook.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
@@ -25,6 +26,8 @@ public class EbookMetadataScrapeService {
 
     private final EbookRepository repository;
     private final EbookService ebookService;
+    private final EbookBangumiScrapeService bangumiScrapeService;
+    private final BangumiService bangumiService;
     private final OpenLibraryService openLibraryService;
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
@@ -92,7 +95,7 @@ public class EbookMetadataScrapeService {
 
     @Transactional
     public Ebook autoScrapeEbook(Ebook ebook) {
-        if (ebook.getOpenLibraryId() != null) {
+        if (ebook.getBangumiId() != null || ebook.getOpenLibraryId() != null) {
             return ebook;
         }
 
@@ -101,13 +104,25 @@ public class EbookMetadataScrapeService {
             query = ebook.getTitle();
         }
 
-        List<OpenLibraryService.SearchResult> results = openLibraryService.searchBooks(query);
-        if (results.isEmpty()) {
-            log.debug("No Open Library results for '{}'", query);
+        // 优先 Bangumi（轻小说覆盖更全）
+        List<BangumiService.SearchResult> bgmResults = bangumiService.searchBooks(query, "novel");
+        if (!bgmResults.isEmpty()) {
+            BangumiService.SearchResult best = bgmResults.get(0);
+            if (best.getScore() != null && best.getScore() >= 0.0) {
+                Ebook bound = bangumiScrapeService.bindBangumi(ebook.getId(), best.getId());
+                log.info("Auto-scraped '{}' from Bangumi (id={})", bound.getTitle(), best.getId());
+                return bound;
+            }
+        }
+
+        // 回退 Open Library
+        List<OpenLibraryService.SearchResult> olResults = openLibraryService.searchBooks(query);
+        if (olResults.isEmpty()) {
+            log.debug("No results for '{}' from Bangumi or Open Library", query);
             return ebook;
         }
 
-        OpenLibraryService.SearchResult best = results.get(0);
+        OpenLibraryService.SearchResult best = olResults.get(0);
         return scrapeAndBindFromOpenLibrary(ebook.getId(), best);
     }
 

@@ -386,8 +386,23 @@ public class VideoService {
             log.debug("Saved video id={}, title={}, libraryId={}, fileName={}",
                     saved.getId(), saved.getTitle(), saved.getLibraryId(), saved.getFileName());
 
+            // 扫描阶段根据文件名/库过滤器推断 mediaType，不依赖 TMDB
+            if (saved.getMediaType() == null) {
+                String inferredMediaType = inferMediaType(saved, libraryId);
+                if (inferredMediaType != null) {
+                    saved.setMediaType(inferredMediaType);
+                    repository.save(saved);
+                }
+            }
+
             // 用 ffprobe 分析技术元数据（同步执行，避免 SQLite 并发写锁）
             mediaInfoService.updateVideoMediaInfo(saved);
+
+            // 扫描阶段立即整理文件到规范目录结构，刮削只负责更新元数据
+            if (saved.getMediaType() != null) {
+                moveVideoToMetadataDir(saved);
+                renameVideoFile(saved);
+            }
 
             if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
                 scrapeExecutor.submit(() -> tryScrapeVideo(saved));
@@ -459,6 +474,22 @@ public class VideoService {
             if (HASH_PATTERN.matcher(name).find()) return true;
         }
         return false;
+    }
+
+    private String inferMediaType(Video video, Long libraryId) {
+        // 优先使用库的媒体类型过滤器
+        if (libraryId != null) {
+            MediaLibrary library = mediaLibraryService.getLibraryById(libraryId);
+            String filter = library.getMediaTypeFilter();
+            if (filter != null && !filter.isBlank()) {
+                return filter;
+            }
+        }
+        // 根据文件名模式推断
+        if (isTvEpisode(video)) {
+            return "tv";
+        }
+        return null;
     }
 
     public void scanDirectory(String directoryPath) {
@@ -970,8 +1001,6 @@ public class VideoService {
 
             Path parentDir = videoPath.getParent();
             renameAssociatedFile(parentDir, oldBaseName + ".nfo", newFileName);
-            renameAssociatedFile(parentDir, oldBaseName + "-poster.jpg", newFileName);
-            renameAssociatedFile(parentDir, oldBaseName + "-fanart.jpg", newFileName);
             renamePosterFanartByPattern(parentDir, oldBaseName, newFileName);
             renameAssociatedSubtitles(parentDir, oldBaseName, newFileName);
 

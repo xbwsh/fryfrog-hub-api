@@ -341,21 +341,12 @@ public class VideoController {
     }
 
     @PutMapping("/{id:\\d+}/watched")
-    @Operation(summary = "标记已观看", description = "手动标记视频为已观看状态")
-    public ResponseEntity<ApiResponse<WatchProgressDTO>> markAsWatched(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        WatchProgress progress = watchProgressService.markAsWatched(id);
-        return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
-    }
-
-    @DeleteMapping("/{id:\\d+}/watched")
-    @Operation(summary = "取消已观看", description = "取消视频的已观看状态")
-    public ResponseEntity<ApiResponse<WatchProgressDTO>> markAsUnwatched(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        WatchProgress progress = watchProgressService.markAsUnwatched(id);
-        if (progress == null) {
-            return ResponseEntity.ok(ApiResponse.success(null));
-        }
+    @Operation(summary = "设置已观看状态", description = "通过请求体控制视频的已观看状态")
+    public ResponseEntity<ApiResponse<WatchProgressDTO>> setWatched(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @RequestBody(required = false) WatchProgressRequest request) {
+        boolean completed = request != null && Boolean.TRUE.equals(request.getCompleted());
+        WatchProgress progress = watchProgressService.setWatched(id, completed);
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 
