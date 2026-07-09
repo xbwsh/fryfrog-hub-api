@@ -294,8 +294,10 @@ public class MangaScrapeService {
 
         List<BangumiService.SearchResult> bgmResults = searchFromBangumi(query);
         if (!bgmResults.isEmpty()) {
-            BangumiService.SearchResult best = bgmResults.get(0);
-            return bindBangumi(comic.getId(), best.getId());
+            BangumiService.SearchResult best = pickBestMatch(bgmResults, query);
+            if (best != null) {
+                return bindBangumi(comic.getId(), best.getId());
+            }
         }
 
         log.info("No results for comic '{}' from Bangumi", query);
@@ -653,6 +655,13 @@ public class MangaScrapeService {
         m = Pattern.compile("#\\s*(\\d+)").matcher(fileName);
         if (m.find()) return Integer.parseInt(m.group(1));
 
+        // Match "标题 数字" at end (before extension), e.g. "魔女与佣兵 01"
+        String baseName = fileName.contains(".")
+                ? fileName.substring(0, fileName.lastIndexOf('.'))
+                : fileName;
+        m = Pattern.compile("\\s+(\\d{1,3})$").matcher(baseName);
+        if (m.find()) return Integer.parseInt(m.group(1));
+
         return null;
     }
 
@@ -670,6 +679,9 @@ public class MangaScrapeService {
         cleaned = cleaned.replaceAll("卷\\s*\\d+", " ");
         cleaned = cleaned.replaceAll("第\\s*\\d+\\s*卷", " ");
         cleaned = cleaned.replaceAll("#\\s*\\d+", " ");
+
+        // Strip trailing number (volume) preceded by space, e.g. "魔女与佣兵 01"
+        cleaned = cleaned.replaceAll("\\s+\\d{1,3}$", "");
 
         cleaned = cleaned.replaceAll("\\.(?:cbz|cbr|zip|rar|epub)$", "");
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
@@ -704,6 +716,57 @@ public class MangaScrapeService {
             }
         }
         return "Unknown";
+    }
+
+    /**
+     * 从搜索结果中选取最佳匹配：优先标题完全匹配，其次包含匹配，最后回退到最热门
+     */
+    private BangumiService.SearchResult pickBestMatch(List<BangumiService.SearchResult> results, String seriesName) {
+        if (results == null || results.isEmpty()) return null;
+
+        // 1. 精确匹配 name_cn
+        for (BangumiService.SearchResult r : results) {
+            if (r.getNameCn() != null && r.getNameCn().equals(seriesName)) {
+                log.info("Picked exact match (nameCn='{}' = '{}') id={}", r.getNameCn(), seriesName, r.getId());
+                return r;
+            }
+        }
+
+        // 2. 精确匹配 name（原始日文名）
+        for (BangumiService.SearchResult r : results) {
+            if (r.getName() != null && r.getName().equals(seriesName)) {
+                log.info("Picked exact match (name='{}' = '{}') id={}", r.getName(), seriesName, r.getId());
+                return r;
+            }
+        }
+
+        // 3. 包含匹配：name_cn 或 name 包含 seriesName
+        for (BangumiService.SearchResult r : results) {
+            if (r.getNameCn() != null && r.getNameCn().contains(seriesName)) {
+                log.info("Picked contains match (nameCn='{}' contains '{}') id={}", r.getNameCn(), seriesName, r.getId());
+                return r;
+            }
+            if (r.getName() != null && r.getName().contains(seriesName)) {
+                log.info("Picked contains match (name='{}' contains '{}') id={}", r.getName(), seriesName, r.getId());
+                return r;
+            }
+        }
+
+        // 4. 回退：seriesName 包含在 name_cn 或 name 中（方向相反）
+        for (BangumiService.SearchResult r : results) {
+            if (seriesName.contains(r.getNameCn() != null ? r.getNameCn() : "")
+                    || seriesName.contains(r.getName() != null ? r.getName() : "")) {
+                log.info("Picked reverse-contains match (seriesName='{}' contains '{}') id={}",
+                        seriesName, r.getNameCn() != null ? r.getNameCn() : r.getName(), r.getId());
+                return r;
+            }
+        }
+
+        // 5. 兜底：最热门
+        BangumiService.SearchResult fallback = results.get(0);
+        log.warn("No title match for '{}', falling back to most popular: {} (id={})",
+                seriesName, fallback.getNameCn() != null ? fallback.getNameCn() : fallback.getName(), fallback.getId());
+        return fallback;
     }
 
     private MediaSeries findOrCreateSeries(String seriesName, String mediaType, BangumiService.SubjectDetail detail) {

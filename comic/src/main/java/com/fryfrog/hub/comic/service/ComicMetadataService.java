@@ -469,6 +469,13 @@ public class ComicMetadataService {
         m = java.util.regex.Pattern.compile("[(\\[]\\s*(\\d+)\\s*[)\\]]").matcher(fileName);
         if (m.find()) return Integer.parseInt(m.group(1));
 
+        // Match "标题 数字" at end (before extension), e.g. "魔女与佣兵 01"
+        String baseName = fileName.contains(".")
+                ? fileName.substring(0, fileName.lastIndexOf('.'))
+                : fileName;
+        m = java.util.regex.Pattern.compile("\\s+(\\d{1,3})$").matcher(baseName);
+        if (m.find()) return Integer.parseInt(m.group(1));
+
         return null;
     }
 
