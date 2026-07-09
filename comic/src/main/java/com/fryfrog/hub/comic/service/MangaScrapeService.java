@@ -82,6 +82,12 @@ public class MangaScrapeService {
 
         downloadCoverFromBangumi(saved, detail);
 
+        // 将封面路径同步到 MediaSeries（系列级封面）
+        if (saved.getSeriesRef() != null && saved.getCoverArtPath() != null) {
+            saved.getSeriesRef().setCoverArtPath(saved.getCoverArtPath());
+            seriesRepo.save(saved.getSeriesRef());
+        }
+
         // 下载卷级封面
         if (saved.getVolume() != null) {
             Map<Integer, BangumiService.RelatedSubject> volumeMap = bangumiService.buildVolumeSubjectMap(bangumiId);
@@ -195,6 +201,20 @@ public class MangaScrapeService {
         }
 
         log.info("Rescrape series '{}': {}/{} updated", series, updated, comics.size());
+
+        // 同步系列封面
+        Comic firstWithPath = comics.stream().filter(c -> c.getFilePath() != null).findFirst().orElse(null);
+        if (firstWithPath != null) {
+            Path seriesDir = Paths.get(firstWithPath.getFilePath()).getParent();
+            if (seriesDir != null) {
+                String seriesCoverPath = bangumiService.downloadCover(seriesDetail, "bangumi_" + subjectId, seriesDir);
+                if (seriesCoverPath != null) {
+                    ms.setCoverArtPath(seriesCoverPath);
+                    seriesRepo.save(ms);
+                }
+            }
+        }
+
         return updated;
     }
 
