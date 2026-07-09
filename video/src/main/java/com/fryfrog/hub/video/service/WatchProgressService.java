@@ -23,14 +23,14 @@ public class WatchProgressService {
     private static final double COMPLETED_THRESHOLD = 0.95;
 
     public WatchProgress getProgress(Long videoId) {
-        return repository.findByVideoId(videoId).orElse(null);
+        return repository.findByVideo_Id(videoId).orElse(null);
     }
 
     public Map<Long, WatchProgress> getProgressByVideoIds(Collection<Long> videoIds) {
         if (videoIds == null || videoIds.isEmpty()) {
             return Map.of();
         }
-        return repository.findByVideoIdIn(videoIds).stream()
+        return repository.findByVideo_IdIn(videoIds).stream()
                 .collect(Collectors.toMap(wp -> wp.getVideo().getId(), wp -> wp));
     }
 
@@ -45,7 +45,7 @@ public class WatchProgressService {
             durationSeconds = realDuration;
         }
 
-        WatchProgress progress = repository.findByVideoId(videoId).orElse(new WatchProgress());
+        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
         progress.setVideo(video);
         progress.setPositionSeconds(positionSeconds);
         progress.setDurationSeconds(durationSeconds);
@@ -61,14 +61,14 @@ public class WatchProgressService {
 
     @Transactional
     public void deleteProgress(Long videoId) {
-        repository.findByVideoId(videoId).ifPresent(repository::delete);
+        repository.findByVideo_Id(videoId).ifPresent(repository::delete);
     }
 
     @Transactional
     public WatchProgress markAsWatched(Long videoId) {
         Video video = videoService.getVideoById(videoId);
 
-        WatchProgress progress = repository.findByVideoId(videoId).orElse(new WatchProgress());
+        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
         progress.setVideo(video);
         progress.setCompleted(true);
 
@@ -90,7 +90,7 @@ public class WatchProgressService {
     public WatchProgress setWatched(Long videoId, boolean completed) {
         Video video = videoService.getVideoById(videoId);
 
-        WatchProgress progress = repository.findByVideoId(videoId).orElse(new WatchProgress());
+        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
         progress.setVideo(video);
         progress.setCompleted(completed);
 

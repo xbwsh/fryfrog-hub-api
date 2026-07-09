@@ -48,6 +48,7 @@ public class VideoService {
     private final TransactionTemplate transactionTemplate;
     private final SystemSettingService settingService;
     private final VideoActorRepository actorRepository;
+    private final com.fryfrog.hub.video.repository.WatchProgressRepository watchProgressRepository;
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
@@ -83,12 +84,9 @@ public class VideoService {
         return paths.isEmpty() ? "./media-library/video" : paths.get(0);
     }
 
-    private boolean isAutoScrape() {
-        return settingService.getBoolean("hub.tmdb.auto-scrape", false);
-    }
-
-    private double getMinScore() {
-        return settingService.getDouble("hub.tmdb.min-score", 0.0);
+    private boolean isTmdbConfigured() {
+        String apiKey = settingService.getValue("hub.tmdb.api-key", "");
+        return apiKey != null && !apiKey.isBlank();
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
@@ -188,7 +186,7 @@ public class VideoService {
 
     private void cleanupUnboundActors(Video video) {
         try {
-            List<VideoActor> actors = actorRepository.findByVideoId(video.getId());
+            List<VideoActor> actors = actorRepository.findByVideo_Id(video.getId());
             if (!actors.isEmpty()) {
                 actorRepository.deleteAll(actors);
                 log.debug("Deleted {} actors for video {}", actors.size(), video.getId());
@@ -283,38 +281,42 @@ public class VideoService {
         return results;
     }
 
-    @Transactional
     public int cleanupInvalidRecords() {
-        int removed = 0;
-        int pageNum = 0;
-        final int pageSize = 100;
-        org.springframework.data.domain.Page<Video> page;
+        return transactionTemplate.execute(status -> {
+            int removed = 0;
+            int pageNum = 0;
+            final int pageSize = 100;
+            org.springframework.data.domain.Page<Video> page;
 
-        do {
-            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-            List<Long> idsToDelete = new ArrayList<>();
-            for (Video video : page.getContent()) {
-                if (video.getFilePath() == null || !Files.exists(Paths.get(video.getFilePath()))) {
-                    log.info("Removing invalid record: {} (path: {})", video.getTitle(), video.getFilePath());
-                    if (video.getSeries() != null) {
-                        seriesService.removeVideoFromSeries(video);
+            do {
+                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+                List<Long> idsToDelete = new ArrayList<>();
+                for (Video video : page.getContent()) {
+                    if (video.getFilePath() == null || !Files.exists(Paths.get(video.getFilePath()))) {
+                        log.info("Removing invalid record: {} (path: {})", video.getTitle(), video.getFilePath());
+                        if (video.getSeries() != null) {
+                            seriesService.removeVideoFromSeries(video);
+                        }
+                        idsToDelete.add(video.getId());
                     }
-                    idsToDelete.add(video.getId());
                 }
-            }
-            if (!idsToDelete.isEmpty()) {
-                repository.deleteAllByIdInBatch(idsToDelete);
-                entityManager.clear();
-                removed += idsToDelete.size();
-            }
+                if (!idsToDelete.isEmpty()) {
+                    for (Long id : idsToDelete) {
+                        actorRepository.deleteByVideo_Id(id);
+                        watchProgressRepository.findByVideo_Id(id).ifPresent(watchProgressRepository::delete);
+                    }
+                    repository.deleteAllById(idsToDelete);
+                    entityManager.clear();
+                    removed += idsToDelete.size();
+                }
         } while (page.hasNext());
+            seriesService.cleanupEmptySeries();
 
-        seriesService.cleanupEmptySeries();
-
-        if (removed > 0) {
-            log.info("Cleanup completed: removed {} invalid records", removed);
-        }
-        return removed;
+            if (removed > 0) {
+                log.info("Cleanup completed: removed {} invalid records", removed);
+            }
+            return removed;
+        });
     }
 
     public Video extractAndSaveMetadata(String filePath) {
@@ -348,7 +350,7 @@ public class VideoService {
                     }
                     Video updated = repository.save(existing);
                     log.debug("Updated video id={}, libraryId={}", updated.getId(), updated.getLibraryId());
-                    if (isAutoScrape() && updated.getTmdbId() == null) {
+                    if (isTmdbConfigured() && updated.getTmdbId() == null) {
                         scrapeExecutor.submit(() -> tryScrapeVideo(updated));
                     }
                     return updated;
@@ -404,7 +406,7 @@ public class VideoService {
                 renameVideoFile(saved);
             }
 
-            if (isAutoScrape() && saved.getTmdbId() == null && nfoData == null) {
+            if (isTmdbConfigured() && saved.getTmdbId() == null && nfoData == null) {
                 scrapeExecutor.submit(() -> tryScrapeVideo(saved));
             }
 
@@ -445,17 +447,11 @@ public class VideoService {
             }
 
             TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
-            double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
-
-            if (score < getMinScore()) {
-                log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
-                return;
-            }
 
             scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
 
-            log.info("Auto-scraped: {} -> TMDB {} ({}) score={} filter={}",
-                    video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score, mediaTypeFilter);
+            log.info("Auto-scraped: {} -> TMDB {} ({}) filter={}",
+                    video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), mediaTypeFilter);
         } catch (Exception e) {
             log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage(), e);
         }
@@ -1360,21 +1356,13 @@ public class VideoService {
                         }
 
                         TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
-                        double score = bestMatch.getVoteAverage() != null ? bestMatch.getVoteAverage() : 0.0;
-
-                        if (score < getMinScore()) {
-                            log.debug("Skipping {} - score {} below threshold {}", video.getTitle(), score, getMinScore());
-                            scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "score below threshold");
-                            skipped.incrementAndGet();
-                            return;
-                        }
 
                         scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
                         scraped.incrementAndGet();
                         scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
 
-                        log.debug("Auto-scraped: {} -> TMDB {} ({}) score={} (filter={})",
-                                video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), score, mediaTypeFilter);
+                        log.debug("Auto-scraped: {} -> TMDB {} ({}) (filter={})",
+                                video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), mediaTypeFilter);
                     } catch (Exception e) {
                         log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
@@ -1392,7 +1380,7 @@ public class VideoService {
 
             scrapeProgressService.finish("video");
             if (scraped.get() > 0) {
-                log.info("Auto-scrape completed: {}/{} scraped, {} skipped (threshold={})", scraped.get(), videos.size(), skipped.get(), getMinScore());
+                log.info("Auto-scrape completed: {}/{} scraped, {} skipped", scraped.get(), videos.size(), skipped.get());
             }
         });
 
@@ -1435,7 +1423,7 @@ public class VideoService {
 
     private void saveActors(Video video, String mediaType, Long tmdbId, Object preloadedDetail) {
         try {
-            actorRepository.deleteAll(actorRepository.findByVideoId(video.getId()));
+            actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
             actorRepository.flush();
 
             Path actorsDir = getActorsDir(video, mediaType);
@@ -1510,7 +1498,7 @@ public class VideoService {
         if (name == null) return count;
 
         VideoActor actor = new VideoActor();
-        actor.setVideoId(video.getId());
+        actor.setVideo(video);
         actor.setName(name);
         actor.setCharacter(character);
         actor.setSourceActorId(sourceId);

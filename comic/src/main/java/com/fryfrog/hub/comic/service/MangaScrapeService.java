@@ -1,12 +1,13 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.model.MediaSeries;
+import com.fryfrog.hub.common.model.MediaSeriesCharacter;
+import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
+import com.fryfrog.hub.common.repository.MediaSeriesRepository;
 import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
-import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.comic.model.Comic;
-import com.fryfrog.hub.comic.model.ComicCharacter;
-import com.fryfrog.hub.comic.repository.ComicCharacterRepository;
 import com.fryfrog.hub.comic.repository.ComicRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,36 +35,23 @@ public class MangaScrapeService {
 
     private final BangumiService bangumiService;
     private final ComicRepository repository;
-    private final ComicCharacterRepository characterRepository;
     private final ComicMetadataService comicMetadataService;
     private final RestTemplate scraperRestTemplate;
-    private final SystemSettingService settingService;
     private final ScrapeProgressService scrapeProgressService;
-
-    private boolean isAutoScrape() {
-        return settingService.getBoolean("hub.comic.auto-scrape", false);
-    }
-
-    private double getMinScore() {
-        return settingService.getDouble("hub.comic.min-score", 0.0);
-    }
+    private final MediaSeriesRepository seriesRepo;
+    private final MediaSeriesCharacterRepository mediaCharRepo;
 
     public List<BangumiService.SearchResult> searchFromBangumi(String query) {
         String cleaned = cleanTitleForSearch(query);
-        List<BangumiService.SearchResult> results = bangumiService.searchManga(cleaned);
+        List<BangumiService.SearchResult> results = bangumiService.searchBooks(cleaned, "manga");
         if (results.isEmpty() && !cleaned.equals(query)) {
-            results = bangumiService.searchManga(query);
+            results = bangumiService.searchBooks(query, "manga");
         }
-        List<BangumiService.SearchResult> sorted = new ArrayList<>(results);
-        sorted.sort(Comparator.<BangumiService.SearchResult>comparingInt(r -> {
-            BangumiService.SearchResult.Rating rating = r.getRating();
-            return rating != null && rating.getTotal() != null ? rating.getTotal() : 0;
-        }).reversed());
-        return sorted;
+        return BangumiService.sortByPopularity(results);
     }
 
     @Transactional
-    public Comic bindBangumi(Long comicId, Integer bangumiId, boolean bindSeries) {
+    public Comic bindBangumi(Long comicId, Integer bangumiId) {
         Comic comic = comicMetadataService.getComicById(comicId);
         BangumiService.SubjectDetail detail = bangumiService.getSubjectDetail(bangumiId);
         if (detail == null) {
@@ -80,110 +68,137 @@ public class MangaScrapeService {
         comic.setMetadataSourceId(bangumiId);
         comic.setMetadataUpdatedAt(LocalDateTime.now());
 
+        // 查找或创建 MediaSeries
+        String seriesName = comic.getSeries();
+        if (seriesName != null && !seriesName.isBlank()) {
+            MediaSeries ms = findOrCreateSeries(seriesName, "comic", detail);
+            comic.setSeriesRef(ms);
+        }
+
         moveComicToSeriesFolder(comic);
 
         Comic saved = repository.save(comic);
         log.info("Bound comic '{}' to Bangumi subject id={}", saved.getTitle(), bangumiId);
 
         downloadCoverFromBangumi(saved, detail);
+
+        // 下载卷级封面
+        if (saved.getVolume() != null) {
+            Map<Integer, BangumiService.RelatedSubject> volumeMap = bangumiService.buildVolumeSubjectMap(bangumiId);
+            if (volumeMap.containsKey(saved.getVolume())) {
+                BangumiService.RelatedSubject volSub = volumeMap.get(saved.getVolume());
+                String volCoverUrl = volSub.getCoverUrl();
+                if (volCoverUrl != null) {
+                    downloadCover(saved, volCoverUrl, "bangumi_vol_" + bangumiId + "_" + saved.getVolume());
+                }
+            }
+        }
+
         repository.save(saved);
         saveBangumiCharacters(saved.getId(), bangumiId);
-
-        if (bindSeries) {
-            propagateSeriesMetadata(saved);
-        }
 
         return saved;
     }
 
+    /**
+     * 按系列名重新刮削：重新获取系列简介、系列封面、每个卷的封面和简介
+     */
     @Transactional
-    public void propagateSeriesMetadata(Comic source) {
-        if (source.getSeries() == null || source.getSeries().isBlank()) {
-            log.warn("Cannot propagate series metadata: comic '{}' has no series name", source.getTitle());
-            return;
+    public int rescrapeSeries(String series) {
+        if (series == null || series.isBlank()) return 0;
+
+        MediaSeries ms = seriesRepo.findByTitleAndMediaTypeIgnoreCase(series, "comic")
+                .or(() -> seriesRepo.findByTitleAndMediaTypeIgnoreCase(series, "both"))
+                .orElse(null);
+        if (ms == null) {
+            log.warn("No MediaSeries found for '{}'", series);
+            return 0;
+        }
+        List<Comic> comics = repository.findBySeriesRef_Id(ms.getId());
+        if (comics.isEmpty()) {
+            log.warn("No comics found for series '{}'", series);
+            return 0;
         }
 
-        List<Comic> seriesComics = repository.findBySeriesIgnoreCase(source.getSeries());
+        // 找到已有 metadataSourceId 的作为主条目，或者用第一本搜索
+        Comic mainBook = comics.stream()
+                .filter(c -> c.getMetadataSourceId() != null)
+                .findFirst()
+                .orElse(comics.get(0));
 
-        Map<Integer, BangumiService.RelatedSubject> volumeSubjectMap = Map.of();
-        Map<Integer, VolumeInfo> volumeInfoMap = Map.of();
-        if ("bangumi".equals(source.getMetadataSource()) && source.getMetadataSourceId() != null) {
-            volumeSubjectMap = buildVolumeSubjectMap(source.getMetadataSourceId());
-            volumeInfoMap = buildVolumeInfoMap(volumeSubjectMap);
+        Integer subjectId = mainBook.getMetadataSourceId();
+        if (subjectId == null) {
+            // 没有绑定过，需要先搜索
+            log.info("Series '{}' has no bangumi binding, searching...", series);
+            List<BangumiService.SearchResult> results = searchFromBangumi(series);
+            if (results.isEmpty()) {
+                log.warn("No Bangumi results for series '{}'", series);
+                return 0;
+            }
+            subjectId = results.get(0).getId();
         }
 
-        for (Comic comic : seriesComics) {
-            if (!comic.getId().equals(source.getId())) {
-                comic.setAuthor(source.getAuthor());
-                comic.setSeries(source.getSeries());
-                comic.setYear(source.getYear());
-                comic.setGenre(source.getGenre());
-                comic.setOriginalTitle(source.getOriginalTitle());
-                comic.setTitle(source.getTitle());
-                comic.setMetadataSource(source.getMetadataSource());
-                comic.setMetadataSourceId(source.getMetadataSourceId());
+        BangumiService.SubjectDetail seriesDetail = bangumiService.getSubjectDetail(subjectId);
+        if (seriesDetail == null) {
+            log.warn("Could not fetch Bangumi detail for series '{}' (id={})", series, subjectId);
+            return 0;
+        }
+
+        log.info("Rescraping series '{}' with Bangumi id={}", series, subjectId);
+
+        // 获取卷级映射
+        Map<Integer, BangumiService.RelatedSubject> volumeMap = bangumiService.buildVolumeSubjectMap(subjectId);
+        Map<Integer, VolumeInfo> volumeInfoMap = buildVolumeInfoMap(volumeMap);
+
+        int updated = 0;
+        for (Comic comic : comics) {
+            try {
+                // 更新系列级元数据
+                updateComicFromBangumiDetail(comic, seriesDetail);
+                if (seriesDetail.getSummary() != null && !seriesDetail.getSummary().isBlank()) {
+                    comic.setSeriesSummary(seriesDetail.getSummary());
+                }
+                comic.setMetadataSource("bangumi");
+                comic.setMetadataSourceId(subjectId);
                 comic.setMetadataUpdatedAt(LocalDateTime.now());
-                if (source.getSeriesSummary() != null) {
-                    comic.setSeriesSummary(source.getSeriesSummary());
-                }
-                if (source.getSerializationStart() != null) {
-                    comic.setSerializationStart(source.getSerializationStart());
-                }
-            }
 
-            if (comic.getVolume() != null && volumeSubjectMap.containsKey(comic.getVolume())) {
-                BangumiService.RelatedSubject volSub = volumeSubjectMap.get(comic.getVolume());
+                // 匹配卷级封面和简介
+                if (comic.getVolume() != null && volumeMap.containsKey(comic.getVolume())) {
+                    BangumiService.RelatedSubject volSub = volumeMap.get(comic.getVolume());
 
-                String coverUrl = volSub.getCoverUrl();
-                if (coverUrl != null) {
-                    downloadCover(comic, coverUrl, "bangumi_vol_" + source.getMetadataSourceId() + "_" + comic.getVolume());
-                }
-
-                VolumeInfo volInfo = volumeInfoMap.get(comic.getVolume());
-                if (volInfo != null) {
-                    if (volInfo.summary() != null && !volInfo.summary().isBlank()) {
-                        comic.setSummary(volInfo.summary());
+                    // 下载卷级封面
+                    String coverUrl = volSub.getCoverUrl();
+                    if (coverUrl != null) {
+                        downloadCover(comic, coverUrl, "bangumi_vol_" + subjectId + "_" + comic.getVolume());
                     }
-                    if (volInfo.publisher() != null) comic.setPublisher(volInfo.publisher());
-                    if (volInfo.isbn() != null) comic.setIsbn(volInfo.isbn());
-                    if (volInfo.releaseDate() != null) comic.setReleaseDate(volInfo.releaseDate());
-                    if (volInfo.rating() != null) comic.setRating(volInfo.rating());
-                }
-            } else {
-                if (comic.getSummary() == null || comic.getSummary().isBlank()) {
-                    comic.setSummary(source.getSummary());
-                }
-            }
 
-            moveComicToSeriesFolder(comic);
-            repository.save(comic);
+                    // 更新卷级简介
+                    VolumeInfo volInfo = volumeInfoMap.get(comic.getVolume());
+                    if (volInfo != null) {
+                        if (volInfo.summary() != null && !volInfo.summary().isBlank()) {
+                            comic.setSummary(volInfo.summary());
+                        }
+                        if (volInfo.publisher() != null) comic.setPublisher(volInfo.publisher());
+                        if (volInfo.isbn() != null) comic.setIsbn(volInfo.isbn());
+                        if (volInfo.releaseDate() != null) comic.setReleaseDate(volInfo.releaseDate());
+                        if (volInfo.rating() != null) comic.setRating(volInfo.rating());
+                    }
+                }
+
+                moveComicToSeriesFolder(comic);
+                repository.save(comic);
+                updated++;
+                log.info("Rescraped '{}' (vol={})", comic.getTitle(), comic.getVolume());
+            } catch (Exception e) {
+                log.warn("Failed to rescrape '{}': {}", comic.getTitle(), e.getMessage());
+            }
         }
 
-        log.info("Propagated series metadata from '{}' to {} comics in series '{}'",
-                source.getTitle(), seriesComics.size() - 1, source.getSeries());
+        log.info("Rescrape series '{}': {}/{} updated", series, updated, comics.size());
+        return updated;
     }
 
     private record VolumeInfo(String summary, String publisher, String isbn, String releaseDate, Double rating) {}
-
-    private Map<Integer, BangumiService.RelatedSubject> buildVolumeSubjectMap(Integer subjectId) {
-        Map<Integer, BangumiService.RelatedSubject> map = new HashMap<>();
-        List<BangumiService.RelatedSubject> related = bangumiService.getRelatedSubjects(subjectId);
-
-        for (BangumiService.RelatedSubject sub : related) {
-            if (sub.getType() == null || sub.getType() != 1) continue;
-
-            String name = sub.getName();
-            if (name == null) continue;
-
-            Integer volNum = extractVolumeFromRelatedName(name);
-            if (volNum != null) {
-                map.put(volNum, sub);
-            }
-        }
-
-        log.info("Found {} volume subjects from related subjects for Bangumi subject {}", map.size(), subjectId);
-        return map;
-    }
 
     private Map<Integer, VolumeInfo> buildVolumeInfoMap(Map<Integer, BangumiService.RelatedSubject> volumeSubjectMap) {
         Map<Integer, VolumeInfo> map = new HashMap<>();
@@ -197,8 +212,8 @@ public class MangaScrapeService {
                 if (detail == null) continue;
 
                 String summary = detail.getSummary();
-                String publisher = extractInfoboxValue(detail, "出版社");
-                String isbn = extractInfoboxValue(detail, "ISBN");
+                String publisher = BangumiService.extractInfoboxValue(detail, "出版社");
+                String isbn = BangumiService.extractInfoboxValue(detail, "ISBN");
                 String releaseDate = detail.getDate();
                 Double rating = detail.getScore();
 
@@ -215,39 +230,8 @@ public class MangaScrapeService {
         return map;
     }
 
-    private String extractInfoboxValue(BangumiService.SubjectDetail detail, String key) {
-        if (detail.getInfobox() == null) return null;
-        return detail.getInfobox().stream()
-                .filter(e -> key.equals(e.getKey()))
-                .map(e -> String.valueOf(e.getValue()))
-                .filter(v -> v != null && !v.isBlank())
-                .findFirst()
-                .orElse(null);
-    }
-
-    private Integer extractVolumeFromRelatedName(String name) {
-        Matcher m = Pattern.compile("\\((\\d+)\\)").matcher(name);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-        m = Pattern.compile("(?i)vol\\.?\\s*(\\d+)").matcher(name);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-        m = Pattern.compile("第\\s*(\\d+)\\s*卷").matcher(name);
-        if (m.find()) {
-            return Integer.parseInt(m.group(1));
-        }
-        return null;
-    }
-
     @Async
     public void autoScrapeAll() {
-        if (!isAutoScrape()) {
-            log.debug("Auto-scrape is disabled");
-            return;
-        }
-
         List<Comic> unboundComics = repository.findByMetadataSourceIdIsNullOrderByVolumeAsc();
         log.debug("Found {} unbound comics, starting auto-scrape", unboundComics.size());
 
@@ -274,18 +258,44 @@ public class MangaScrapeService {
         }
     }
 
+    @Transactional
     public Comic autoScrapeComic(Comic comic) {
         if (comic.getMetadataSourceId() != null) {
             log.debug("Comic '{}' already bound, skipping", comic.getTitle());
             return comic;
         }
 
-        String query = comic.getTitle();
+        // 如果已有 MediaSeries 关联，复用其 bangumiId
+        if (comic.getSeriesRef() != null && comic.getSeriesRef().getMetadataSourceId() != null) {
+            log.info("Reusing bangumiId={} from MediaSeries '{}' for '{}'",
+                    comic.getSeriesRef().getMetadataSourceId(), comic.getSeriesRef().getTitle(), comic.getTitle());
+            return bindBangumi(comic.getId(), comic.getSeriesRef().getMetadataSourceId());
+        }
+
+        // 如果同系列已有绑定的书，复用其 bangumiId
+        if (comic.getSeriesRef() != null) {
+            List<Comic> siblings = repository.findBySeriesRef_Id(comic.getSeriesRef().getId());
+            Integer inheritedBangumiId = siblings.stream()
+                    .filter(c -> c.getMetadataSourceId() != null)
+                    .map(Comic::getMetadataSourceId)
+                    .findFirst()
+                    .orElse(null);
+            if (inheritedBangumiId != null) {
+                log.info("Reusing bangumiId={} from series '{}' for '{}'",
+                        inheritedBangumiId, comic.getSeries(), comic.getTitle());
+                return bindBangumi(comic.getId(), inheritedBangumiId);
+            }
+        }
+
+        String query = extractSeriesName(comic);
+        if (query.isBlank()) {
+            query = comic.getTitle();
+        }
 
         List<BangumiService.SearchResult> bgmResults = searchFromBangumi(query);
         if (!bgmResults.isEmpty()) {
             BangumiService.SearchResult best = bgmResults.get(0);
-            return bindBangumi(comic.getId(), best.getId(), true);
+            return bindBangumi(comic.getId(), best.getId());
         }
 
         log.info("No results for comic '{}' from Bangumi", query);
@@ -345,16 +355,9 @@ public class MangaScrapeService {
             }
         }
 
-        if (detail.getTags() != null && !detail.getTags().isEmpty()) {
-            String genres = detail.getTags().stream()
-                    .map(BangumiService.SearchResult.Tag::getName)
-                    .filter(Objects::nonNull)
-                    .limit(5)
-                    .reduce((a, b) -> a + ", " + b)
-                    .orElse(null);
-            if (genres != null) {
-                comic.setGenre(genres);
-            }
+        String genres = BangumiService.extractGenresFromTags(detail.getTags());
+        if (genres != null) {
+            comic.setGenre(genres);
         }
 
         Integer localVolume = extractVolumeFromFileName(comic.getFileName());
@@ -364,19 +367,20 @@ public class MangaScrapeService {
 
         String newSeriesName = detail.getNameCn() != null ? detail.getNameCn() : detail.getName();
         if (newSeriesName != null && !newSeriesName.isBlank()) {
-            comic.setSeries(newSeriesName);
+            newSeriesName = newSeriesName.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
+            comic.setSeriesName(newSeriesName);
         }
     }
 
     private void downloadCoverFromBangumi(Comic comic, BangumiService.SubjectDetail detail) {
-        String coverUrl = null;
-        if (detail.getImages() != null) {
-            coverUrl = detail.getImages().getLarge();
-            if (coverUrl == null || coverUrl.isBlank()) {
-                coverUrl = detail.getImages().getCommon();
-            }
+        if (comic.getFilePath() == null || comic.getFilePath().isBlank()) return;
+        Path comicDir = Paths.get(comic.getFilePath()).getParent();
+        if (comicDir == null) return;
+
+        String localPath = bangumiService.downloadCover(detail, "bangumi_" + detail.getId(), comicDir);
+        if (localPath != null) {
+            comic.setCoverArtPath(localPath);
         }
-        downloadCover(comic, coverUrl, "bangumi_" + detail.getId());
     }
 
     private void downloadCover(Comic comic, String coverUrl, String filePrefix) {
@@ -411,19 +415,26 @@ public class MangaScrapeService {
         }
     }
 
-    private String downloadCharacterImage(Comic comic, String imageUrl, String characterName) {
-        if (imageUrl == null || imageUrl.isBlank() || comic.getFilePath() == null) return null;
+    private String downloadMediaCharacterImage(MediaSeries ms, String imageUrl, String characterName) {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
 
         try {
-            Path comicDir = Paths.get(comic.getFilePath()).getParent();
+            // 查找该系列下的任意一个漫画文件来确定目录
+            List<Comic> comics = repository.findBySeriesRef_Id(ms.getId());
+            if (comics.isEmpty()) {
+                log.debug("No comics found for series '{}', cannot download character image", ms.getTitle());
+                return null;
+            }
+
+            Path comicDir = Paths.get(comics.get(0).getFilePath()).getParent();
             if (comicDir == null) return null;
 
-            Path charactersDir = comicDir.resolve("characters");
-            Files.createDirectories(charactersDir);
+            Path actorsDir = comicDir.resolve("actors");
+            Files.createDirectories(actorsDir);
 
             String safeName = characterName.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
             if (safeName.isBlank()) safeName = "character_" + System.currentTimeMillis();
-            Path imagePath = charactersDir.resolve(safeName + ".jpg");
+            Path imagePath = actorsDir.resolve(safeName + ".jpg");
 
             if (Files.exists(imagePath)) {
                 return imagePath.toAbsolutePath().toString();
@@ -439,6 +450,8 @@ public class MangaScrapeService {
                 Files.write(imagePath, response.getBody());
                 log.info("Downloaded character image '{}' to {}", characterName, imagePath);
                 return imagePath.toAbsolutePath().toString();
+            } else {
+                log.warn("Failed to download character image '{}': HTTP {}", characterName, response.getStatusCode());
             }
         } catch (Exception e) {
             log.warn("Failed to download character image '{}': {}", characterName, e.getMessage());
@@ -514,7 +527,7 @@ public class MangaScrapeService {
 
     private String sanitizeFolderName(String name) {
         if (name == null) return "Unknown";
-        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
         return sanitized.isBlank() ? "Unknown" : sanitized;
     }
 
@@ -664,6 +677,73 @@ public class MangaScrapeService {
         return cleaned.isBlank() ? title : cleaned;
     }
 
+    public String extractSeriesName(Comic comic) {
+        // 优先从文件名提取系列名 —— 文件名是用户可控的，命名更一致
+        String fileName = comic.getFileName();
+        if (fileName != null && !fileName.isBlank()) {
+            String fileBase = fileName.contains(".")
+                    ? fileName.substring(0, fileName.lastIndexOf('.'))
+                    : fileName;
+            String fromFile = cleanTitleForSearch(fileBase);
+            if (fromFile != null && !fromFile.isBlank()) {
+                // 文件名含中日文字符 → 说明命名有意义，直接用它
+                if (fromFile.codePoints().anyMatch(cp ->
+                        (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF)
+                        || (cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF))) {
+                    return fromFile;
+                }
+            }
+        }
+
+        // 文件名不含中文字符，回退到标题
+        String title = comic.getTitle();
+        if (title != null && !title.isBlank()) {
+            String fromTitle = cleanTitleForSearch(title);
+            if (fromTitle != null && !fromTitle.isBlank()) {
+                return fromTitle;
+            }
+        }
+        return "Unknown";
+    }
+
+    private MediaSeries findOrCreateSeries(String seriesName, String mediaType, BangumiService.SubjectDetail detail) {
+        String cleanedName = seriesName.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
+        MediaSeries ms = seriesRepo.findByTitleAndMediaTypeIgnoreCase(cleanedName, mediaType).orElse(null);
+        if (ms != null) return ms;
+
+        ms = new MediaSeries();
+        ms.setTitle(cleanedName);
+        ms.setMediaType(mediaType);
+        ms.setMetadataSource("bangumi");
+        ms.setMetadataSourceId(detail.getId());
+        if (detail.getNameCn() != null && !detail.getNameCn().isBlank()) {
+            ms.setOriginalTitle(detail.getName());
+        }
+        if (detail.getSummary() != null && !detail.getSummary().isBlank()) {
+            ms.setDescription(detail.getSummary());
+        }
+        if (detail.getRating() != null && detail.getRating().getScore() != null) {
+            ms.setRating(detail.getRating().getScore());
+        }
+        if (detail.getDate() != null && detail.getDate().length() >= 4) {
+            try { ms.setYear(Integer.parseInt(detail.getDate().substring(0, 4))); } catch (NumberFormatException ignored) {}
+        }
+        // 从 infobox 提取 author/genre
+        if (detail.getInfobox() != null) {
+            for (var entry : detail.getInfobox()) {
+                if ("作者".equals(entry.getKey()) || "作画".equals(entry.getKey())) {
+                    if (ms.getAuthor() == null) ms.setAuthor(entry.getValue().toString());
+                }
+            }
+        }
+        String genres = BangumiService.extractGenresFromTags(detail.getTags());
+        if (genres != null) ms.setGenre(genres);
+
+        seriesRepo.save(ms);
+        log.info("Created MediaSeries '{}' (id={})", cleanedName, ms.getId());
+        return ms;
+    }
+
     @Transactional
     public void saveBangumiCharacters(Long comicId, Integer subjectId) {
         try {
@@ -682,55 +762,67 @@ public class MangaScrapeService {
                 return;
             }
 
-            characterRepository.deleteAll(characterRepository.findByComicId(comicId));
-
             Comic comic = repository.findById(comicId).orElse(null);
+            MediaSeries ms = comic != null ? comic.getSeriesRef() : null;
 
-            for (BangumiService.Character bgmChar : characters) {
-                ComicCharacter character = new ComicCharacter();
-                character.setComicId(comicId);
-
-                String chineseName = null;
-                if (bgmChar.getNameCn() == null || bgmChar.getNameCn().isBlank()) {
-                    BangumiService.CharacterDetail detail = bangumiService.getCharacterDetail(bgmChar.getId());
-                    if (detail != null) {
-                        chineseName = detail.getChineseName();
-                    }
-                    try { Thread.sleep(200); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                } else {
-                    chineseName = bgmChar.getNameCn();
-                }
-
-                if (chineseName != null && !chineseName.isBlank()) {
-                    character.setName(chineseName);
-                    character.setOriginalName(bgmChar.getName());
-                } else {
-                    character.setName(bgmChar.getName());
-                    character.setOriginalName(bgmChar.getName());
-                }
-
-                character.setDescription(bgmChar.getSummary());
-                character.setRole(bgmChar.getRole());
-                character.setSourceCharacterId(bgmChar.getId());
-                character.setSource("bangumi");
-
-                String imageUrl = bgmChar.getImageUrl();
-                if (imageUrl != null && !imageUrl.isBlank()) {
-                    character.setImageUrl(imageUrl);
-                    if (comic != null) {
-                        String localPath = downloadCharacterImage(comic, imageUrl, character.getName());
-                        if (localPath != null) {
-                            character.setImagePath(localPath);
-                        }
-                    }
-                }
-
-                characterRepository.save(character);
+            if (ms == null) {
+                log.warn("No MediaSeries for comic id={}, cannot save characters", comicId);
+                return;
             }
-            log.info("Saved {} characters for comic id={} from Bangumi", characters.size(), comicId);
+
+            mediaCharRepo.deleteBySeries_Id(ms.getId());
+            for (BangumiService.Character bgmChar : characters) {
+                MediaSeriesCharacter mc = createMediaCharacter(bgmChar, ms);
+                if (mc != null) mediaCharRepo.save(mc);
+            }
+            log.info("Saved {} characters for series '{}' from Bangumi", characters.size(), ms.getTitle());
         } catch (Exception e) {
             log.warn("Failed to save Bangumi characters for comic id={}: {}", comicId, e.getMessage());
         }
+    }
+
+    private MediaSeriesCharacter createMediaCharacter(BangumiService.Character bgmChar, MediaSeries ms) {
+        String chineseName = getChineseName(bgmChar);
+        MediaSeriesCharacter mc = new MediaSeriesCharacter();
+        mc.setSeries(ms);
+        if (chineseName != null && !chineseName.isBlank()) {
+            mc.setName(chineseName);
+            mc.setOriginalName(bgmChar.getName());
+        } else {
+            mc.setName(bgmChar.getName());
+            mc.setOriginalName(bgmChar.getName());
+        }
+        mc.setDescription(bgmChar.getSummary());
+        mc.setRole(bgmChar.getRole());
+        mc.setSourceCharacterId(bgmChar.getId());
+        mc.setSource("bangumi");
+
+        String imageUrl = bgmChar.getImageUrl();
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            mc.setImageUrl(imageUrl);
+            // 下载角色图片到本地
+            String localPath = downloadMediaCharacterImage(ms, imageUrl, mc.getName());
+            if (localPath != null) mc.setImagePath(localPath);
+        }
+        return mc;
+    }
+
+    private String getChineseName(BangumiService.Character bgmChar) {
+        if (bgmChar.getNameCn() != null && !bgmChar.getNameCn().isBlank()) {
+            return bgmChar.getNameCn();
+        }
+        try {
+            BangumiService.CharacterDetail detail = bangumiService.getCharacterDetail(bgmChar.getId());
+            if (detail != null && detail.getChineseName() != null) {
+                return detail.getChineseName();
+            }
+            Thread.sleep(200);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.debug("Failed to get character detail: {}", e.getMessage());
+        }
+        return null;
     }
 
     private Integer findBangumiSeriesSubjectId(Integer subjectId) {

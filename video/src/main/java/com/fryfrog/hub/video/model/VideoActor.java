@@ -14,9 +14,10 @@ import lombok.*;
 @Schema(description = "视频演员信息")
 public class VideoActor extends BaseEntity {
 
-    @Schema(description = "所属视频 ID")
-    @Column(nullable = false)
-    private Long videoId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "video_id", nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Video video;
 
     @Schema(description = "演员姓名", example = "吴京")
     @Column(nullable = false)

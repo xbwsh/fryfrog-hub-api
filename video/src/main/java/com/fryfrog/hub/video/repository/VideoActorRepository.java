@@ -9,7 +9,7 @@ import java.util.List;
 @Repository
 public interface VideoActorRepository extends JpaRepository<VideoActor, Long> {
 
-    List<VideoActor> findByVideoId(Long videoId);
+    List<VideoActor> findByVideo_Id(Long videoId);
 
-    void deleteByVideoId(Long videoId);
+    void deleteByVideo_Id(Long videoId);
 }

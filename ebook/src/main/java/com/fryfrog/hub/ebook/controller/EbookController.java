@@ -2,9 +2,13 @@ package com.fryfrog.hub.ebook.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.model.MediaSeriesCharacter;
+import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
+import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
+import com.fryfrog.hub.ebook.dto.EbookDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressRequest;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
@@ -15,7 +19,6 @@ import com.fryfrog.hub.ebook.service.EbookBangumiScrapeService;
 import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
 import com.fryfrog.hub.ebook.service.OpenLibraryService;
 import com.fryfrog.hub.ebook.service.EbookService;
-import com.fryfrog.hub.common.service.BangumiService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,9 +38,7 @@ import com.fryfrog.hub.ebook.util.EpubParser;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
@@ -53,6 +54,7 @@ public class EbookController {
     private final EbookBangumiScrapeService bangumiScrapeService;
     private final OpenLibraryService openLibraryService;
     private final ScrapeProgressService scrapeProgressService;
+    private final MediaSeriesCharacterRepository mediaCharacterRepository;
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
 
@@ -68,9 +70,9 @@ public class EbookController {
 
     @GetMapping
     @Operation(summary = "获取所有电子书", description = "返回数据库中所有已索引的电子书列表")
-    public ResponseEntity<ApiResponse<List<Ebook>>> getAllEbooks() {
-        List<Ebook> ebooks = service.getAllEbooks();
-        
+    public ResponseEntity<ApiResponse<List<EbookDTO>>> getAllEbooks() {
+        List<EbookDTO> ebooks = service.getAllEbooks();
+
         return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
@@ -80,42 +82,63 @@ public class EbookController {
         return ResponseEntity.ok(ApiResponse.success(service.getEbooksBySeries()));
     }
 
+    @GetMapping("/series/cover")
+    @Operation(summary = "获取系列封面", description = "根据系列名返回系列封面图片")
+    public ResponseEntity<Resource> getSeriesCover(
+            @Parameter(description = "系列名") @RequestParam String series) {
+        List<EbookSeries> seriesList = service.getEbooksBySeries();
+        EbookSeries target = seriesList.stream()
+                .filter(s -> series.equals(s.getName()))
+                .findFirst()
+                .orElse(null);
+        if (target == null || target.getCoverArtPath() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        File coverFile = new File(target.getCoverArtPath());
+        if (!coverFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .contentType(resolveImageMediaType(coverFile.getName()))
+                .body(new FileSystemResource(coverFile));
+    }
+
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取电子书详情", description = "根据ID获取单个电子书的详细信息")
-    public ResponseEntity<ApiResponse<Ebook>> getEbookById(
+    public ResponseEntity<ApiResponse<EbookDTO>> getEbookById(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
-        Ebook ebook = service.getEbookById(id);
+        EbookDTO ebook = service.getEbookById(id);
         return ResponseEntity.ok(ApiResponse.success(ebook));
     }
 
     @GetMapping("/search/title")
     @Operation(summary = "按书名搜索", description = "根据书名关键词模糊搜索电子书")
-    public ResponseEntity<ApiResponse<List<Ebook>>> searchByTitle(
+    public ResponseEntity<ApiResponse<List<EbookDTO>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q) {
-        List<Ebook> ebooks = service.searchByTitle(q);
-        
+        List<EbookDTO> ebooks = service.searchByTitle(q);
+
         return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @GetMapping("/search/author")
     @Operation(summary = "按作者搜索", description = "根据作者名称模糊搜索电子书")
-    public ResponseEntity<ApiResponse<List<Ebook>>> searchByAuthor(
+    public ResponseEntity<ApiResponse<List<EbookDTO>>> searchByAuthor(
             @Parameter(description = "作者名称关键词") @RequestParam String q) {
-        List<Ebook> ebooks = service.searchByAuthor(q);
-        
+        List<EbookDTO> ebooks = service.searchByAuthor(q);
+
         return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @GetMapping("/favorites")
     @Operation(summary = "获取收藏列表", description = "返回所有已收藏的电子书")
-    public ResponseEntity<ApiResponse<List<Ebook>>> getFavorites() {
-        List<Ebook> ebooks = service.getFavorites();
+    public ResponseEntity<ApiResponse<List<EbookDTO>>> getFavorites() {
+        List<EbookDTO> ebooks = service.getFavorites();
         return ResponseEntity.ok(ApiResponse.success(ebooks));
     }
 
     @GetMapping("/recently-added")
     @Operation(summary = "最近添加", description = "返回最近添加的电子书")
-    public ResponseEntity<ApiResponse<List<Ebook>>> getRecentlyAdded() {
+    public ResponseEntity<ApiResponse<List<EbookDTO>>> getRecentlyAdded() {
         return ResponseEntity.ok(ApiResponse.success(service.getRecentlyAdded()));
     }
 
@@ -133,10 +156,10 @@ public class EbookController {
 
     @PutMapping("/{id:\\d+}/favorite")
     @Operation(summary = "设置收藏状态", description = "设置电子书的收藏状态")
-    public ResponseEntity<ApiResponse<Ebook>> setFavorite(
+    public ResponseEntity<ApiResponse<EbookDTO>> setFavorite(
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "收藏状态") @RequestParam boolean status) {
-        Ebook ebook = service.setFavorite(id, status);
+        EbookDTO ebook = service.setFavorite(id, status);
         return ResponseEntity.ok(ApiResponse.success(ebook));
     }
 
@@ -144,7 +167,7 @@ public class EbookController {
     @Operation(summary = "获取封面图片", description = "返回电子书的封面图片，无封面时返回标题占位图")
     public ResponseEntity<Resource> getCoverArt(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
-        Ebook ebook = service.getEbookById(id);
+        Ebook ebook = service.getEbookEntityById(id);
 
         if (ebook.getCoverArtPath() != null) {
             File coverFile = new File(ebook.getCoverArtPath());
@@ -167,11 +190,67 @@ public class EbookController {
 
     // 旧的 cover-image 端点已移除，请使用 /{id}/cover 端点
 
-    @GetMapping("/{id:\\d+}/read")
-    @Operation(summary = "在线阅读", description = "返回电子书的内容，epub返回HTML，其他返回纯文本")
-    public ResponseEntity<String> readEbook(
+    @GetMapping("/{id:\\d+}/characters")
+    @Operation(summary = "获取电子书角色列表", description = "返回同系列所有电子书的角色信息（去重）")
+    public ResponseEntity<ApiResponse<List<MediaSeriesCharacter>>> getCharacters(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
-        Ebook ebook = service.getEbookById(id);
+        Ebook ebook = service.getEbookEntityById(id);
+        if (ebook.getSeriesRef() == null) {
+            return ResponseEntity.ok(ApiResponse.success(List.of()));
+        }
+        List<MediaSeriesCharacter> characters =
+                mediaCharacterRepository.findBySeries_Id(ebook.getSeriesRef().getId());
+        return ResponseEntity.ok(ApiResponse.success(characters));
+    }
+
+    @GetMapping("/character/{id:\\d+}/image")
+    @Operation(summary = "获取角色图片", description = "返回角色图片，优先本地文件，无则重定向到远程URL")
+    public ResponseEntity<Resource> getCharacterImage(
+            @Parameter(description = "角色ID") @PathVariable Long id) {
+        MediaSeriesCharacter character = mediaCharacterRepository.findById(id).orElse(null);
+        if (character == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        if (character.getImagePath() != null) {
+            File localFile = new File(character.getImagePath());
+            if (localFile.exists()) {
+                return ResponseEntity.ok()
+                        .contentType(resolveImageMediaType(localFile.getName()))
+                        .body(new FileSystemResource(localFile));
+            }
+        }
+
+        if (character.getImageUrl() != null && !character.getImageUrl().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .header(HttpHeaders.LOCATION, character.getImageUrl())
+                    .build();
+        }
+
+        return ResponseEntity.notFound().build();
+    }
+
+    private MediaType resolveImageMediaType(String filename) {
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
+        if (lower.endsWith(".webp")) return MediaType.parseMediaType("image/webp");
+        return MediaType.IMAGE_JPEG;
+    }
+
+    @GetMapping("/{id:\\d+}/read")
+    @Operation(summary = "在线阅读", description = "返回电子书内容。chapter=0或不传返回整书，chapter>0返回指定章节")
+    public ResponseEntity<String> readEbook(
+            @Parameter(description = "电子书ID") @PathVariable Long id,
+            @Parameter(description = "章节序号（从1开始，0或不传返回整书）") @RequestParam(defaultValue = "0") int chapter) {
+        if (chapter > 0) {
+            String content = service.getChapterContent(id, chapter);
+            Ebook ebook = service.getEbookEntityById(id);
+            MediaType type = EpubParser.isEpub(ebook.getFilePath()) ? MediaType.TEXT_HTML : MediaType.TEXT_PLAIN;
+            return ResponseEntity.ok().contentType(type).body(content);
+        }
+
+        Ebook ebook = service.getEbookEntityById(id);
         File file = new File(ebook.getFilePath());
         if (!file.exists()) {
             return ResponseEntity.notFound().build();
@@ -206,7 +285,7 @@ public class EbookController {
     public ResponseEntity<Resource> getEpubImage(
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "图片在epub内的路径") @RequestParam String file) {
-        Ebook ebook = service.getEbookById(id);
+        Ebook ebook = service.getEbookEntityById(id);
         String filePath = ebook.getFilePath();
         if (filePath == null || !new File(filePath).exists()) {
             return ResponseEntity.notFound().build();
@@ -241,7 +320,7 @@ public class EbookController {
     public ResponseEntity<String> getChapterContent(
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "章节序号（从1开始）") @PathVariable int chapterNum) {
-        Ebook ebook = service.getEbookById(id);
+        Ebook ebook = service.getEbookEntityById(id);
         if (EpubParser.isEpub(ebook.getFilePath())) {
             try {
                 List<EpubParser.ChapterEntry> chapters = EpubParser.extractChapters(ebook.getFilePath());
@@ -268,7 +347,7 @@ public class EbookController {
     @Operation(summary = "下载电子书", description = "返回电子书文件供下载")
     public ResponseEntity<Resource> downloadEbook(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
-        Ebook ebook = service.getEbookById(id);
+        Ebook ebook = service.getEbookEntityById(id);
         File file = new File(ebook.getFilePath());
         if (!file.exists()) {
             return ResponseEntity.notFound().build();
@@ -356,6 +435,17 @@ public class EbookController {
             @Parameter(description = "电子书ID") @PathVariable Long id,
             @Parameter(description = "Bangumi 条目 ID") @RequestParam Integer bangumiId) {
         return ResponseEntity.ok(ApiResponse.success(bangumiScrapeService.bindBangumi(id, bangumiId)));
+    }
+
+    @PostMapping("/series/rescrape")
+    @Operation(summary = "按系列名重新刮削", description = "重新获取系列简介、系列封面、每个卷的封面和简介")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> rescrapeSeries(
+            @Parameter(description = "系列名") @RequestParam String series) {
+        int updated = bangumiScrapeService.rescrapeSeries(series);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("series", series);
+        result.put("updated", updated);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/image-proxy")

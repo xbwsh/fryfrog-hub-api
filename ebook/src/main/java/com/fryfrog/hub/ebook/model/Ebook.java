@@ -1,18 +1,18 @@
 package com.fryfrog.hub.ebook.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fryfrog.hub.common.model.BaseEntity;
+import com.fryfrog.hub.common.model.MediaSeries;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Index;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
 @Table(name = "ebooks", indexes = {
     @Index(name = "idx_ebook_title", columnList = "title"),
     @Index(name = "idx_ebook_author", columnList = "author"),
-    @Index(name = "idx_ebook_favorite", columnList = "favorite")
+    @Index(name = "idx_ebook_favorite", columnList = "favorite"),
+    @Index(name = "idx_ebook_series_id", columnList = "series_id")
 })
 @Getter
 @Setter
@@ -28,8 +28,14 @@ public class Ebook extends BaseEntity {
     @Schema(description = "作者", example = "刘慈欣")
     private String author;
 
-    @Schema(description = "系列名称", example = "三体")
-    private String series;
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "series_id")
+    @JsonIgnore
+    private MediaSeries seriesRef;
+
+    @Schema(description = "系列名称（过渡字段，绑定后由 seriesRef 提供）")
+    @Column(name = "series")
+    private String seriesName;
 
     @Schema(description = "卷号", example = "1")
     private Integer volume;
@@ -53,7 +59,7 @@ public class Ebook extends BaseEntity {
 
     @Schema(description = "文件完整路径")
     @Column(unique = true)
-    @com.fasterxml.jackson.annotation.JsonIgnore
+    @JsonIgnore
     private String filePath;
 
     @Schema(description = "文件名", example = "三体.epub")
@@ -73,7 +79,7 @@ public class Ebook extends BaseEntity {
     private String language;
 
     @Schema(description = "封面图片缓存路径")
-    @com.fasterxml.jackson.annotation.JsonIgnore
+    @JsonIgnore
     private String coverArtPath;
 
     @Schema(description = "是否收藏", example = "false")
@@ -84,6 +90,12 @@ public class Ebook extends BaseEntity {
 
     @Schema(description = "Open Library Work ID", example = "OL123456W")
     private String openLibraryId;
+
+    @Schema(description = "系列名称")
+    @com.fasterxml.jackson.annotation.JsonGetter("series")
+    public String getSeries() {
+        return seriesRef != null ? seriesRef.getTitle() : seriesName;
+    }
 
     @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
     public String getCoverUrl() {

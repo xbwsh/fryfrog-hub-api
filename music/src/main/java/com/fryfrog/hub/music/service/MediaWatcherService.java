@@ -77,7 +77,8 @@ public class MediaWatcherService {
     private void registerDirectory(Path dir, WatchService ws) throws IOException {
         dir.register(ws,
                 StandardWatchEventKinds.ENTRY_CREATE,
-                StandardWatchEventKinds.ENTRY_MODIFY);
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.ENTRY_DELETE);
 
         try (var stream = Files.list(dir)) {
             stream.filter(Files::isDirectory).forEach(subDir -> {
@@ -108,6 +109,24 @@ public class MediaWatcherService {
                         Path parentDir = (Path) key.watchable();
                         Path fullPath = parentDir.resolve(fileName);
 
+                        // 文件删除事件 - 延迟较长以避免与文件移动操作冲突
+                        if (event.kind() == StandardWatchEventKinds.ENTRY_DELETE) {
+                            if (isSupportedFormat(fileName.toString())) {
+                                log.debug("Detected music file deleted: {}", fullPath);
+                                executor.submit(() -> {
+                                    try {
+                                        Thread.sleep(5000);
+                                        metadataService.cleanupInvalidRecords();
+                                        log.debug("Cleaned up invalid music records after file deletion");
+                                    } catch (Exception e) {
+                                        log.warn("Failed to cleanup after file deletion: {}", e.getMessage());
+                                    }
+                                });
+                            }
+                            continue;
+                        }
+
+                        // 新建/修改事件
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);

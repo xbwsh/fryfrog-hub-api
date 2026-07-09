@@ -6,6 +6,9 @@ import jakarta.persistence.*;
 import jakarta.persistence.Index;
 import lombok.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Entity
 @Table(name = "videos", indexes = {
     @Index(name = "idx_video_title", columnList = "title"),
@@ -165,4 +168,12 @@ public class Video extends BaseEntity {
     @Schema(description = "所属资源库ID", example = "1")
     @Column(name = "library_id")
     private Long libraryId;
+
+    @OneToMany(mappedBy = "video", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private List<VideoActor> actorEntities = new ArrayList<>();
+
+    @OneToOne(mappedBy = "video", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private WatchProgress watchProgress;
 }

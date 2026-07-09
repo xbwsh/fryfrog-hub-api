@@ -2,6 +2,9 @@ package com.fryfrog.hub.comic.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.model.MediaSeriesCharacter;
+import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
+import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.comic.dto.ComicBindRequest;
 import com.fryfrog.hub.comic.dto.ComicDTO;
@@ -10,10 +13,7 @@ import com.fryfrog.hub.comic.dto.ComicReadingProgressRequest;
 import com.fryfrog.hub.comic.dto.ComicSeries;
 import com.fryfrog.hub.comic.dto.PageInfo;
 import com.fryfrog.hub.comic.model.Comic;
-import com.fryfrog.hub.comic.model.ComicCharacter;
 import com.fryfrog.hub.comic.model.ComicReadingProgress;
-import com.fryfrog.hub.comic.repository.ComicCharacterRepository;
-import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.comic.service.ComicMetadataService;
 import com.fryfrog.hub.comic.service.ComicReadingProgressService;
 import com.fryfrog.hub.comic.service.MangaScrapeService;
@@ -32,8 +32,7 @@ import org.springframework.scheduling.annotation.Async;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
@@ -46,7 +45,7 @@ public class ComicController {
     private final ComicMetadataService service;
     private final ComicReadingProgressService readingProgressService;
     private final MangaScrapeService mangaScrapeService;
-    private final ComicCharacterRepository characterRepository;
+    private final MediaSeriesCharacterRepository mediaCharacterRepository;
     private final ScrapeProgressService scrapeProgressService;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
@@ -187,18 +186,14 @@ public class ComicController {
 
     @GetMapping("/{id:\\d+}/characters")
     @Operation(summary = "获取漫画角色列表", description = "返回同系列所有漫画的角色信息（去重）")
-    public ResponseEntity<ApiResponse<List<ComicCharacter>>> getCharacters(
+    public ResponseEntity<ApiResponse<List<MediaSeriesCharacter>>> getCharacters(
             @Parameter(description = "漫画ID") @PathVariable Long id) {
         Comic comic = service.getComicById(id);
-        if (comic == null) {
-            return ResponseEntity.notFound().build();
+        if (comic == null || comic.getSeriesRef() == null) {
+            return ResponseEntity.ok(ApiResponse.success(List.of()));
         }
-        List<ComicCharacter> characters;
-        if (comic.getSeries() != null && !comic.getSeries().isBlank()) {
-            characters = characterRepository.findBySeries(comic.getSeries());
-        } else {
-            characters = characterRepository.findByComicId(id);
-        }
+        List<MediaSeriesCharacter> characters =
+                mediaCharacterRepository.findBySeries_Id(comic.getSeriesRef().getId());
         return ResponseEntity.ok(ApiResponse.success(characters));
     }
 
@@ -206,7 +201,7 @@ public class ComicController {
     @Operation(summary = "获取角色图片", description = "返回角色图片，优先本地文件，无则重定向到远程URL")
     public ResponseEntity<Resource> getCharacterImage(
             @Parameter(description = "角色ID") @PathVariable Long id) {
-        ComicCharacter character = characterRepository.findById(id).orElse(null);
+        MediaSeriesCharacter character = mediaCharacterRepository.findById(id).orElse(null);
         if (character == null) {
             return ResponseEntity.notFound().build();
         }
@@ -272,11 +267,22 @@ public class ComicController {
     }
 
     @PostMapping("/{id:\\d+}/bangumi/bind")
-    @Operation(summary = "绑定 Bangumi 元数据", description = "将指定 Bangumi 条目的元数据绑定到本地漫画。bindSeries=true 时同步系列级元数据到同系列所有卷")
+    @Operation(summary = "绑定 Bangumi 元数据", description = "将指定 Bangumi 条目的元数据绑定到本地漫画")
     public ResponseEntity<ApiResponse<Comic>> bindBangumi(
             @Parameter(description = "漫画ID") @PathVariable Long id,
             @RequestBody ComicBindRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindBangumi(id, request.getBangumiId(), request.isBindSeries())));
+        return ResponseEntity.ok(ApiResponse.success(mangaScrapeService.bindBangumi(id, request.getBangumiId())));
+    }
+
+    @PostMapping("/series/rescrape")
+    @Operation(summary = "按系列名重新刮削", description = "重新获取系列简介、系列封面、每个卷的封面和简介")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> rescrapeSeries(
+            @Parameter(description = "系列名") @RequestParam String series) {
+        int updated = mangaScrapeService.rescrapeSeries(series);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("series", series);
+        result.put("updated", updated);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/scrape/progress")

@@ -19,6 +19,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
 import java.util.*;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -30,6 +32,10 @@ import java.util.zip.ZipFile;
 public class ComicMetadataService {
 
     private final ComicRepository repository;
+    private final com.fryfrog.hub.comic.repository.ComicReadingProgressRepository readingProgressRepository;
+    private final com.fryfrog.hub.common.repository.MediaSeriesRepository seriesRepository;
+    private final com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository seriesCharacterRepository;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @Value("${hub.comic.root-paths:./media-library/comic}")
     private String rootPathsConfig;
@@ -78,8 +84,10 @@ public class ComicMetadataService {
     public List<ComicSeries> getComicsBySeries() {
         List<Comic> allComics = repository.findAll();
 
+        // 按 seriesRef 分组（优先），无 seriesRef 的回退到 seriesName
         Map<String, List<Comic>> grouped = allComics.stream()
                 .collect(Collectors.groupingBy(c -> {
+                    if (c.getSeriesRef() != null) return c.getSeriesRef().getTitle();
                     String series = c.getSeries();
                     if (series == null || series.isBlank()) {
                         series = cleanTitleForSearch(c.getFileName());
@@ -94,16 +102,35 @@ public class ComicMetadataService {
         for (Map.Entry<String, List<Comic>> entry : grouped.entrySet()) {
             ComicSeries series = new ComicSeries();
             series.setName(entry.getKey());
+            // 从第一本有 seriesRef 的漫画获取 seriesId
+            series.setSeriesId(entry.getValue().stream()
+                    .filter(c -> c.getSeriesRef() != null)
+                    .map(c -> c.getSeriesRef().getId())
+                    .findFirst().orElse(null));
             series.setComics(entry.getValue().stream()
                     .sorted(Comparator.comparing(c -> c.getVolume() != null ? c.getVolume() : 0))
                     .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
                     .toList());
             series.setVolumeCount(entry.getValue().size());
 
-            Optional<Comic> withAuthor = entry.getValue().stream()
-                    .filter(c -> c.getAuthor() != null && !c.getAuthor().isBlank())
+            // 优先从 MediaSeries 获取作者
+            Optional<Comic> withSeriesRef = entry.getValue().stream()
+                    .filter(c -> c.getSeriesRef() != null)
                     .findFirst();
-            series.setAuthor(withAuthor.map(Comic::getAuthor).orElse(null));
+            if (withSeriesRef.isPresent() && withSeriesRef.get().getSeriesRef().getAuthor() != null) {
+                series.setAuthor(withSeriesRef.get().getSeriesRef().getAuthor());
+                series.setSeriesSummary(withSeriesRef.get().getSeriesRef().getDescription());
+            } else {
+                Optional<Comic> withAuthor = entry.getValue().stream()
+                        .filter(c -> c.getAuthor() != null && !c.getAuthor().isBlank())
+                        .findFirst();
+                series.setAuthor(withAuthor.map(Comic::getAuthor).orElse(null));
+
+                Optional<Comic> withSummary = entry.getValue().stream()
+                        .filter(c -> c.getSeriesSummary() != null && !c.getSeriesSummary().isBlank())
+                        .findFirst();
+                series.setSeriesSummary(withSummary.map(Comic::getSeriesSummary).orElse(null));
+            }
 
             Optional<Comic> withCover = entry.getValue().stream()
                     .filter(c -> c.getCoverArtPath() != null)
@@ -128,11 +155,6 @@ public class ComicMetadataService {
             }
             series.setCoverArtPath(coverPath);
             series.setHasCover(coverPath != null);
-
-            Optional<Comic> withSummary = entry.getValue().stream()
-                    .filter(c -> c.getSeriesSummary() != null && !c.getSeriesSummary().isBlank())
-                    .findFirst();
-            series.setSeriesSummary(withSummary.map(Comic::getSeriesSummary).orElse(null));
 
             Optional<Comic> withSerialization = entry.getValue().stream()
                     .filter(c -> c.getSerializationStart() != null && !c.getSerializationStart().isBlank())
@@ -170,7 +192,7 @@ public class ComicMetadataService {
             comic.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
 
             if (comic.getSeries() == null || comic.getSeries().isBlank()) {
-                comic.setSeries(extractSeriesName(fileName));
+                comic.setSeriesName(extractSeriesName(fileName));
             }
             if (comic.getVolume() == null) {
                 comic.setVolume(extractVolumeFromFileName(fileName));
@@ -194,32 +216,51 @@ public class ComicMetadataService {
         }
     }
 
-    @Transactional
     public int cleanupInvalidRecords() {
-        int removed = 0;
-        int pageNum = 0;
-        final int pageSize = 100;
-        org.springframework.data.domain.Page<Comic> page;
+        return transactionTemplate.execute(status -> {
+            int removed = 0;
+            int pageNum = 0;
+            final int pageSize = 100;
+            org.springframework.data.domain.Page<Comic> page;
 
-        do {
-            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-            List<Long> idsToDelete = new ArrayList<>();
-            for (Comic comic : page.getContent()) {
-                if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
-                    log.debug("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
-                    idsToDelete.add(comic.getId());
+            do {
+                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+                List<Long> idsToDelete = new ArrayList<>();
+                for (Comic comic : page.getContent()) {
+                    if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
+                        log.debug("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
+                        idsToDelete.add(comic.getId());
+                    }
                 }
-            }
-            if (!idsToDelete.isEmpty()) {
-                repository.deleteAllByIdInBatch(idsToDelete);
-                removed += idsToDelete.size();
-            }
-        } while (page.hasNext());
+                if (!idsToDelete.isEmpty()) {
+                    // 收集需要检查的 seriesId
+                    Set<Long> seriesIdsToCheck = new HashSet<>();
+                    for (Long id : idsToDelete) {
+                        Comic comic = repository.findById(id).orElse(null);
+                        if (comic != null && comic.getSeriesRef() != null) {
+                            seriesIdsToCheck.add(comic.getSeriesRef().getId());
+                        }
+                        readingProgressRepository.findByComicId(id).ifPresent(readingProgressRepository::delete);
+                    }
+                    repository.deleteAllById(idsToDelete);
+                    removed += idsToDelete.size();
 
-        if (removed > 0) {
-            log.info("Comic cleanup completed: removed {} invalid records", removed);
-        }
-        return removed;
+                    // 清理空的 MediaSeries
+                    for (Long seriesId : seriesIdsToCheck) {
+                        if (repository.findBySeriesRef_Id(seriesId).isEmpty()) {
+                            seriesCharacterRepository.deleteBySeries_Id(seriesId);
+                            seriesRepository.deleteById(seriesId);
+                            log.debug("Removed empty MediaSeries id={}", seriesId);
+                        }
+                    }
+                }
+            } while (page.hasNext());
+
+            if (removed > 0) {
+                log.info("Comic cleanup completed: removed {} invalid records", removed);
+            }
+            return removed;
+        });
     }
 
     public void scanFromRoot() {
@@ -315,7 +356,7 @@ public class ComicMetadataService {
             if (!file.exists()) return false;
 
             if (comic.getSeries() == null || comic.getSeries().isBlank()) {
-                comic.setSeries(extractSeriesName(comic.getFileName()));
+                comic.setSeriesName(extractSeriesName(comic.getFileName()));
             }
             if (comic.getVolume() == null) {
                 comic.setVolume(extractVolumeFromFileName(comic.getFileName()));
@@ -476,53 +517,6 @@ public class ComicMetadataService {
             try (InputStream is = zipFile.getInputStream(entry)) {
                 return is.readAllBytes();
             }
-        }
-    }
-
-    private String extractCover(File file) throws IOException {
-        String ext = TitleCleaner.getFileExtension(file.getName()).toLowerCase();
-        if (isZipBased(ext)) {
-            try (ZipFile zipFile = new ZipFile(file)) {
-                ZipEntry firstImage = null;
-                Enumeration<? extends ZipEntry> entries = zipFile.entries();
-                while (entries.hasMoreElements()) {
-                    ZipEntry entry = entries.nextElement();
-                    if (!entry.isDirectory() && isImageFile(entry.getName())) {
-                        firstImage = entry;
-                        break;
-                    }
-                }
-
-                if (firstImage != null) {
-                    Path coverDir = file.toPath().getParent();
-                    String coverFileName = file.getName().replaceAll("\\.[^.]+$", "_cover.jpg");
-                    Path coverPath = coverDir.resolve(coverFileName);
-
-                    try (InputStream is = zipFile.getInputStream(firstImage)) {
-                        Files.copy(is, coverPath, StandardCopyOption.REPLACE_EXISTING);
-                    }
-
-                    return coverPath.toAbsolutePath().toString();
-                }
-            }
-        }
-        return null;
-    }
-
-    public String reExtractCover(Comic comic) {
-        if (comic.getFilePath() == null) return null;
-        File file = new File(comic.getFilePath());
-        if (!file.exists()) return null;
-        try {
-            String coverPath = extractCover(file);
-            if (coverPath != null) {
-                comic.setCoverArtPath(coverPath);
-                repository.save(comic);
-            }
-            return coverPath;
-        } catch (Exception e) {
-            log.warn("Failed to re-extract cover for {}: {}", comic.getFileName(), e.getMessage());
-            return null;
         }
     }
 

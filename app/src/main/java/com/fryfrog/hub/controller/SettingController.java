@@ -109,10 +109,6 @@ public class SettingController {
         Map<String, Object> status = new LinkedHashMap<>();
         String apiKey = settingService.getValue("hub.tmdb.api-key", "");
         status.put("configured", !apiKey.isBlank());
-        status.put("language", settingService.getValue("hub.tmdb.language", "zh-CN"));
-        status.put("image-size", settingService.getValue("hub.tmdb.image-size", "original"));
-        status.put("auto-scrape", settingService.getBoolean("hub.tmdb.auto-scrape", false));
-        status.put("include-adult", settingService.getBoolean("hub.tmdb.include-adult", true));
         return ResponseEntity.ok(ApiResponse.success(status));
     }
 

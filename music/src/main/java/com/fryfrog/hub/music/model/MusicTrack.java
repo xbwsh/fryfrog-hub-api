@@ -2,12 +2,11 @@ package com.fryfrog.hub.music.model;
 
 import com.fryfrog.hub.common.model.BaseEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Index;
-import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
+import jakarta.persistence.*;
 import lombok.*;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "music_tracks", indexes = {
@@ -135,4 +134,8 @@ public class MusicTrack extends BaseEntity {
     public String getStreamUrl() {
         return "/api/v1/music/" + getId() + "/stream";
     }
+
+    @OneToMany(mappedBy = "track", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private List<PlaylistTrack> playlistTracks = new ArrayList<>();
 }

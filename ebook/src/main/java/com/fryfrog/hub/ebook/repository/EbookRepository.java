@@ -24,7 +24,10 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
 
     List<Ebook> findAllByOrderByCreatedAtDesc();
 
-    List<Ebook> findBySeriesIgnoreCase(String series);
+    List<Ebook> findBySeriesRef_Id(Long seriesId);
+
+    @Query(value = "SELECT * FROM ebooks WHERE series_id IS NULL AND series IS NOT NULL AND series <> ''", nativeQuery = true)
+    List<Ebook> findUnboundWithSeriesName();
 
     @Query("SELECT e FROM Ebook e JOIN EbookReadingProgress p ON e.id = p.ebook.id ORDER BY p.updatedAt DESC")
     List<Ebook> findRecentlyRead();

@@ -3,6 +3,7 @@ package com.fryfrog.hub.ebook.service;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
+import com.fryfrog.hub.ebook.dto.EbookDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
 import com.fryfrog.hub.ebook.model.Ebook;
@@ -38,6 +39,8 @@ public class EbookService {
 
     private final EbookRepository repository;
     private final EbookReadingProgressRepository readingProgressRepository;
+    private final com.fryfrog.hub.common.repository.MediaSeriesRepository seriesRepository;
+    private final com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository seriesCharacterRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -62,29 +65,49 @@ public class EbookService {
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("epub", "pdf", "mobi", "azw", "azw3", "fb2", "txt");
 
-    public List<Ebook> getAllEbooks() {
-        return repository.findAll();
+    private boolean hasCover(Ebook ebook) {
+        return ebook.getCoverArtPath() != null && new File(ebook.getCoverArtPath()).exists();
     }
 
-    public Ebook getEbookById(Long id) {
+    public List<EbookDTO> getAllEbooks() {
+        return repository.findAll().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
+    }
+
+    public EbookDTO getEbookById(Long id) {
+        Ebook ebook = repository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Ebook", "id", id));
+        return EbookDTO.fromEntity(ebook, hasCover(ebook));
+    }
+
+    public Ebook getEbookEntityById(Long id) {
         return repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Ebook", "id", id));
     }
 
-    public List<Ebook> searchByTitle(String title) {
-        return repository.findByTitleContainingIgnoreCase(title);
+    public List<EbookDTO> searchByTitle(String title) {
+        return repository.findByTitleContainingIgnoreCase(title).stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
     }
 
-    public List<Ebook> searchByAuthor(String author) {
-        return repository.findByAuthorContainingIgnoreCase(author);
+    public List<EbookDTO> searchByAuthor(String author) {
+        return repository.findByAuthorContainingIgnoreCase(author).stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
     }
 
-    public List<Ebook> getFavorites() {
-        return repository.findByFavoriteTrue();
+    public List<EbookDTO> getFavorites() {
+        return repository.findByFavoriteTrue().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
     }
 
-    public List<Ebook> getRecentlyAdded() {
-        return repository.findAllByOrderByCreatedAtDesc();
+    public List<EbookDTO> getRecentlyAdded() {
+        return repository.findAllByOrderByCreatedAtDesc().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
     }
 
     public List<EbookReadingProgressDTO> getRecentlyRead() {
@@ -103,10 +126,11 @@ public class EbookService {
         return stats;
     }
 
-    public Ebook setFavorite(Long id, boolean status) {
-        Ebook ebook = getEbookById(id);
+    public EbookDTO setFavorite(Long id, boolean status) {
+        Ebook ebook = getEbookEntityById(id);
         ebook.setFavorite(status);
-        return repository.save(ebook);
+        repository.save(ebook);
+        return EbookDTO.fromEntity(ebook, hasCover(ebook));
     }
 
     public List<EbookSeries> getEbooksBySeries() {
@@ -114,6 +138,7 @@ public class EbookService {
 
         Map<String, List<Ebook>> grouped = allEbooks.stream()
                 .collect(Collectors.groupingBy(e -> {
+                    if (e.getSeriesRef() != null) return e.getSeriesRef().getTitle();
                     String series = e.getSeries();
                     if (series == null || series.isBlank()) {
                         series = cleanTitleForSearch(e.getFileName());
@@ -128,19 +153,39 @@ public class EbookService {
         for (Map.Entry<String, List<Ebook>> entry : grouped.entrySet()) {
             EbookSeries series = new EbookSeries();
             series.setName(entry.getKey());
+            series.setSeriesId(entry.getValue().stream()
+                    .filter(e -> e.getSeriesRef() != null)
+                    .map(e -> e.getSeriesRef().getId())
+                    .findFirst().orElse(null));
             series.setBooks(entry.getValue().stream()
                     .sorted(Comparator.comparing(e -> e.getVolume() != null ? e.getVolume() : 0))
+                    .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                     .toList());
             series.setVolumeCount(entry.getValue().size());
 
-            Optional<Ebook> withAuthor = entry.getValue().stream()
-                    .filter(e -> e.getAuthor() != null && !e.getAuthor().isBlank())
+            // 优先从 MediaSeries 获取作者和简介
+            Optional<Ebook> withSeriesRef = entry.getValue().stream()
+                    .filter(e -> e.getSeriesRef() != null)
                     .findFirst();
-            series.setAuthor(withAuthor.map(Ebook::getAuthor).orElse(null));
+            if (withSeriesRef.isPresent() && withSeriesRef.get().getSeriesRef().getAuthor() != null) {
+                series.setAuthor(withSeriesRef.get().getSeriesRef().getAuthor());
+                series.setSeriesSummary(withSeriesRef.get().getSeriesRef().getDescription());
+            } else {
+                Optional<Ebook> withAuthor = entry.getValue().stream()
+                        .filter(e -> e.getAuthor() != null && !e.getAuthor().isBlank())
+                        .findFirst();
+                series.setAuthor(withAuthor.map(Ebook::getAuthor).orElse(null));
+
+                Optional<Ebook> withSummary = entry.getValue().stream()
+                        .filter(e -> e.getDescription() != null && !e.getDescription().isBlank())
+                        .findFirst();
+                series.setSeriesSummary(withSummary.map(Ebook::getDescription).orElse(null));
+            }
 
             Optional<Ebook> withCover = entry.getValue().stream()
-                    .filter(e -> e.getCoverArtPath() != null)
+                    .filter(e -> e.getCoverArtPath() != null && new File(e.getCoverArtPath()).exists())
                     .findFirst();
+            series.setHasCover(withCover.isPresent());
             series.setCoverArtPath(withCover.map(Ebook::getCoverArtPath).orElse(null));
 
             seriesList.add(series);
@@ -197,23 +242,7 @@ public class EbookService {
                         ebook.setIsbn(meta.isbn());
                         ebook.setYear(meta.year());
 
-                        if (meta.coverEntryName() != null) {
-                            try {
-                                byte[] coverBytes = EpubParser.readImage(filePath, meta.coverEntryName());
-                                if (coverBytes != null && coverBytes.length > 0) {
-                                    String coverExt = meta.coverEntryName().contains(".")
-                                            ? meta.coverEntryName().substring(meta.coverEntryName().lastIndexOf('.') + 1)
-                                            : "jpg";
-                                    Path ebookDir = Paths.get(filePath).getParent();
-                                    Path coverPath = ebookDir.resolve(baseName + "_cover." + coverExt);
-                                    Files.write(coverPath, coverBytes);
-                                    ebook.setCoverArtPath(coverPath.toAbsolutePath().normalize().toString());
-                                    log.debug("Extracted cover from epub: {}", fileName);
-                                }
-                            } catch (Exception e) {
-                                log.warn("Failed to extract cover from epub {}: {}", fileName, e.getMessage());
-                            }
-                        }
+                        // 封面由 Bangumi 刮削下载，不从 EPUB 提取
 
                         try {
                             List<EpubParser.ChapterEntry> chapters = EpubParser.extractChapters(filePath);
@@ -241,32 +270,49 @@ public class EbookService {
         }
     }
 
-    @Transactional
     public int cleanupInvalidRecords() {
-        int removed = 0;
-        int pageNum = 0;
-        final int pageSize = 100;
-        org.springframework.data.domain.Page<Ebook> page;
+        return transactionTemplate.execute(status -> {
+            int removed = 0;
+            int pageNum = 0;
+            final int pageSize = 100;
+            org.springframework.data.domain.Page<Ebook> page;
 
-        do {
-            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-            List<Long> idsToDelete = new ArrayList<>();
-            for (Ebook ebook : page.getContent()) {
-                if (ebook.getFilePath() == null || !Files.exists(Paths.get(ebook.getFilePath()))) {
-                    log.info("Removing invalid record: {} (path: {})", ebook.getTitle(), ebook.getFilePath());
-                    idsToDelete.add(ebook.getId());
+            do {
+                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+                List<Long> idsToDelete = new ArrayList<>();
+                for (Ebook ebook : page.getContent()) {
+                    if (ebook.getFilePath() == null || !Files.exists(Paths.get(ebook.getFilePath()))) {
+                        log.info("Removing invalid record: {} (path: {})", ebook.getTitle(), ebook.getFilePath());
+                        idsToDelete.add(ebook.getId());
+                    }
                 }
-            }
-            if (!idsToDelete.isEmpty()) {
-                repository.deleteAllByIdInBatch(idsToDelete);
-                removed += idsToDelete.size();
-            }
-        } while (page.hasNext());
+                if (!idsToDelete.isEmpty()) {
+                    Set<Long> seriesIdsToCheck = new HashSet<>();
+                    for (Long id : idsToDelete) {
+                        Ebook ebook = repository.findById(id).orElse(null);
+                        if (ebook != null && ebook.getSeriesRef() != null) {
+                            seriesIdsToCheck.add(ebook.getSeriesRef().getId());
+                        }
+                        readingProgressRepository.findByEbookId(id).ifPresent(readingProgressRepository::delete);
+                    }
+                    repository.deleteAllById(idsToDelete);
+                    removed += idsToDelete.size();
 
-        if (removed > 0) {
-            log.info("Ebook cleanup completed: removed {} invalid records", removed);
-        }
-        return removed;
+                    for (Long seriesId : seriesIdsToCheck) {
+                        if (repository.findBySeriesRef_Id(seriesId).isEmpty()) {
+                            seriesCharacterRepository.deleteBySeries_Id(seriesId);
+                            seriesRepository.deleteById(seriesId);
+                            log.debug("Removed empty MediaSeries id={}", seriesId);
+                        }
+                    }
+                }
+            } while (page.hasNext());
+
+            if (removed > 0) {
+                log.info("Ebook cleanup completed: removed {} invalid records", removed);
+            }
+            return removed;
+        });
     }
 
     public void scanFromRoot() {
@@ -338,7 +384,7 @@ public class EbookService {
     );
 
     public List<ChapterInfo> getChapterList(Long id) {
-        Ebook ebook = getEbookById(id);
+        Ebook ebook = getEbookEntityById(id);
         File file = new File(ebook.getFilePath());
         if (!file.exists()) {
             throw new IllegalArgumentException("Ebook file not found: " + ebook.getFilePath());
@@ -382,7 +428,7 @@ public class EbookService {
     }
 
     public String getChapterContent(Long id, int chapterNum) {
-        Ebook ebook = getEbookById(id);
+        Ebook ebook = getEbookEntityById(id);
         File file = new File(ebook.getFilePath());
         if (!file.exists()) {
             throw new IllegalArgumentException("Ebook file not found: " + ebook.getFilePath());
@@ -586,7 +632,7 @@ public class EbookService {
             }
 
             if (ebook.getSeries() == null || ebook.getSeries().isBlank()) {
-                ebook.setSeries(seriesName);
+                ebook.setSeriesName(seriesName);
             }
 
             // 按 {系列名} Vol.{卷号}.{ext} 格式重命名文件
@@ -642,7 +688,7 @@ public class EbookService {
 
     private String sanitizeFolderName(String name) {
         if (name == null) return "Unknown";
-        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
         return sanitized.isBlank() ? "Unknown" : sanitized;
     }
 

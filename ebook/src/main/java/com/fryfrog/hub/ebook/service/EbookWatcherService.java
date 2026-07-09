@@ -36,6 +36,7 @@ public class EbookWatcherService {
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
     private volatile boolean running = true;
+    private final java.util.concurrent.locks.ReentrantLock scrapeLock = new java.util.concurrent.locks.ReentrantLock();
 
     private List<String> getRootPaths() {
         return Arrays.stream(rootPathsConfig.split(","))
@@ -88,7 +89,8 @@ public class EbookWatcherService {
     private void registerDirectory(Path dir, WatchService ws) throws IOException {
         dir.register(ws,
                 StandardWatchEventKinds.ENTRY_CREATE,
-                StandardWatchEventKinds.ENTRY_MODIFY);
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.ENTRY_DELETE);
 
         try (var stream = Files.list(dir)) {
             stream.filter(Files::isDirectory).forEach(subDir -> {
@@ -119,6 +121,32 @@ public class EbookWatcherService {
                         Path parentDir = (Path) key.watchable();
                         Path fullPath = parentDir.resolve(fileName);
 
+                        // 文件删除事件
+                        if (event.kind() == StandardWatchEventKinds.ENTRY_DELETE) {
+                            log.info("Detected file deleted: {} (format={})", fullPath, fileName);
+                            if (isSupportedFormat(fileName.toString())) {
+                                executor.submit(() -> {
+                                    try {
+                                        Thread.sleep(5000);
+                                        log.info("Running cleanup after file deletion: {}", fullPath);
+                                        scrapeLock.lock();
+                                        try {
+                                            int removed = metadataService.cleanupInvalidRecords();
+                                            log.info("Cleanup completed: removed {} invalid records", removed);
+                                        } finally {
+                                            scrapeLock.unlock();
+                                        }
+                                    } catch (Exception e) {
+                                        log.warn("Failed to cleanup after file deletion: {}", e.getMessage());
+                                    }
+                                });
+                            } else {
+                                log.info("Skipped cleanup for unsupported format: {}", fileName);
+                            }
+                            continue;
+                        }
+
+                        // 新建/修改事件
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);
@@ -137,8 +165,16 @@ public class EbookWatcherService {
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
                                         Ebook ebook = metadataService.extractAndSaveMetadata(fullPath.toString());
                                         log.debug("Auto-indexed ebook: {}", fileName);
-                                        if (ebook != null) {
-                                            metadataService.moveEbookToSeriesFolder(ebook);
+                                        if (ebook != null && ebook.getBangumiId() == null && ebook.getOpenLibraryId() == null) {
+                                            scrapeLock.lock();
+                                            try {
+                                                scrapeService.autoScrapeEbook(ebook);
+                                                log.debug("Auto-scraped ebook: {}", fileName);
+                                            } catch (Exception e) {
+                                                log.warn("Failed to auto-scrape ebook: {}", fileName, e);
+                                            } finally {
+                                                scrapeLock.unlock();
+                                            }
                                         }
                                     }
                                 } catch (Exception e) {

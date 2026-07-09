@@ -38,6 +38,7 @@ public class MusicMetadataService {
     private final SystemSettingService settingService;
     private final QQMusicService qqMusicService;
     private final NetEaseLyricsService netEaseLyricsService;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @Value("${hub.music.root-paths:./media-library/music}")
     private String rootPathsConfig;
@@ -54,20 +55,16 @@ public class MusicMetadataService {
         return paths.isEmpty() ? "./media-library/music" : paths.get(0);
     }
 
-    public boolean isAutoWriteback() {
-        return settingService.getBoolean("hub.music.auto-writeback", true);
-    }
-
     public boolean isUseFolderStructure() {
-        return settingService.getBoolean("hub.music.use-folder-structure", true);
+        return true;
     }
 
     public String getDefaultArtist() {
-        return settingService.getValue("hub.music.default-artist", "");
+        return "";
     }
 
     public boolean isAutoScrape() {
-        return settingService.getBoolean("hub.music.scrape.auto-scrape", false);
+        return true;
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
@@ -515,32 +512,36 @@ public class MusicMetadataService {
         }
     }
 
-    @Transactional
     public int cleanupInvalidRecords() {
-        int removed = 0;
-        int pageNum = 0;
-        final int pageSize = 100;
-        org.springframework.data.domain.Page<MusicTrack> page;
+        return transactionTemplate.execute(status -> {
+            int removed = 0;
+            int pageNum = 0;
+            final int pageSize = 100;
+            org.springframework.data.domain.Page<MusicTrack> page;
 
-        do {
-            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-            List<Long> idsToDelete = new ArrayList<>();
-            for (MusicTrack track : page.getContent()) {
-                if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
-                    log.debug("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
-                    idsToDelete.add(track.getId());
+            do {
+                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+                List<Long> idsToDelete = new ArrayList<>();
+                for (MusicTrack track : page.getContent()) {
+                    if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
+                        log.debug("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
+                        idsToDelete.add(track.getId());
+                    }
                 }
-            }
-            if (!idsToDelete.isEmpty()) {
-                repository.deleteAllByIdInBatch(idsToDelete);
-                removed += idsToDelete.size();
-            }
-        } while (page.hasNext());
+                if (!idsToDelete.isEmpty()) {
+                    for (Long id : idsToDelete) {
+                        playlistTrackRepository.deleteByTrack_Id(id);
+                    }
+                    repository.deleteAllById(idsToDelete);
+                    removed += idsToDelete.size();
+                }
+            } while (page.hasNext());
 
-        if (removed > 0) {
-            log.info("Music cleanup completed: removed {} invalid records", removed);
-        }
-        return removed;
+            if (removed > 0) {
+                log.info("Music cleanup completed: removed {} invalid records", removed);
+            }
+            return removed;
+        });
     }
 
     public void scanFromRoot() {

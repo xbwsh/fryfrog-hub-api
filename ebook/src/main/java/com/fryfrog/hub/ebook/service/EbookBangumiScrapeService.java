@@ -1,10 +1,13 @@
 package com.fryfrog.hub.ebook.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.model.MediaSeries;
+import com.fryfrog.hub.common.model.MediaSeriesCharacter;
+import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
+import com.fryfrog.hub.common.repository.MediaSeriesRepository;
 import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
@@ -16,26 +19,37 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class EbookBangumiScrapeService {
 
     private final BangumiService bangumiService;
     private final EbookRepository repository;
+    private final EbookService ebookService;
     private final RestTemplate scraperRestTemplate;
+    private final MediaSeriesRepository seriesRepo;
+    private final MediaSeriesCharacterRepository mediaCharRepo;
+
+    public EbookBangumiScrapeService(BangumiService bangumiService, EbookRepository repository,
+                                     EbookService ebookService,
+                                     @Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate,
+                                     MediaSeriesRepository seriesRepo,
+                                     MediaSeriesCharacterRepository mediaCharRepo) {
+        this.bangumiService = bangumiService;
+        this.repository = repository;
+        this.ebookService = ebookService;
+        this.scraperRestTemplate = scraperRestTemplate;
+        this.seriesRepo = seriesRepo;
+        this.mediaCharRepo = mediaCharRepo;
+    }
 
     public List<BangumiService.SearchResult> searchFromBangumi(String query, String subType) {
-        List<BangumiService.SearchResult> results = new java.util.ArrayList<>(bangumiService.searchBooks(query, subType));
-        results.sort(Comparator.<BangumiService.SearchResult>comparingInt(r -> {
-            BangumiService.SearchResult.Rating rating = r.getRating();
-            return rating != null && rating.getTotal() != null ? rating.getTotal() : 0;
-        }).reversed());
-        return results;
+        return BangumiService.sortByPopularity(bangumiService.searchBooks(query, subType));
     }
 
     @Transactional
@@ -50,87 +64,158 @@ public class EbookBangumiScrapeService {
         updateEbookFromBangumiDetail(ebook, detail);
         ebook.setBangumiId(bangumiId);
 
+        // 查找或创建 MediaSeries
+        String seriesName = ebook.getSeries();
+        if (seriesName != null && !seriesName.isBlank()) {
+            MediaSeries ms = findOrCreateSeries(seriesName, "ebook", detail);
+            ebook.setSeriesRef(ms);
+        }
+
+        // 先同步兄弟文件的 series（在移动文件之前，这样能找到同目录下的兄弟）
+        syncSiblingSeriesNames(ebook);
+
+        renameEbookFile(ebook);
+        moveEbookToSeriesFolder(ebook);
+
         Ebook saved = repository.save(ebook);
-        downloadCoverFromBangumi(saved, detail, "bangumi_" + bangumiId);
         log.info("Bound ebook '{}' to Bangumi subject id={}", saved.getTitle(), bangumiId);
 
-        // 绑定完成后，将元数据传播到同系列其他单行本
-        propagateSeriesMetadata(saved, bangumiId);
+        downloadCoverFromBangumi(saved, detail);
+
+        // 下载卷级封面（使用卷级 Bangumi 条目的封面）
+        if (saved.getVolume() != null) {
+            Map<Integer, BangumiService.RelatedSubject> volumeMap = bangumiService.buildVolumeSubjectMap(bangumiId);
+            if (volumeMap.containsKey(saved.getVolume())) {
+                BangumiService.RelatedSubject volSub = volumeMap.get(saved.getVolume());
+                String volCoverUrl = volSub.getCoverUrl();
+                if (volCoverUrl != null) {
+                    String volCoverPrefix = "bangumi_vol_" + bangumiId + "_" + saved.getVolume();
+                    Path volDir = Paths.get(saved.getFilePath()).getParent();
+                    if (volDir != null) {
+                        String volLocalPath = bangumiService.downloadCover(volCoverUrl, volCoverPrefix, volDir);
+                        if (volLocalPath != null) {
+                            saved.setCoverArtPath(volLocalPath);
+                        }
+                    }
+                }
+            }
+        }
+
+        repository.save(saved);
+        saveBangumiCharacters(saved.getId(), bangumiId);
 
         return saved;
     }
 
-    private void propagateSeriesMetadata(Ebook source, Integer subjectId) {
-        if (source.getSeries() == null || source.getSeries().isBlank()) {
-            log.debug("No series name, skipping propagation");
-            return;
+    /**
+     * 按系列名重新刮削：重新获取系列简介、系列封面、每个卷的封面和简介
+     */
+    @Transactional
+    public int rescrapeSeries(String series) {
+        if (series == null || series.isBlank()) return 0;
+
+        MediaSeries ms = seriesRepo.findByTitleAndMediaTypeIgnoreCase(series, "ebook")
+                .or(() -> seriesRepo.findByTitleAndMediaTypeIgnoreCase(series, "both"))
+                .orElse(null);
+        if (ms == null) {
+            log.warn("No MediaSeries found for '{}'", series);
+            return 0;
+        }
+        List<Ebook> ebooks = repository.findBySeriesRef_Id(ms.getId());
+        if (ebooks.isEmpty()) {
+            log.warn("No ebooks found for series '{}'", series);
+            return 0;
         }
 
-        // 获取 Bangumi 关联条目，按卷号映射
-        Map<Integer, BangumiService.RelatedSubject> volumeMap = buildVolumeMap(subjectId);
-        if (volumeMap.isEmpty()) {
-            log.debug("No volume subjects found for Bangumi id={}, skipping propagation", subjectId);
-            return;
-        }
+        // 找到已有 bangumiId 的作为主条目，或者用第一本搜索
+        Ebook mainBook = ebooks.stream()
+                .filter(e -> e.getBangumiId() != null)
+                .findFirst()
+                .orElse(ebooks.get(0));
 
-        // 查找同系列其他电子书（未绑定的）
-        List<Ebook> siblings = repository.findBySeriesIgnoreCase(source.getSeries());
-        for (Ebook sibling : siblings) {
-            if (sibling.getId().equals(source.getId())) continue;
-            if (sibling.getBangumiId() != null) continue;
-
-            Integer vol = extractVolume(sibling.getFileName());
-            if (vol == null || !volumeMap.containsKey(vol)) {
-                log.debug("No volume match for '{}', setting basic series metadata", sibling.getFileName());
-                sibling.setSeries(source.getSeries());
-                sibling.setAuthor(source.getAuthor());
-                sibling.setGenre(source.getGenre());
-                repository.save(sibling);
-                continue;
+        Integer subjectId = mainBook.getBangumiId();
+        if (subjectId == null) {
+            // 没有绑定过，需要先搜索
+            log.info("Series '{}' has no bangumi binding, searching...", series);
+            List<BangumiService.SearchResult> results = bangumiService.searchBooks(series, "novel");
+            if (results.isEmpty()) {
+                log.warn("No Bangumi results for series '{}'", series);
+                return 0;
             }
-
-            // 有匹配的卷号，获取该卷详情
-            BangumiService.RelatedSubject volSub = volumeMap.get(vol);
-            BangumiService.SubjectDetail volDetail = bangumiService.getSubjectDetail(volSub.getId());
-            if (volDetail == null) {
-                log.debug("Could not fetch detail for volume {} (id={})", vol, volSub.getId());
-                continue;
-            }
-
-            updateEbookFromBangumiDetail(sibling, volDetail);
-            sibling.setBangumiId(volSub.getId());
-            sibling.setVolume(vol);
-            Ebook saved = repository.save(sibling);
-            downloadCoverFromBangumi(saved, volDetail, "bangumi_vol_" + subjectId + "_" + vol);
-            log.info("Bound sibling '{}' -> Bangumi vol.{} (id={})", saved.getTitle(), vol, volSub.getId());
+            subjectId = results.get(0).getId();
         }
+
+        BangumiService.SubjectDetail seriesDetail = bangumiService.getSubjectDetail(subjectId);
+        if (seriesDetail == null) {
+            log.warn("Could not fetch Bangumi detail for series '{}' (id={})", series, subjectId);
+            return 0;
+        }
+
+        log.info("Rescraping series '{}' with Bangumi id={}", series, subjectId);
+
+        // 获取卷级映射
+        Map<Integer, BangumiService.RelatedSubject> volumeMap = bangumiService.buildVolumeSubjectMap(subjectId);
+
+        int updated = 0;
+        for (Ebook ebook : ebooks) {
+            try {
+                // 更新系列级元数据
+                String seriesName = seriesDetail.getNameCn() != null ? seriesDetail.getNameCn() : seriesDetail.getName();
+                if (seriesName != null && !seriesName.isBlank()) {
+                    ebook.setSeriesName(seriesName.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim());
+                }
+                ebook.setBangumiId(subjectId);
+
+                // 匹配卷级封面和简介
+                Integer vol = extractVolume(ebook.getFileName());
+                if (vol != null && volumeMap.containsKey(vol)) {
+                    BangumiService.RelatedSubject volSub = volumeMap.get(vol);
+                    BangumiService.SubjectDetail volDetail = bangumiService.getSubjectDetail(volSub.getId());
+                    if (volDetail != null) {
+                        updateEbookFromBangumiDetail(ebook, volDetail);
+                        ebook.setBangumiId(volSub.getId());
+
+                        // 下载卷级封面
+                        String volCoverPrefix = "bangumi_vol_" + subjectId + "_" + vol;
+                        Path volDir = Paths.get(ebook.getFilePath()).getParent();
+                        if (volDir != null) {
+                            String coverUrl = volSub.getCoverUrl();
+                            String localPath = bangumiService.downloadCover(coverUrl, volCoverPrefix, volDir);
+                            if (localPath != null) {
+                                ebook.setCoverArtPath(localPath);
+                            }
+                        }
+                    }
+                } else {
+                    // 没有匹配的卷，使用系列级信息
+                    updateEbookFromBangumiDetail(ebook, seriesDetail);
+
+                    // 下载系列封面作为该本封面
+                    if (ebook.getCoverArtPath() == null) {
+                        String coverPrefix = "bangumi_" + subjectId;
+                        Path volDir = Paths.get(ebook.getFilePath()).getParent();
+                        if (volDir != null) {
+                            String localPath = bangumiService.downloadCover(seriesDetail, coverPrefix, volDir);
+                            if (localPath != null) {
+                                ebook.setCoverArtPath(localPath);
+                            }
+                        }
+                    }
+                }
+
+                repository.save(ebook);
+                updated++;
+                log.info("Rescraped '{}' (vol={})", ebook.getTitle(), vol);
+            } catch (Exception e) {
+                log.warn("Failed to rescrape '{}': {}", ebook.getTitle(), e.getMessage());
+            }
+        }
+
+        log.info("Rescrape series '{}': {}/{} updated", series, updated, ebooks.size());
+        return updated;
     }
 
-    private Map<Integer, BangumiService.RelatedSubject> buildVolumeMap(Integer subjectId) {
-        Map<Integer, BangumiService.RelatedSubject> map = new HashMap<>();
-        List<BangumiService.RelatedSubject> related = bangumiService.getRelatedSubjects(subjectId);
-        for (BangumiService.RelatedSubject sub : related) {
-            if (sub.getType() == null || sub.getType() != 1) continue;
-            String name = sub.getName();
-            if (name == null) continue;
-            Integer vol = extractVolumeFromRelatedName(name);
-            if (vol != null) {
-                map.put(vol, sub);
-            }
-        }
-        log.info("Found {} volume subjects from related subjects for Bangumi id={}", map.size(), subjectId);
-        return map;
-    }
-
-    private Integer extractVolumeFromRelatedName(String name) {
-        Matcher m = Pattern.compile("\\((\\d+)\\)").matcher(name);
-        if (m.find()) return Integer.parseInt(m.group(1));
-        m = Pattern.compile("(?i)vol\\.?\\s*(\\d+)").matcher(name);
-        if (m.find()) return Integer.parseInt(m.group(1));
-        m = Pattern.compile("第\\s*(\\d+)\\s*卷").matcher(name);
-        if (m.find()) return Integer.parseInt(m.group(1));
-        return null;
-    }
+    // ==================== 元数据更新 ====================
 
     private void updateEbookFromBangumiDetail(Ebook ebook, BangumiService.SubjectDetail detail) {
         if (detail.getNameCn() != null && !detail.getNameCn().isBlank()) {
@@ -168,64 +253,461 @@ public class EbookBangumiScrapeService {
             }
         }
 
-        if (detail.getTags() != null && !detail.getTags().isEmpty()) {
-            String genres = detail.getTags().stream()
-                    .map(BangumiService.SearchResult.Tag::getName)
-                    .filter(Objects::nonNull)
-                    .limit(5)
-                    .reduce((a, b) -> a + ", " + b)
-                    .orElse(null);
+        String genres = BangumiService.extractGenresFromTags(detail.getTags());
+        if (genres != null) {
             ebook.setGenre(genres);
         }
 
         Integer volume = extractVolume(ebook.getFileName());
         if (volume != null) {
+            log.info("Setting volume={} for '{}' (fileName={})", volume, ebook.getTitle(), ebook.getFileName());
             ebook.setVolume(volume);
+            // 拼接卷号到标题：系列名 + Vol.XX
+            String baseTitle = ebook.getTitle();
+            if (baseTitle != null && !baseTitle.isBlank() && !baseTitle.contains("Vol")) {
+                ebook.setTitle(baseTitle + " Vol." + String.format("%02d", volume));
+            }
         }
 
         String seriesName = detail.getNameCn() != null ? detail.getNameCn() : detail.getName();
         if (seriesName != null && !seriesName.isBlank()) {
-            ebook.setSeries(seriesName);
+            // 清洗特殊字符，确保文件夹和文件名安全
+            seriesName = seriesName.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
+            ebook.setSeriesName(seriesName);
         }
     }
 
-    private void downloadCoverFromBangumi(Ebook ebook, BangumiService.SubjectDetail detail, String prefix) {
-        String coverUrl = null;
-        if (detail.getImages() != null) {
-            coverUrl = detail.getImages().getLarge();
-            if (coverUrl == null || coverUrl.isBlank()) {
-                coverUrl = detail.getImages().getCommon();
+    private MediaSeries findOrCreateSeries(String seriesName, String mediaType, BangumiService.SubjectDetail detail) {
+        String cleanedName = seriesName.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
+        MediaSeries ms = seriesRepo.findByTitleAndMediaTypeIgnoreCase(cleanedName, mediaType).orElse(null);
+        if (ms != null) return ms;
+
+        ms = new MediaSeries();
+        ms.setTitle(cleanedName);
+        ms.setMediaType(mediaType);
+        ms.setMetadataSource("bangumi");
+        ms.setMetadataSourceId(detail.getId());
+        if (detail.getNameCn() != null && !detail.getNameCn().isBlank()) {
+            ms.setOriginalTitle(detail.getName());
+        }
+        if (detail.getSummary() != null && !detail.getSummary().isBlank()) {
+            ms.setDescription(detail.getSummary());
+        }
+        if (detail.getRating() != null && detail.getRating().getScore() != null) {
+            ms.setRating(detail.getRating().getScore());
+        }
+        if (detail.getDate() != null && detail.getDate().length() >= 4) {
+            try { ms.setYear(Integer.parseInt(detail.getDate().substring(0, 4))); } catch (NumberFormatException ignored) {}
+        }
+        if (detail.getInfobox() != null) {
+            for (var entry : detail.getInfobox()) {
+                if ("作者".equals(entry.getKey())) {
+                    if (ms.getAuthor() == null) ms.setAuthor(entry.getValue().toString());
+                }
             }
         }
-        if (coverUrl == null || coverUrl.isBlank()) return;
-        if (ebook.getFilePath() == null) return;
+        String genres = BangumiService.extractGenresFromTags(detail.getTags());
+        if (genres != null) ms.setGenre(genres);
+
+        seriesRepo.save(ms);
+        log.info("Created MediaSeries '{}' (id={})", cleanedName, ms.getId());
+        return ms;
+    }
+
+    // ==================== 封面下载 ====================
+
+    private void downloadCoverFromBangumi(Ebook ebook, BangumiService.SubjectDetail detail) {
+        if (ebook.getFilePath() == null || ebook.getFilePath().isBlank()) return;
+        Path ebookDir = Paths.get(ebook.getFilePath()).getParent();
+        if (ebookDir == null) return;
+
+        String localPath = bangumiService.downloadCover(detail, "bangumi_" + ebook.getBangumiId(), ebookDir);
+        if (localPath != null) {
+            ebook.setCoverArtPath(localPath);
+        }
+    }
+
+    // ==================== 角色保存 ====================
+
+    @Transactional
+    public void saveBangumiCharacters(Long ebookId, Integer subjectId) {
+        try {
+            List<BangumiService.Character> characters = bangumiService.getCharacters(subjectId);
+
+            if (characters.isEmpty()) {
+                Integer seriesId = findBangumiSeriesSubjectId(subjectId);
+                if (seriesId != null && !seriesId.equals(subjectId)) {
+                    log.info("No characters for subject {}, trying series subject {}", subjectId, seriesId);
+                    characters = bangumiService.getCharacters(seriesId);
+                }
+            }
+
+            if (characters.isEmpty()) {
+                log.debug("No characters found for Bangumi subject {} or its series", subjectId);
+                return;
+            }
+
+            Ebook ebook = repository.findById(ebookId).orElse(null);
+            MediaSeries ms = ebook != null ? ebook.getSeriesRef() : null;
+
+            if (ms == null) {
+                log.warn("No MediaSeries for ebook id={}, cannot save characters", ebookId);
+                return;
+            }
+
+            mediaCharRepo.deleteBySeries_Id(ms.getId());
+            for (BangumiService.Character bgmChar : characters) {
+                MediaSeriesCharacter mc = createMediaCharacter(bgmChar, ms);
+                if (mc != null) mediaCharRepo.save(mc);
+            }
+            log.info("Saved {} characters for series '{}' from Bangumi", characters.size(), ms.getTitle());
+        } catch (Exception e) {
+            log.warn("Failed to save Bangumi characters for ebook id={}: {}", ebookId, e.getMessage());
+        }
+    }
+
+    private MediaSeriesCharacter createMediaCharacter(BangumiService.Character bgmChar, MediaSeries ms) {
+        String chineseName = getChineseName(bgmChar);
+        MediaSeriesCharacter mc = new MediaSeriesCharacter();
+        mc.setSeries(ms);
+        if (chineseName != null && !chineseName.isBlank()) {
+            mc.setName(chineseName);
+            mc.setOriginalName(bgmChar.getName());
+        } else {
+            mc.setName(bgmChar.getName());
+            mc.setOriginalName(bgmChar.getName());
+        }
+        mc.setDescription(bgmChar.getSummary());
+        mc.setRole(bgmChar.getRole());
+        mc.setSourceCharacterId(bgmChar.getId());
+        mc.setSource("bangumi");
+        String imageUrl = bgmChar.getImageUrl();
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            mc.setImageUrl(imageUrl);
+            String localPath = downloadMediaCharacterImage(ms, imageUrl, mc.getName());
+            if (localPath != null) mc.setImagePath(localPath);
+        }
+        return mc;
+    }
+
+    private String getChineseName(BangumiService.Character bgmChar) {
+        if (bgmChar.getNameCn() != null && !bgmChar.getNameCn().isBlank()) {
+            return bgmChar.getNameCn();
+        }
+        try {
+            BangumiService.CharacterDetail detail = bangumiService.getCharacterDetail(bgmChar.getId());
+            if (detail != null && detail.getChineseName() != null) {
+                return detail.getChineseName();
+            }
+            Thread.sleep(200);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.debug("Failed to get character detail: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String downloadMediaCharacterImage(MediaSeries ms, String imageUrl, String characterName) {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
 
         try {
-            Path ebookDir = Paths.get(ebook.getFilePath()).getParent();
-            if (ebookDir == null) return;
-            Files.createDirectories(ebookDir);
+            List<Ebook> ebooks = repository.findBySeriesRef_Id(ms.getId());
+            if (ebooks.isEmpty()) {
+                log.debug("No ebooks found for series '{}', cannot download character image", ms.getTitle());
+                return null;
+            }
 
-            Path coverPath = ebookDir.resolve(prefix + "_cover.jpg");
-            if (Files.exists(coverPath)) {
-                ebook.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                return;
+            Path ebookDir = Paths.get(ebooks.get(0).getFilePath()).getParent();
+            if (ebookDir == null) return null;
+
+            Path actorsDir = ebookDir.resolve("actors");
+            Files.createDirectories(actorsDir);
+
+            String safeName = characterName.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+            if (safeName.isBlank()) safeName = "character_" + System.currentTimeMillis();
+            Path imagePath = actorsDir.resolve(safeName + ".jpg");
+
+            if (Files.exists(imagePath)) {
+                return imagePath.toAbsolutePath().toString();
             }
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent", "FryfrogHub/0.1.0");
             HttpEntity<Void> request = new HttpEntity<>(headers);
             ResponseEntity<byte[]> response = scraperRestTemplate.exchange(
-                    coverUrl, HttpMethod.GET, request, byte[].class);
+                    imageUrl, HttpMethod.GET, request, byte[].class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Files.write(coverPath, response.getBody());
-                ebook.setCoverArtPath(coverPath.toAbsolutePath().toString());
-                log.info("Downloaded Bangumi cover for '{}' to {}", ebook.getTitle(), coverPath);
+                Files.write(imagePath, response.getBody());
+                log.info("Downloaded character image '{}' to {}", characterName, imagePath);
+                return imagePath.toAbsolutePath().toString();
+            } else {
+                log.warn("Failed to download character image '{}': HTTP {}", characterName, response.getStatusCode());
             }
+        } catch (Exception e) {
+            log.warn("Failed to download character image '{}': {}", characterName, e.getMessage());
+        }
+        return null;
+    }
+
+    private Integer findBangumiSeriesSubjectId(Integer subjectId) {
+        try {
+            List<BangumiService.RelatedSubject> related = bangumiService.getRelatedSubjects(subjectId);
+            for (BangumiService.RelatedSubject sub : related) {
+                if (sub.getType() != null && sub.getType() == 1) {
+                    return sub.getId();
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to find series subject for {}: {}", subjectId, e.getMessage());
+        }
+        return null;
+    }
+
+    // ==================== 文件重命名 ====================
+
+    private void renameEbookFile(Ebook ebook) {
+        if (ebook.getSeries() == null || ebook.getSeries().isBlank()) return;
+        if (ebook.getFilePath() == null || ebook.getFilePath().isBlank()) return;
+
+        Path currentPath = Paths.get(ebook.getFilePath());
+        if (!Files.exists(currentPath)) return;
+
+        String oldFileName = ebook.getFileName();
+        String ext = oldFileName.contains(".") ? oldFileName.substring(oldFileName.lastIndexOf('.')) : "";
+        Integer vol = ebook.getVolume();
+        String volPart = vol != null ? " Vol." + vol : "";
+
+        // 清洗文件名中的特殊字符
+        String cleanSeries = ebook.getSeries().replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
+        String newFileName = cleanSeries + volPart + ext;
+        if (oldFileName.equals(newFileName)) return;
+
+        Path newPath = currentPath.getParent().resolve(newFileName);
+        if (Files.exists(newPath) && !currentPath.equals(newPath)) {
+            log.warn("Target file already exists, skipping rename: {}", newPath);
+            return;
+        }
+
+        try {
+            Files.move(currentPath, newPath, StandardCopyOption.REPLACE_EXISTING);
+            ebook.setFileName(newFileName);
+            ebook.setFilePath(newPath.toAbsolutePath().toString());
+            log.info("Renamed ebook '{}' -> '{}'", oldFileName, newFileName);
         } catch (IOException e) {
-            log.warn("Failed to download Bangumi cover for '{}': {}", ebook.getTitle(), e.getMessage());
+            log.warn("Failed to rename ebook '{}' -> '{}': {}", oldFileName, newFileName, e.getMessage());
         }
     }
+
+    // ==================== 同步兄弟文件系列名 ====================
+
+    private void syncSiblingSeriesNames(Ebook source) {
+        if (source.getSeries() == null || source.getSeries().isBlank()) return;
+        if (source.getFilePath() == null || source.getFilePath().isBlank()) return;
+
+        Path sourceDir = Paths.get(source.getFilePath()).getParent();
+        if (sourceDir == null) return;
+
+        // 找同目录下未绑定的文件
+        List<Ebook> unbound = repository.findAll().stream()
+                .filter(e -> !e.getId().equals(source.getId()))
+                .filter(e -> e.getBangumiId() == null && e.getOpenLibraryId() == null)
+                .filter(e -> {
+                    if (e.getFilePath() == null) return false;
+                    Path eDir = Paths.get(e.getFilePath()).getParent();
+                    return sourceDir.equals(eDir);
+                })
+                .toList();
+
+        for (Ebook sibling : unbound) {
+            String sourceSeries = source.getSeries();
+            if (sourceSeries == null || sourceSeries.isBlank()) continue;
+            if (sibling.getSeries() == null || !sibling.getSeries().equals(sourceSeries)) {
+                sibling.setSeriesName(sourceSeries);
+                sibling.setAuthor(source.getAuthor());
+                sibling.setGenre(source.getGenre());
+                repository.save(sibling);
+                log.info("Synced series '{}' to sibling '{}'", sourceSeries, sibling.getFileName());
+            }
+        }
+    }
+
+    // ==================== 文件移动 ====================
+
+    private void moveEbookToSeriesFolder(Ebook ebook) {
+        if (ebook.getSeries() == null || ebook.getSeries().isBlank()) return;
+        if (ebook.getFilePath() == null || ebook.getFilePath().isBlank()) return;
+
+        try {
+            Path currentPath = Paths.get(ebook.getFilePath());
+            if (!Files.exists(currentPath)) {
+                log.warn("Ebook file not found: {}", ebook.getFilePath());
+                return;
+            }
+
+            Path currentDir = currentPath.getParent();
+            if (currentDir == null) return;
+
+            Path rootDir = findRootDir(currentDir);
+            if (rootDir == null) return;
+
+            String seriesName = sanitizeFolderName(ebook.getSeries());
+            Path seriesDir = rootDir.resolve(seriesName);
+            Files.createDirectories(seriesDir);
+
+            Path targetPath = seriesDir.resolve(currentPath.getFileName());
+            if (currentPath.equals(targetPath)) {
+                log.debug("Ebook '{}' already in series folder", ebook.getTitle());
+                return;
+            }
+
+            // 目标路径已有文件，检查是否是自己（数据库 filePath 与实际不一致）
+            if (Files.exists(targetPath)) {
+                String targetAbsPath = targetPath.toAbsolutePath().toString();
+                if (targetAbsPath.equals(ebook.getFilePath())) {
+                    // 数据库记录的 filePath 指向旧位置，但文件已在目标位置，更新数据库即可
+                    ebook.setFilePath(targetAbsPath);
+                    log.debug("Ebook '{}' file already in target, updated db path", ebook.getTitle());
+                    return;
+                }
+                log.warn("Target file already exists, skipping: {}", targetPath);
+                return;
+            }
+
+            Files.move(currentPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            ebook.setFilePath(targetPath.toAbsolutePath().toString());
+
+            updateCoverPaths(ebook, currentDir, seriesDir);
+            moveCharacterImages(currentDir, seriesDir);
+
+            cleanupEmptyFolders(currentDir, rootDir);
+
+            log.debug("Moved ebook '{}' to series folder: {}", ebook.getTitle(), seriesDir);
+        } catch (IOException e) {
+            log.error("Failed to move ebook '{}': {}", ebook.getTitle(), e.getMessage());
+        }
+    }
+
+    private void updateCoverPaths(Ebook ebook, Path oldDir, Path newDir) {
+        if (ebook.getCoverArtPath() != null && !ebook.getCoverArtPath().isBlank()) {
+            Path oldCover = Paths.get(ebook.getCoverArtPath());
+            if (oldCover.startsWith(oldDir)) {
+                Path newCover = newDir.resolve(oldCover.getFileName());
+                if (Files.exists(oldCover) && !oldCover.equals(newCover)) {
+                    try {
+                        Files.createDirectories(newCover.getParent());
+                        Files.move(oldCover, newCover, StandardCopyOption.REPLACE_EXISTING);
+                        ebook.setCoverArtPath(newCover.toAbsolutePath().toString());
+                    } catch (IOException e) {
+                        log.warn("Failed to move cover: {}", e.getMessage());
+                    }
+                }
+            }
+        }
+
+        String ebookBaseName = ebook.getFileName().replaceAll("\\.[^.]+$", "");
+        try (var stream = Files.list(oldDir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String name = p.getFileName().toString();
+                        return name.endsWith("_cover.jpg") && name.startsWith(ebookBaseName);
+                    })
+                    .forEach(oldCover -> {
+                        try {
+                            Path newCover = newDir.resolve(oldCover.getFileName());
+                            if (!Files.exists(newCover)) {
+                                Files.move(oldCover, newCover);
+                            }
+                            if (ebook.getCoverArtPath() == null || !ebook.getCoverArtPath().isBlank()
+                                    && Paths.get(ebook.getCoverArtPath()).equals(oldCover)) {
+                                ebook.setCoverArtPath(newCover.toAbsolutePath().toString());
+                            }
+                        } catch (IOException e) {
+                            log.warn("Failed to move extracted cover {}: {}", oldCover.getFileName(), e.getMessage());
+                        }
+                    });
+        } catch (IOException e) {
+            log.warn("Failed to scan old dir for covers: {}", e.getMessage());
+        }
+
+        if (ebook.getCoverArtPath() != null && !Files.exists(Paths.get(ebook.getCoverArtPath()))) {
+            try (var stream = Files.list(newDir)) {
+                stream.filter(Files::isRegularFile)
+                        .filter(p -> p.getFileName().toString().startsWith(ebookBaseName)
+                                && p.getFileName().toString().endsWith("_cover.jpg"))
+                        .findFirst()
+                        .ifPresent(p -> ebook.setCoverArtPath(p.toAbsolutePath().toString()));
+            } catch (IOException ignored) {}
+        }
+    }
+
+    private void moveCharacterImages(Path oldDir, Path newDir) {
+        Path oldCharsDir = oldDir.resolve("characters");
+        if (!Files.isDirectory(oldCharsDir)) return;
+
+        try {
+            Path newCharsDir = newDir.resolve("characters");
+            Files.createDirectories(newCharsDir);
+
+            try (var stream = Files.list(oldCharsDir)) {
+                stream.filter(Files::isRegularFile).forEach(file -> {
+                    try {
+                        Path target = newCharsDir.resolve(file.getFileName());
+                        if (!Files.exists(target)) {
+                            Files.move(file, target);
+                        }
+                    } catch (IOException e) {
+                        log.warn("Failed to move character image {}: {}", file.getFileName(), e.getMessage());
+                    }
+                });
+            }
+
+            if (isDirEmpty(oldCharsDir)) {
+                Files.deleteIfExists(oldCharsDir);
+            }
+        } catch (IOException e) {
+            log.warn("Failed to move character images: {}", e.getMessage());
+        }
+    }
+
+    private void cleanupEmptyFolders(Path startDir, Path rootDir) throws IOException {
+        Path dir = startDir;
+        while (dir != null && !dir.equals(rootDir) && Files.isDirectory(dir)) {
+            if (isDirEmpty(dir)) {
+                Path parent = dir.getParent();
+                Files.deleteIfExists(dir);
+                log.debug("Removed empty folder: {}", dir);
+                dir = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    private boolean isDirEmpty(Path dir) throws IOException {
+        try (var stream = Files.list(dir)) {
+            return stream.filter(p -> !p.getFileName().toString().equals(".DS_Store")).findFirst().isEmpty();
+        }
+    }
+
+    private String sanitizeFolderName(String name) {
+        if (name == null) return "Unknown";
+        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
+        return sanitized.isBlank() ? "Unknown" : sanitized;
+    }
+
+    private Path findRootDir(Path currentDir) {
+        for (String rootPath : ebookService.getRootPaths()) {
+            Path root = Paths.get(rootPath).toAbsolutePath().normalize();
+            if (currentDir.toAbsolutePath().normalize().startsWith(root)) {
+                return root;
+            }
+        }
+        return currentDir.getParent();
+    }
+
+    // ==================== 工具方法 ====================
 
     private static final Pattern VOLUME_PATTERN = Pattern.compile(
             "(?i)(?:卷|Vol\\.?|Volume|#)[\\s]*(\\d+)|[\\s]*(\\d+)\\s*(?:卷|卷目)"

@@ -3,14 +3,20 @@ package com.fryfrog.hub.video.service;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
+import com.fryfrog.hub.common.service.SystemSettingService;
+import com.fryfrog.hub.video.model.Video;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.Arrays;
-import java.util.List;
+import java.io.IOException;
+import java.nio.file.*;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 @Service
@@ -21,9 +27,19 @@ public class VideoWatcherService {
     private final VideoService videoService;
     private final PeriodicScanScheduler scanScheduler;
     private final MediaLibraryService mediaLibraryService;
+    private final SystemSettingService settingService;
 
     @Value("${hub.video.root-paths:./media-library/video}")
     private String rootPathsConfig;
+
+    @Value("${hub.video.supported-formats:mp4,mkv,avi,mov,wmv,flv,webm,m4v,ts}")
+    private String supportedFormats;
+
+    private final List<WatchService> watchServices = new ArrayList<>();
+    private ExecutorService executor;
+    private volatile boolean running = true;
+    private Set<String> supportedFormatSet;
+    private final java.util.concurrent.locks.ReentrantLock scrapeLock = new java.util.concurrent.locks.ReentrantLock();
 
     private List<String> getRootPaths() {
         return Arrays.stream(rootPathsConfig.split(","))
@@ -33,9 +49,33 @@ public class VideoWatcherService {
     }
 
     @PostConstruct
-    public void init() {
-        scanScheduler.registerTask(this::periodicScan);
-        log.info("Video periodic scan registered");
+    public void startWatching() {
+        supportedFormatSet = Set.of(supportedFormats.split(","));
+        List<String> rootPaths = getRootPaths();
+
+        for (String rootPath : rootPaths) {
+            Path dir = Paths.get(rootPath);
+            if (!Files.isDirectory(dir)) {
+                log.warn("Video directory does not exist: {}", rootPath);
+                continue;
+            }
+
+            try {
+                WatchService ws = FileSystems.getDefault().newWatchService();
+                watchServices.add(ws);
+                registerDirectory(dir, ws);
+                log.info("Started watching video directory: {}", rootPath);
+            } catch (IOException e) {
+                log.error("Failed to start video watcher for {}", rootPath, e);
+            }
+        }
+
+        if (!watchServices.isEmpty()) {
+            executor = Executors.newVirtualThreadPerTaskExecutor();
+            executor.execute(this::watch);
+            scanScheduler.registerTask(this::periodicScan);
+            log.info("Video watcher registered, watching {} directories", watchServices.size());
+        }
     }
 
     private void periodicScan() {
@@ -54,5 +94,147 @@ public class VideoWatcherService {
         } catch (Exception e) {
             log.warn("Periodic video scan failed: {}", e.getMessage());
         }
+    }
+
+    private void registerDirectory(Path dir, WatchService ws) throws IOException {
+        dir.register(ws,
+                StandardWatchEventKinds.ENTRY_CREATE,
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.ENTRY_DELETE);
+
+        try (var stream = Files.list(dir)) {
+            stream.filter(Files::isDirectory).forEach(subDir -> {
+                try {
+                    registerDirectory(subDir, ws);
+                } catch (IOException e) {
+                    log.warn("Failed to register subdirectory: {}", subDir, e);
+                }
+            });
+        }
+    }
+
+    private void watch() {
+        while (running) {
+            for (WatchService ws : watchServices) {
+                try {
+                    WatchKey key = ws.poll();
+                    if (key == null) continue;
+
+                    for (WatchEvent<?> event : key.pollEvents()) {
+                        if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
+                            continue;
+                        }
+
+                        @SuppressWarnings("unchecked")
+                        WatchEvent<Path> ev = (WatchEvent<Path>) event;
+                        Path fileName = ev.context();
+                        Path parentDir = (Path) key.watchable();
+                        Path fullPath = parentDir.resolve(fileName);
+
+                        // 文件删除事件 - 延迟较长以避免与文件移动操作冲突
+                        if (event.kind() == StandardWatchEventKinds.ENTRY_DELETE) {
+                            if (isSupportedFormat(fileName.toString())) {
+                                log.debug("Detected video file deleted: {}", fullPath);
+                                executor.submit(() -> {
+                                    try {
+                                        Thread.sleep(5000);
+                                        scrapeLock.lock();
+                                        try {
+                                            videoService.cleanupInvalidRecords();
+                                            log.debug("Cleaned up invalid video records after file deletion");
+                                        } finally {
+                                            scrapeLock.unlock();
+                                        }
+                                    } catch (Exception e) {
+                                        log.warn("Failed to cleanup after file deletion: {}", e.getMessage());
+                                    }
+                                });
+                            }
+                            continue;
+                        }
+
+                        // 新建/修改事件
+                        if (Files.isDirectory(fullPath)) {
+                            try {
+                                registerDirectory(fullPath, ws);
+                                log.debug("Registered new subdirectory: {}", fullPath);
+                            } catch (IOException e) {
+                                log.warn("Failed to register new subdirectory: {}", fullPath, e);
+                            }
+                            continue;
+                        }
+
+                        if (Files.isRegularFile(fullPath) && isSupportedFormat(fileName.toString())) {
+                            log.debug("Detected video file change: {}", fullPath);
+                            executor.submit(() -> {
+                                try {
+                                    Thread.sleep(3000);
+                                    if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
+                                        // 通过 MediaLibrary 匹配 libraryId
+                                        Long libraryId = findLibraryId(fullPath);
+                                        Video video = videoService.extractAndSaveMetadata(fullPath.toString(), libraryId);
+                                        log.debug("Auto-indexed video: {}", fileName);
+
+                                        if (video != null && video.getTmdbId() == null && settingService.getBoolean("hub.tmdb.auto-scrape", false)) {
+                                            scrapeLock.lock();
+                                            try {
+                                                videoService.autoScrapeAll();
+                                                log.debug("Auto-scrape triggered for new video: {}", fileName);
+                                            } catch (Exception e) {
+                                                log.warn("Failed to auto-scrape video: {}", fileName, e);
+                                            } finally {
+                                                scrapeLock.unlock();
+                                            }
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("Failed to auto-index video: {}", fileName, e);
+                                }
+                            });
+                        }
+                    }
+                    key.reset();
+                } catch (Exception e) {
+                    log.error("Error in video watcher", e);
+                }
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    private Long findLibraryId(Path filePath) {
+        List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries();
+        for (MediaLibrary library : libraries) {
+            if (filePath.startsWith(Paths.get(library.getPath()))) {
+                return library.getId();
+            }
+        }
+        return null;
+    }
+
+    private boolean isSupportedFormat(String fileName) {
+        String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+        return supportedFormatSet.contains(ext);
+    }
+
+    @PreDestroy
+    public void stopWatching() {
+        running = false;
+        for (WatchService ws : watchServices) {
+            try {
+                ws.close();
+            } catch (IOException e) {
+                log.warn("Failed to close watch service: {}", e.getMessage());
+            }
+        }
+        if (executor != null) {
+            executor.shutdown();
+        }
+        log.info("Stopped watching video directories");
     }
 }

@@ -16,6 +16,9 @@ import java.util.List;
 @Schema(description = "漫画系列信息")
 public class ComicSeries {
 
+    @Schema(description = "系列ID（关联 MediaSeries）")
+    private Long seriesId;
+
     @Schema(description = "系列名称")
     private String name;
 

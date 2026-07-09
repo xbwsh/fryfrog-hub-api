@@ -24,7 +24,7 @@ public class EbookReadingProgressService {
 
     @Transactional
     public EbookReadingProgress saveProgress(Long ebookId, Integer currentPage, Integer totalPages) {
-        Ebook ebook = ebookService.getEbookById(ebookId);
+        Ebook ebook = ebookService.getEbookEntityById(ebookId);
 
         EbookReadingProgress progress = repository.findByEbookId(ebookId).orElse(new EbookReadingProgress());
         progress.setEbook(ebook);

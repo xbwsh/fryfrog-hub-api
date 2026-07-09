@@ -65,7 +65,7 @@ public class EpubParser {
             String language = getFirstTagText(metadata, "dc:language");
             String description = getFirstTagText(metadata, "dc:description");
             String publisher = getFirstTagText(metadata, "dc:publisher");
-            String isbn = getFirstTagText(metadata, "dc:identifier");
+            String isbn = extractIsbn(metadata);
             String coverEntryName = findCoverEntry(doc, zip, opfDir);
 
             Integer year = null;
@@ -351,6 +351,36 @@ public class EpubParser {
         if (nodes.getLength() == 0) return null;
         String text = nodes.item(0).getTextContent();
         return (text == null || text.isBlank()) ? null : text.trim();
+    }
+
+    private static String extractIsbn(Element metadata) {
+        NodeList nodes = metadata.getElementsByTagName("dc:identifier");
+        String fallback = null;
+        for (int i = 0; i < nodes.getLength(); i++) {
+            String text = nodes.item(i).getTextContent();
+            if (text == null || text.isBlank()) continue;
+            text = text.trim();
+
+            // 检查 opf:scheme 属性
+            if (nodes.item(i) instanceof Element el) {
+                String scheme = el.getAttribute("opf:scheme");
+                if ("ISBN".equalsIgnoreCase(scheme)) {
+                    return text.replace("-", "");
+                }
+            }
+
+            // 检查内容是否符合 ISBN 格式（10位或13位数字，可能含连字符）
+            String digits = text.replace("-", "").replace(" ", "");
+            if (digits.matches("\\d{10}|\\d{13}")) {
+                return digits;
+            }
+
+            // 记录非 UUID 的备选值
+            if (fallback == null && !text.startsWith("urn:uuid:")) {
+                fallback = text;
+            }
+        }
+        return fallback;
     }
 
     private static String extractChapterTitle(String text, int num) {

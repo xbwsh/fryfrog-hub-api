@@ -13,6 +13,9 @@ public class ComicDTO {
     @Schema(description = "漫画ID")
     private Long id;
 
+    @Schema(description = "系列ID（关联 MediaSeries）")
+    private Long seriesId;
+
     @Schema(description = "漫画标题", example = "进击的巨人")
     private String title;
 
@@ -91,6 +94,7 @@ public class ComicDTO {
     public static ComicDTO fromEntity(Comic comic, boolean hasCover) {
         ComicDTO dto = new ComicDTO();
         dto.setId(comic.getId());
+        dto.setSeriesId(comic.getSeriesRef() != null ? comic.getSeriesRef().getId() : null);
         dto.setTitle(comic.getTitle());
         dto.setAuthor(comic.getAuthor());
         dto.setSeries(comic.getSeries());

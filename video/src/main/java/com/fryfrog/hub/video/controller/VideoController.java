@@ -133,7 +133,7 @@ public class VideoController {
     @Operation(summary = "获取视频演员列表", description = "返回指定视频的演员信息列表")
     public ResponseEntity<ApiResponse<List<VideoActor>>> getActors(
             @Parameter(description = "视频ID") @PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(actorRepository.findByVideoId(id)));
+        return ResponseEntity.ok(ApiResponse.success(actorRepository.findByVideo_Id(id)));
     }
 
     @GetMapping("/actor/{actorId:\\d+}/image")

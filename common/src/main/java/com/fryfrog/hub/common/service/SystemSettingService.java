@@ -32,42 +32,12 @@ public class SystemSettingService {
     }
 
     private static final Map<String, String> KEY_MIGRATION = Map.ofEntries(
-            entry("tmdb.api-key", "hub.tmdb.api-key"),
-            entry("tmdb.language", "hub.tmdb.language"),
-            entry("tmdb.image-size", "hub.tmdb.image-size"),
-            entry("tmdb.auto-scrape", "hub.tmdb.auto-scrape"),
-            entry("tmdb.min-score", "hub.tmdb.min-score"),
-            entry("tmdb.include-adult", "hub.tmdb.include-adult"),
-            entry("comic.auto-scrape", "hub.comic.auto-scrape"),
-            entry("comic.min-score", "hub.comic.min-score"),
-            entry("music.auto-scrape", "hub.music.scrape.auto-scrape"),
-            entry("music.auto-writeback", "hub.music.auto-writeback"),
-            entry("music.use-folder-structure", "hub.music.use-folder-structure"),
-            entry("music.default-artist", "hub.music.default-artist"),
-            entry("music.scrape.enabled", "hub.music.scrape.enabled"),
-            entry("music.scrape.lyrics-fallback", "hub.music.scrape.lyrics-fallback"),
-            entry("music.scrape.cover-fallback", "hub.music.scrape.cover-fallback")
+            entry("tmdb.api-key", "hub.tmdb.api-key")
     );
 
     private static final Map<String, String> DEFAULT_SETTINGS = Map.ofEntries(
             // TMDB
             entry("tmdb.api-key", ""),
-            entry("tmdb.language", "zh-CN"),
-            entry("tmdb.image-size", "original"),
-            entry("tmdb.auto-scrape", "false"),
-            entry("tmdb.min-score", "0.0"),
-            entry("tmdb.include-adult", "true"),
-            // Comic
-            entry("comic.auto-scrape", "false"),
-            entry("comic.min-score", "0.0"),
-            // Music
-            entry("music.scrape.enabled", "true"),
-            entry("music.scrape.auto-scrape", "true"),
-            entry("music.auto-writeback", "true"),
-            entry("music.use-folder-structure", "true"),
-            entry("music.default-artist", ""),
-            entry("music.scrape.lyrics-fallback", "true"),
-            entry("music.scrape.cover-fallback", "true"),
             // Watcher
             entry("watcher.periodic-scan", "true"),
             entry("watcher.periodic-scan-interval", "300"),

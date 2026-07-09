@@ -2,11 +2,9 @@ package com.fryfrog.hub.comic.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fryfrog.hub.common.model.BaseEntity;
+import com.fryfrog.hub.common.model.MediaSeries;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Index;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -14,9 +12,9 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "comics", indexes = {
     @Index(name = "idx_comic_title", columnList = "title"),
-    @Index(name = "idx_comic_series", columnList = "series"),
     @Index(name = "idx_comic_favorite", columnList = "favorite"),
-    @Index(name = "idx_comic_file_path", columnList = "filePath")
+    @Index(name = "idx_comic_file_path", columnList = "filePath"),
+    @Index(name = "idx_comic_series_id", columnList = "series_id")
 })
 @Getter
 @Setter
@@ -32,8 +30,14 @@ public class Comic extends BaseEntity {
     @Schema(description = "作者", example = "谏山创")
     private String author;
 
-    @Schema(description = "系列名称", example = "进击的巨人")
-    private String series;
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "series_id")
+    @JsonIgnore
+    private MediaSeries seriesRef;
+
+    @Schema(description = "系列名称（过渡字段，绑定后由 seriesRef 提供）")
+    @Column(name = "series")
+    private String seriesName;
 
     @Schema(description = "卷号", example = "1")
     private Integer volume;
@@ -123,5 +127,11 @@ public class Comic extends BaseEntity {
     @JsonIgnore
     public String getFilePath() {
         return filePath;
+    }
+
+    @Schema(description = "系列名称")
+    @com.fasterxml.jackson.annotation.JsonGetter("series")
+    public String getSeries() {
+        return seriesRef != null ? seriesRef.getTitle() : seriesName;
     }
 }

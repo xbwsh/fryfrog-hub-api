@@ -34,6 +34,7 @@ public class ComicWatcherService {
     private final List<WatchService> watchServices = new ArrayList<>();
     private ExecutorService executor;
     private volatile boolean running = true;
+    private final java.util.concurrent.locks.ReentrantLock scrapeLock = new java.util.concurrent.locks.ReentrantLock();
 
     private List<String> getRootPaths() {
         return Arrays.stream(rootPathsConfig.split(","))
@@ -86,7 +87,8 @@ public class ComicWatcherService {
     private void registerDirectory(Path dir, WatchService ws) throws IOException {
         dir.register(ws,
                 StandardWatchEventKinds.ENTRY_CREATE,
-                StandardWatchEventKinds.ENTRY_MODIFY);
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.ENTRY_DELETE);
 
         try (var stream = Files.list(dir)) {
             stream.filter(Files::isDirectory).forEach(subDir -> {
@@ -117,6 +119,29 @@ public class ComicWatcherService {
                         Path parentDir = (Path) key.watchable();
                         Path fullPath = parentDir.resolve(fileName);
 
+                        // 文件删除事件 - 延迟较长以避免与文件移动操作冲突
+                        if (event.kind() == StandardWatchEventKinds.ENTRY_DELETE) {
+                            if (isSupportedFormat(fileName.toString())) {
+                                log.debug("Detected comic file deleted: {}", fullPath);
+                                executor.submit(() -> {
+                                    try {
+                                        Thread.sleep(5000);
+                                        scrapeLock.lock();
+                                        try {
+                                            metadataService.cleanupInvalidRecords();
+                                            log.debug("Cleaned up invalid comic records after file deletion");
+                                        } finally {
+                                            scrapeLock.unlock();
+                                        }
+                                    } catch (Exception e) {
+                                        log.warn("Failed to cleanup after file deletion: {}", e.getMessage());
+                                    }
+                                });
+                            }
+                            continue;
+                        }
+
+                        // 新建/修改事件
                         if (Files.isDirectory(fullPath)) {
                             try {
                                 registerDirectory(fullPath, ws);
@@ -133,15 +158,18 @@ public class ComicWatcherService {
                                 try {
                                     Thread.sleep(3000);
                                     if (Files.exists(fullPath) && Files.size(fullPath) > 0) {
-                                        Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
-                                        log.debug("Auto-indexed comic: {}", fileName);
-                                        if (comic != null && comic.getMetadataSourceId() == null) {
-                                            try {
+                                        scrapeLock.lock();
+                                        try {
+                                            Comic comic = metadataService.extractAndSaveMetadata(fullPath.toString());
+                                            log.debug("Auto-indexed comic: {}", fileName);
+                                            if (comic != null && comic.getMetadataSourceId() == null) {
                                                 mangaScrapeService.autoScrapeComic(comic);
                                                 log.debug("Auto-scraped comic: {}", fileName);
-                                            } catch (Exception e) {
-                                                log.warn("Failed to auto-scrape comic: {}", fileName, e);
                                             }
+                                        } catch (Exception e) {
+                                            log.warn("Failed to auto-index comic: {}", fileName, e);
+                                        } finally {
+                                            scrapeLock.unlock();
                                         }
                                     }
                                 } catch (Exception e) {

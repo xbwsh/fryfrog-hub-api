@@ -10,8 +10,12 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.List;
-import java.util.Objects;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -19,6 +23,9 @@ import java.util.stream.Collectors;
 public class BangumiService {
 
     private static final String BASE_URL = "https://api.bgm.tv";
+    private static final Pattern VOLUME_NAME_PATTERN_1 = Pattern.compile("\\((\\d+)\\)");
+    private static final Pattern VOLUME_NAME_PATTERN_2 = Pattern.compile("(?i)vol\\.?\\s*(\\d+)");
+    private static final Pattern VOLUME_NAME_PATTERN_3 = Pattern.compile("第\\s*(\\d+)\\s*卷");
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -28,81 +35,25 @@ public class BangumiService {
         this.objectMapper = objectMapper;
     }
 
-    public List<SearchResult> searchManga(String query) {
-        if (query == null || query.isBlank()) return List.of();
-
-        try {
-            String url = org.springframework.web.util.UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/subject/{query}")
-                    .queryParam("responseGroup", "large")
-                    .queryParam("max_results", 10)
-                    .queryParam("type", 1)
-                    .buildAndExpand(query)
-                    .toUriString();
-
-            String body = httpGetWithRetry(url);
-            if (body == null) return List.of();
-
-            var root = objectMapper.readTree(body);
-            var list = root.path("list");
-            if (list.isArray()) {
-                java.util.List<SearchResult> results = objectMapper.convertValue(list,
-                        objectMapper.getTypeFactory().constructCollectionType(List.class, SearchResult.class));
-                log.info("Bangumi search for '{}' returned {} results", query, results.size());
-                return results;
-            }
-        } catch (Exception e) {
-            log.error("Failed to search manga on Bangumi: {}", e.getMessage(), e);
-        }
-        return List.of();
-    }
-
     /**
-     * 搜索书籍（type=1），按子类型过滤
-     * @param subType "novel"=轻小说/小说, "manga"=漫画, null=不过滤
+     * 使用 Bangumi v0 API 搜索书籍（type=1）
      */
-    public List<SearchResult> searchBooks(String query, String subType) {
-        // 先用 v0 搜索 API 获取含 tags 的结果
-        List<SearchResult> all = searchV0Books(query);
-        if (subType == null || subType.isBlank()) return all;
-
-        List<SearchResult> filtered = all.stream()
-                .filter(r -> r.getTags() != null)
-                .filter(r -> {
-                    boolean hasNovel = r.getTags().stream().anyMatch(t ->
-                            "轻小说".equals(t.getName()) || "小说".equals(t.getName()));
-                    boolean hasManga = r.getTags().stream().anyMatch(t ->
-                            "漫画".equals(t.getName()));
-                    if ("novel".equalsIgnoreCase(subType)) {
-                        return hasNovel;
-                    } else if ("manga".equalsIgnoreCase(subType)) {
-                        return hasManga;
-                    }
-                    return true;
-                })
-                .collect(Collectors.toList());
-
-        return filtered.isEmpty() ? all : filtered;
-    }
-
-    /**
-     * 使用 Bangumi v0 API 搜索书籍，返回含 tags 的完整结果
-     */
-    public List<SearchResult> searchV0Books(String query) {
+    public List<SearchResult> search(String query) {
         if (query == null || query.isBlank()) return List.of();
 
         try {
             String url = BASE_URL + "/v0/search/subjects";
-            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-            headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("User-Agent", "FryfrogHub/0.1.0");
 
             String bodyJson = "{\"keyword\":\"" + query.replace("\"", "\\\"") + "\",\"filter\":{\"type\":[1]}}";
-            org.springframework.http.HttpEntity<String> request = new org.springframework.http.HttpEntity<>(bodyJson, headers);
+            HttpEntity<String> request = new HttpEntity<>(bodyJson, headers);
 
-            ResponseEntity<String> response = restTemplate.exchange(url, org.springframework.http.HttpMethod.POST, request, String.class);
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, request, String.class);
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                // 回退到旧版 API
-                return searchManga(query);
+                log.warn("Bangumi v0 search returned status {} for '{}'", response.getStatusCode(), query);
+                return List.of();
             }
 
             var root = objectMapper.readTree(response.getBody());
@@ -110,13 +61,68 @@ public class BangumiService {
             if (data.isArray()) {
                 List<SearchResult> results = objectMapper.convertValue(data,
                         objectMapper.getTypeFactory().constructCollectionType(List.class, SearchResult.class));
-                log.info("Bangumi v0 search for '{}' returned {} results", query, results.size());
+                log.info("Bangumi search for '{}' returned {} results", query, results.size());
                 return results;
             }
         } catch (Exception e) {
-            log.warn("Failed to search v0 books on Bangumi: {}, fallback to old API", e.getMessage());
+            log.error("Failed to search on Bangumi: {}", e.getMessage(), e);
         }
-        return searchManga(query);
+        return List.of();
+    }
+
+    /**
+     * 搜索书籍并按子类型过滤
+     * @param subType "novel"=轻小说/小说, "manga"=漫画, null=不过滤
+     */
+    public List<SearchResult> searchBooks(String query, String subType) {
+        List<SearchResult> all = search(query);
+        if (subType == null || subType.isBlank()) return all;
+
+        List<SearchResult> filtered = all.stream()
+                .filter(r -> matchSubType(r, subType))
+                .collect(Collectors.toList());
+
+        log.info("Bangumi searchBooks '{}' subType='{}': {} total, {} matched",
+                query, subType, all.size(), filtered.size());
+        if (!all.isEmpty()) {
+            log.info("All candidates: {}",
+                    all.stream().limit(8)
+                            .map(r -> r.getId() + ":" + r.getNameCn() + "/" + r.getName()
+                                    + " [platform=" + r.getPlatform() + ", tags=" + formatTags(r.getTags()) + "]"
+                                    + (matchSubType(r, subType) ? " ✓" : " ✗"))
+                            .toList());
+        }
+
+        return filtered;
+    }
+
+    private boolean matchSubType(SearchResult r, String subType) {
+        // platform 字段最可靠，有 platform 时只用 platform 判断
+        if (r.getPlatform() != null) {
+            if ("novel".equalsIgnoreCase(subType)) {
+                return r.getPlatform().contains("小说") || r.getPlatform().equalsIgnoreCase("novel");
+            } else if ("manga".equalsIgnoreCase(subType)) {
+                return r.getPlatform().contains("漫画");
+            }
+            return false;
+        }
+
+        // platform 为空时回退到 tags
+        if (r.getTags() != null) {
+            if ("novel".equalsIgnoreCase(subType)) {
+                return r.getTags().stream().anyMatch(t ->
+                        "轻小说".equals(t.getName()) || "小说".equals(t.getName()));
+            } else if ("manga".equalsIgnoreCase(subType)) {
+                return r.getTags().stream().anyMatch(t ->
+                        "漫画".equals(t.getName()));
+            }
+        }
+        return false;
+    }
+
+    private String formatTags(List<SearchResult.Tag> tags) {
+        if (tags == null) return "null";
+        return tags.stream().map(SearchResult.Tag::getName).collect(Collectors.joining(","));
     }
 
     public SubjectDetail getSubjectDetail(Integer subjectId) {
@@ -183,6 +189,124 @@ public class BangumiService {
         return null;
     }
 
+    // ==================== 共享工具方法 ====================
+
+    /**
+     * 按评分人数降序排列搜索结果
+     */
+    public static List<SearchResult> sortByPopularity(List<SearchResult> results) {
+        List<SearchResult> sorted = new ArrayList<>(results);
+        sorted.sort(Comparator.<SearchResult>comparingInt(r -> {
+            SearchResult.Rating rating = r.getRating();
+            return rating != null && rating.getTotal() != null ? rating.getTotal() : 0;
+        }).reversed());
+        return sorted;
+    }
+
+    /**
+     * 从 tags 中提取前5个作为 genre 字符串
+     */
+    public static String extractGenresFromTags(List<SearchResult.Tag> tags) {
+        if (tags == null || tags.isEmpty()) return null;
+        return tags.stream()
+                .map(SearchResult.Tag::getName)
+                .filter(Objects::nonNull)
+                .limit(5)
+                .reduce((a, b) -> a + ", " + b)
+                .orElse(null);
+    }
+
+    /**
+     * 从 SubjectDetail 的 infobox 中提取指定 key 的值
+     */
+    public static String extractInfoboxValue(SubjectDetail detail, String key) {
+        if (detail.getInfobox() == null) return null;
+        return detail.getInfobox().stream()
+                .filter(e -> key.equals(e.getKey()))
+                .map(e -> String.valueOf(e.getValue()))
+                .filter(v -> v != null && !v.isBlank())
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * 从关联条目名称中提取卷号
+     */
+    public static Integer extractVolumeFromRelatedName(String name) {
+        Matcher m = VOLUME_NAME_PATTERN_1.matcher(name);
+        if (m.find()) return Integer.parseInt(m.group(1));
+        m = VOLUME_NAME_PATTERN_2.matcher(name);
+        if (m.find()) return Integer.parseInt(m.group(1));
+        m = VOLUME_NAME_PATTERN_3.matcher(name);
+        if (m.find()) return Integer.parseInt(m.group(1));
+        return null;
+    }
+
+    /**
+     * 获取关联条目并构建卷号→条目映射
+     */
+    public Map<Integer, RelatedSubject> buildVolumeSubjectMap(Integer subjectId) {
+        Map<Integer, RelatedSubject> map = new HashMap<>();
+        List<RelatedSubject> related = getRelatedSubjects(subjectId);
+        for (RelatedSubject sub : related) {
+            if (sub.getType() == null || sub.getType() != 1) continue;
+            String name = sub.getName();
+            if (name == null) continue;
+            Integer vol = extractVolumeFromRelatedName(name);
+            if (vol != null) map.put(vol, sub);
+        }
+        log.info("Found {} volume subjects from related subjects for Bangumi id={}", map.size(), subjectId);
+        return map;
+    }
+
+    /**
+     * 下载 Bangumi 封面到指定目录
+     * @return 本地文件路径，失败返回 null
+     */
+    public String downloadCover(SubjectDetail detail, String filePrefix, Path targetDir) {
+        String coverUrl = null;
+        if (detail.getImages() != null) {
+            coverUrl = detail.getImages().getLarge();
+            if (coverUrl == null || coverUrl.isBlank()) {
+                coverUrl = detail.getImages().getCommon();
+            }
+        }
+        return downloadCover(coverUrl, filePrefix, targetDir);
+    }
+
+    /**
+     * 下载指定 URL 的封面到指定目录
+     * @return 本地文件路径，失败返回 null
+     */
+    public String downloadCover(String coverUrl, String filePrefix, Path targetDir) {
+        if (coverUrl == null || coverUrl.isBlank()) return null;
+
+        try {
+            Files.createDirectories(targetDir);
+            Path coverPath = targetDir.resolve(filePrefix + "_cover.jpg");
+            if (Files.exists(coverPath)) {
+                return coverPath.toAbsolutePath().toString();
+            }
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent", "FryfrogHub/0.1.0");
+            HttpEntity<Void> request = new HttpEntity<>(headers);
+            ResponseEntity<byte[]> response = restTemplate.exchange(
+                    coverUrl, HttpMethod.GET, request, byte[].class);
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Files.write(coverPath, response.getBody());
+                log.info("Downloaded Bangumi cover to {}", coverPath);
+                return coverPath.toAbsolutePath().toString();
+            }
+        } catch (IOException e) {
+            log.warn("Failed to download Bangumi cover: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    // ==================== 内部方法 ====================
+
     private String httpGetWithRetry(String url) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("User-Agent", "FryfrogHub/0.1.0");
@@ -204,6 +328,8 @@ public class BangumiService {
         }
         return null;
     }
+
+    // ==================== DTO ====================
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -240,6 +366,9 @@ public class BangumiService {
 
         @JsonProperty("tags")
         private List<Tag> tags;
+
+        @JsonProperty("platform")
+        private String platform;
 
         public Double getScore() {
             return rating != null ? rating.getScore() : null;
@@ -322,6 +451,9 @@ public class BangumiService {
         @JsonProperty("infobox")
         private List<InfoboxEntry> infobox;
 
+        @JsonProperty("platform")
+        private String platform;
+
         public Double getScore() {
             return rating != null ? rating.getScore() : null;
         }
@@ -338,6 +470,40 @@ public class BangumiService {
 
             @JsonProperty("value")
             private Object value;
+        }
+
+        public boolean isNovel() {
+            // 1. 优先用 platform 字段（"小说"=轻小说/小说）
+            if (platform != null && (platform.contains("小说") || platform.equalsIgnoreCase("novel"))) {
+                return true;
+            }
+            // 2. 检查 tags
+            if (tags != null) {
+                boolean hasNovelTag = tags.stream().anyMatch(t ->
+                        "轻小说".equals(t.getName()) || "小说".equals(t.getName()));
+                if (hasNovelTag) return true;
+            }
+            // 3. 检查 infobox 中的 "文库" 或 "书籍" 信息
+            if (infobox != null) {
+                boolean hasNovelInfo = infobox.stream().anyMatch(e ->
+                        "文库".equals(e.getKey()) || "出版社".equals(e.getKey()));
+                if (hasNovelInfo) return true;
+            }
+            return false;
+        }
+
+        public boolean isManga() {
+            // 1. 优先用 platform 字段（"漫画"）
+            if (platform != null && platform.contains("漫画")) {
+                return true;
+            }
+            // 2. 检查 tags
+            if (tags != null) {
+                boolean hasMangaTag = tags.stream().anyMatch(t ->
+                        "漫画".equals(t.getName()));
+                if (hasMangaTag) return true;
+            }
+            return false;
         }
     }
 
