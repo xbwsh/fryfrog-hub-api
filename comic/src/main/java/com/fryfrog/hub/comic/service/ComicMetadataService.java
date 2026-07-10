@@ -49,7 +49,8 @@ public class ComicMetadataService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        return paths.isEmpty() ? "./media-library/comic" : paths.get(0);
+        String raw = paths.isEmpty() ? "./media-library/comic" : paths.get(0);
+        return Paths.get(raw).toAbsolutePath().normalize().toString();
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("cbz", "cbr", "zip", "rar", "epub");
@@ -217,23 +218,20 @@ public class ComicMetadataService {
     }
 
     public int cleanupInvalidRecords() {
-        return transactionTemplate.execute(status -> {
-            int removed = 0;
-            int pageNum = 0;
-            final int pageSize = 100;
-            org.springframework.data.domain.Page<Comic> page;
+        int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<Comic> page;
 
-            do {
-                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-                List<Long> idsToDelete = new ArrayList<>();
-                for (Comic comic : page.getContent()) {
-                    if (comic.getFilePath() == null || !Files.exists(Paths.get(comic.getFilePath()))) {
-                        log.debug("Removing invalid record: {} (path: {})", comic.getTitle(), comic.getFilePath());
-                        idsToDelete.add(comic.getId());
-                    }
-                }
-                if (!idsToDelete.isEmpty()) {
-                    // 收集需要检查的 seriesId
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = page.getContent().stream()
+                    .filter(c -> c.getFilePath() == null || !Files.exists(Paths.get(c.getFilePath())))
+                    .map(Comic::getId)
+                    .toList();
+
+            if (!idsToDelete.isEmpty()) {
+                removed += transactionTemplate.execute(status -> {
                     Set<Long> seriesIdsToCheck = new HashSet<>();
                     for (Long id : idsToDelete) {
                         Comic comic = repository.findById(id).orElse(null);
@@ -243,24 +241,22 @@ public class ComicMetadataService {
                         readingProgressRepository.findByComicId(id).ifPresent(readingProgressRepository::delete);
                     }
                     repository.deleteAllById(idsToDelete);
-                    removed += idsToDelete.size();
 
-                    // 清理空的 MediaSeries
                     for (Long seriesId : seriesIdsToCheck) {
                         if (repository.findBySeriesRef_Id(seriesId).isEmpty()) {
                             seriesCharacterRepository.deleteBySeries_Id(seriesId);
                             seriesRepository.deleteById(seriesId);
-                            log.debug("Removed empty MediaSeries id={}", seriesId);
                         }
                     }
-                }
-            } while (page.hasNext());
-
-            if (removed > 0) {
-                log.info("Comic cleanup completed: removed {} invalid records", removed);
+                    return idsToDelete.size();
+                });
             }
-            return removed;
-        });
+        } while (page.hasNext());
+
+        if (removed > 0) {
+            log.info("Comic cleanup completed: removed {} invalid records", removed);
+        }
+        return removed;
     }
 
     public void scanFromRoot() {

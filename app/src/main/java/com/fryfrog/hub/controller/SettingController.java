@@ -24,8 +24,7 @@ public class SettingController {
     private final PeriodicScanScheduler scanScheduler;
 
     private static final Set<String> SENSITIVE_KEYS = Set.of(
-            "tmdb.api-key",
-            "hub.tmdb.api-key"
+            "tmdb.api-key"
     );
 
     public SettingController(SystemSettingService settingService, PeriodicScanScheduler scanScheduler) {
@@ -59,8 +58,7 @@ public class SettingController {
     @GetMapping("/{key}")
     @Operation(summary = "获取单个设置", description = "获取设置值，敏感字段只返回是否配置")
     public ResponseEntity<ApiResponse<SystemSetting>> getSetting(@PathVariable String key) {
-        String dbKey = key.startsWith("hub.") ? key : "hub." + key;
-        return settingService.getByKey(dbKey)
+        return settingService.getByKey(key)
                 .map(s -> {
                     SystemSetting dto = new SystemSetting();
                     dto.setId(s.getId());
@@ -83,20 +81,16 @@ public class SettingController {
     public ResponseEntity<ApiResponse<SystemSetting>> updateSetting(
             @PathVariable String key,
             @RequestBody SettingUpdateRequest request) {
-        String dbKey = key.startsWith("hub.") ? key : "hub." + key;
-        SystemSetting setting = settingService.setValue(dbKey, request.getValue(), null);
+        SystemSetting setting = settingService.setValue(key, request.getValue(), null);
 
-        if (dbKey.endsWith("watcher.periodic-scan-interval")) {
+        if (key.equals("watcher.periodic-scan-interval")) {
             try {
                 int interval = Integer.parseInt(request.getValue());
                 scanScheduler.updateInterval(interval);
             } catch (NumberFormatException ignored) {}
         }
 
-        String displayKey = setting.getKey().startsWith("hub.") ? setting.getKey().substring(4) : setting.getKey();
-        setting.setKey(displayKey);
-
-        if (SENSITIVE_KEYS.contains(key) || SENSITIVE_KEYS.contains(dbKey)) {
+        if (SENSITIVE_KEYS.contains(key)) {
             setting.setValue("***已配置***");
         }
 
@@ -107,17 +101,9 @@ public class SettingController {
     @Operation(summary = "检查 TMDB 配置状态")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getTmdbStatus() {
         Map<String, Object> status = new LinkedHashMap<>();
-        String apiKey = settingService.getValue("hub.tmdb.api-key", "");
+        String apiKey = settingService.getValue("tmdb.api-key", "");
         status.put("configured", !apiKey.isBlank());
         return ResponseEntity.ok(ApiResponse.success(status));
     }
 
-    @GetMapping("/performance")
-    @Operation(summary = "获取性能相关设置")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getPerformanceSettings() {
-        Map<String, Object> settings = new LinkedHashMap<>();
-        settings.put("watcher.periodic-scan", settingService.getBoolean("watcher.periodic-scan", true));
-        settings.put("watcher.periodic-scan-interval", settingService.getInteger("watcher.periodic-scan-interval", 300));
-        return ResponseEntity.ok(ApiResponse.success(settings));
-    }
 }

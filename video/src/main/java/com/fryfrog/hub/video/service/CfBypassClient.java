@@ -45,15 +45,15 @@ public class CfBypassClient {
     }
 
     public String getCfBypassUrl() {
-        return settingService.getValue("hub.hanime.cf-bypass-url", "http://localhost:8000");
+        return settingService.getValue("hanime.cf-bypass-url", "http://localhost:8000");
     }
 
     public boolean isUseProxy() {
-        return settingService.getBoolean("hub.hanime.use-proxy", false);
+        return settingService.getBoolean("hanime.use-proxy", false);
     }
 
     public int getMaxRetries() {
-        return settingService.getInteger("hub.hanime.scraper.max-retries", 3);
+        return settingService.getInteger("hanime.scraper.max-retries", 3);
     }
 
     /**

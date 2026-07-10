@@ -3,6 +3,7 @@ package com.fryfrog.hub.ebook.service;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.repository.EbookRepository;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class EbookMetadataScrapeService {
     private final OpenLibraryService openLibraryService;
     private final RestTemplate scraperRestTemplate;
     private final ScrapeProgressService scrapeProgressService;
+    private final SystemSettingService settingService;
 
     public Ebook updateMetadata(Long ebookId, Map<String, Object> metadata) {
         Ebook ebook = repository.findById(ebookId)
@@ -65,6 +67,10 @@ public class EbookMetadataScrapeService {
 
     @Async
     public void autoScrapeAll() {
+        if (!settingService.getBoolean("scrape.auto-scrape", true)) {
+            log.debug("Auto-scrape is disabled by setting");
+            return;
+        }
         List<Ebook> unboundEbooks = repository.findAll().stream()
                 .filter(e -> e.getOpenLibraryId() == null)
                 .toList();
@@ -74,7 +80,7 @@ public class EbookMetadataScrapeService {
             return;
         }
 
-        log.info("Starting auto-scrape for {} ebooks", unboundEbooks.size());
+        log.debug("Starting auto-scrape for {} ebooks", unboundEbooks.size());
         scrapeProgressService.start("ebook", unboundEbooks.size());
 
         for (Ebook ebook : unboundEbooks) {
@@ -90,7 +96,7 @@ public class EbookMetadataScrapeService {
         }
 
         scrapeProgressService.finish("ebook");
-        log.info("Auto-scrape completed");
+        log.debug("Auto-scrape completed");
     }
 
     @Transactional

@@ -81,11 +81,12 @@ public class VideoService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        return paths.isEmpty() ? "./media-library/video" : paths.get(0);
+        String raw = paths.isEmpty() ? "./media-library/video" : paths.get(0);
+        return Paths.get(raw).toAbsolutePath().normalize().toString();
     }
 
     private boolean isTmdbConfigured() {
-        String apiKey = settingService.getValue("hub.tmdb.api-key", "");
+        String apiKey = settingService.getValue("tmdb.api-key", "");
         return apiKey != null && !apiKey.isBlank();
     }
 
@@ -282,41 +283,38 @@ public class VideoService {
     }
 
     public int cleanupInvalidRecords() {
-        return transactionTemplate.execute(status -> {
-            int removed = 0;
-            int pageNum = 0;
-            final int pageSize = 100;
-            org.springframework.data.domain.Page<Video> page;
+        int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<Video> page;
 
-            do {
-                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-                List<Long> idsToDelete = new ArrayList<>();
-                for (Video video : page.getContent()) {
-                    if (video.getFilePath() == null || !Files.exists(Paths.get(video.getFilePath()))) {
-                        log.info("Removing invalid record: {} (path: {})", video.getTitle(), video.getFilePath());
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Video> invalidVideos = page.getContent().stream()
+                    .filter(v -> v.getFilePath() == null || !Files.exists(Paths.get(v.getFilePath())))
+                    .toList();
+
+            if (!invalidVideos.isEmpty()) {
+                removed += transactionTemplate.execute(status -> {
+                    for (Video video : invalidVideos) {
                         if (video.getSeries() != null) {
                             seriesService.removeVideoFromSeries(video);
                         }
-                        idsToDelete.add(video.getId());
+                        actorRepository.deleteByVideo_Id(video.getId());
+                        watchProgressRepository.findByVideo_Id(video.getId()).ifPresent(watchProgressRepository::delete);
                     }
-                }
-                if (!idsToDelete.isEmpty()) {
-                    for (Long id : idsToDelete) {
-                        actorRepository.deleteByVideo_Id(id);
-                        watchProgressRepository.findByVideo_Id(id).ifPresent(watchProgressRepository::delete);
-                    }
-                    repository.deleteAllById(idsToDelete);
+                    repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
                     entityManager.clear();
-                    removed += idsToDelete.size();
-                }
-        } while (page.hasNext());
-            seriesService.cleanupEmptySeries();
-
-            if (removed > 0) {
-                log.info("Cleanup completed: removed {} invalid records", removed);
+                    return invalidVideos.size();
+                });
             }
-            return removed;
-        });
+        } while (page.hasNext());
+        seriesService.cleanupEmptySeries();
+
+        if (removed > 0) {
+            log.info("Cleanup completed: removed {} invalid records", removed);
+        }
+        return removed;
     }
 
     public Video extractAndSaveMetadata(String filePath) {
@@ -493,7 +491,7 @@ public class VideoService {
     }
 
     public void scanDirectory(String directoryPath, Long libraryId) {
-        log.info("Scanning directory: {} (libraryId={})", directoryPath, libraryId);
+        log.debug("Scanning directory: {} (libraryId={})", directoryPath, libraryId);
         try {
             Path dir = Paths.get(directoryPath);
             if (!Files.isDirectory(dir)) {
@@ -521,7 +519,7 @@ public class VideoService {
                             }
                         });
             }
-            log.info("Scan complete: {} video files found in {}", count[0], directoryPath);
+            log.debug("Scan complete: {} video files found in {}", count[0], directoryPath);
 
             autoGroupSeries();
         } catch (Exception e) {
@@ -931,12 +929,11 @@ public class VideoService {
             Path videoPath = Paths.get(video.getFilePath());
             Path targetPath = metadataDir.resolve(video.getFileName());
 
-            log.info("Moving video: {} -> {}", videoPath, targetPath);
-
             if (videoPath.equals(targetPath)) {
-                log.debug("Video already in metadata dir: {}", videoPath);
                 return;
             }
+
+            log.debug("Moving video: {} -> {}", videoPath, targetPath);
 
             if (!Files.exists(videoPath)) {
                 log.warn("Source video not found: {}", videoPath);
@@ -1277,9 +1274,9 @@ public class VideoService {
         }
 
         MediaLibrary library = mediaLibraryService.getLibraryById(libraryId);
-        log.info("About to scan directory: {} for libraryId={}", library.getPath(), libraryId);
+        log.debug("About to scan directory: {} for libraryId={}", library.getPath(), libraryId);
         scanDirectory(library.getPath(), libraryId);
-        log.info("Finished scanning directory for libraryId={}", libraryId);
+        log.debug("Finished scanning directory for libraryId={}", libraryId);
 
         autoScrapeAll();
     }
@@ -1309,9 +1306,13 @@ public class VideoService {
     }
 
     public List<Video> autoScrapeAll() {
+        if (!settingService.getBoolean("scrape.auto-scrape", true)) {
+            log.debug("Auto-scrape is disabled by setting");
+            return repository.findAll();
+        }
         List<Video> videos = repository.findByTmdbIdIsNull();
         if (videos.isEmpty()) {
-            log.info("No unbound videos to scrape");
+            log.debug("No unbound videos to scrape");
             return repository.findAll();
         }
 

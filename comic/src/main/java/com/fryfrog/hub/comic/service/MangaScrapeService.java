@@ -7,6 +7,7 @@ import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
 import com.fryfrog.hub.common.repository.MediaSeriesRepository;
 import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.repository.ComicRepository;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,7 @@ public class MangaScrapeService {
     private final ScrapeProgressService scrapeProgressService;
     private final MediaSeriesRepository seriesRepo;
     private final MediaSeriesCharacterRepository mediaCharRepo;
+    private final SystemSettingService settingService;
 
     public List<BangumiService.SearchResult> searchFromBangumi(String query) {
         String cleaned = cleanTitleForSearch(query);
@@ -252,6 +254,10 @@ public class MangaScrapeService {
 
     @Async
     public void autoScrapeAll() {
+        if (!settingService.getBoolean("scrape.auto-scrape", true)) {
+            log.debug("Auto-scrape is disabled by setting");
+            return;
+        }
         List<Comic> unboundComics = repository.findByMetadataSourceIdIsNullOrderByVolumeAsc();
         log.debug("Found {} unbound comics, starting auto-scrape", unboundComics.size());
 
@@ -274,7 +280,7 @@ public class MangaScrapeService {
         }
         scrapeProgressService.finish("comic");
         if (!unboundComics.isEmpty()) {
-            log.info("Auto-scrape completed");
+            log.debug("Auto-scrape completed");
         }
     }
 

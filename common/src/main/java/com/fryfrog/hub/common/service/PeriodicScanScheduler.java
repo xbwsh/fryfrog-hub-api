@@ -19,7 +19,9 @@ public class PeriodicScanScheduler implements ApplicationListener<ContextRefresh
 
     private static final String INTERVAL_KEY = "hub.watcher.periodic-scan-interval";
     private static final String SWITCH_KEY = "hub.watcher.periodic-scan";
-    private static final int DEFAULT_INTERVAL = 300;
+
+    @Value("${watcher.periodic-scan-interval:30}")
+    private int configInterval = 30;
 
     private final SystemSettingService settingService;
     private ScheduledExecutorService scheduler;
@@ -44,8 +46,8 @@ public class PeriodicScanScheduler implements ApplicationListener<ContextRefresh
             t.setDaemon(true);
             return t;
         });
-        int interval = settingService.getInteger(INTERVAL_KEY, DEFAULT_INTERVAL);
-        scheduler.scheduleWithFixedDelay(this::runAll, interval, interval, TimeUnit.SECONDS);
+        int interval = settingService.getInteger(INTERVAL_KEY, configInterval);
+        scheduler.scheduleWithFixedDelay(this::runAll, 0, interval, TimeUnit.SECONDS);
         log.info("Shared periodic scan scheduler started: {} tasks, interval {}s", scanTasks.size(), interval);
     }
 

@@ -41,8 +41,8 @@ public class HanimeScraperService {
 
     @PostConstruct
     public void init() {
-        int ttl = settingService.getInteger("hub.hanime.scraper.cache-ttl", 60);
-        int maxSize = settingService.getInteger("hub.hanime.scraper.cache-max-size", 1000);
+        int ttl = settingService.getInteger("hanime.scraper.cache-ttl", 60);
+        int maxSize = settingService.getInteger("hanime.scraper.cache-max-size", 1000);
         this.metadataCache = Caffeine.newBuilder()
                 .maximumSize(maxSize)
                 .expireAfterWrite(ttl, TimeUnit.MINUTES)
@@ -51,11 +51,11 @@ public class HanimeScraperService {
     }
 
     public String getBaseUrl() {
-        return settingService.getValue("hub.hanime.base-url", "https://hanime1.me");
+        return settingService.getValue("hanime.base-url", "https://hanime1.me");
     }
 
     public long getRequestInterval() {
-        return settingService.getInteger("hub.hanime.scraper.request-interval", 1500);
+        return settingService.getInteger("hanime.scraper.request-interval", 1500);
     }
 
     /**

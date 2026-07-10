@@ -52,7 +52,8 @@ public class MusicMetadataService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        return paths.isEmpty() ? "./media-library/music" : paths.get(0);
+        String raw = paths.isEmpty() ? "./media-library/music" : paths.get(0);
+        return Paths.get(raw).toAbsolutePath().normalize().toString();
     }
 
     public boolean isUseFolderStructure() {
@@ -263,7 +264,9 @@ public class MusicMetadataService {
             }
         }
 
-        log.info("Reorganize complete, moved {} tracks", moved);
+        if (moved > 0) {
+            log.info("Reorganize complete, moved {} tracks", moved);
+        }
         return moved;
     }
 
@@ -513,35 +516,33 @@ public class MusicMetadataService {
     }
 
     public int cleanupInvalidRecords() {
-        return transactionTemplate.execute(status -> {
-            int removed = 0;
-            int pageNum = 0;
-            final int pageSize = 100;
-            org.springframework.data.domain.Page<MusicTrack> page;
+        int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<MusicTrack> page;
 
-            do {
-                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-                List<Long> idsToDelete = new ArrayList<>();
-                for (MusicTrack track : page.getContent()) {
-                    if (track.getFilePath() == null || !Files.exists(Paths.get(track.getFilePath()))) {
-                        log.debug("Removing invalid record: {} (path: {})", track.getTitle(), track.getFilePath());
-                        idsToDelete.add(track.getId());
-                    }
-                }
-                if (!idsToDelete.isEmpty()) {
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = page.getContent().stream()
+                    .filter(t -> t.getFilePath() == null || !Files.exists(Paths.get(t.getFilePath())))
+                    .map(MusicTrack::getId)
+                    .toList();
+
+            if (!idsToDelete.isEmpty()) {
+                removed += transactionTemplate.execute(status -> {
                     for (Long id : idsToDelete) {
                         playlistTrackRepository.deleteByTrack_Id(id);
                     }
                     repository.deleteAllById(idsToDelete);
-                    removed += idsToDelete.size();
-                }
-            } while (page.hasNext());
-
-            if (removed > 0) {
-                log.info("Music cleanup completed: removed {} invalid records", removed);
+                    return idsToDelete.size();
+                });
             }
-            return removed;
-        });
+        } while (page.hasNext());
+
+        if (removed > 0) {
+            log.info("Music cleanup completed: removed {} invalid records", removed);
+        }
+        return removed;
     }
 
     public void scanFromRoot() {

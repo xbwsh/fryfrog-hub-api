@@ -60,7 +60,8 @@ public class EbookService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        return paths.isEmpty() ? "./media-library/ebook" : paths.get(0);
+        String raw = paths.isEmpty() ? "./media-library/ebook" : paths.get(0);
+        return Paths.get(raw).toAbsolutePath().normalize().toString();
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("epub", "pdf", "mobi", "azw", "azw3", "fb2", "txt");
@@ -271,22 +272,20 @@ public class EbookService {
     }
 
     public int cleanupInvalidRecords() {
-        return transactionTemplate.execute(status -> {
-            int removed = 0;
-            int pageNum = 0;
-            final int pageSize = 100;
-            org.springframework.data.domain.Page<Ebook> page;
+        int removed = 0;
+        int pageNum = 0;
+        final int pageSize = 100;
+        org.springframework.data.domain.Page<Ebook> page;
 
-            do {
-                page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
-                List<Long> idsToDelete = new ArrayList<>();
-                for (Ebook ebook : page.getContent()) {
-                    if (ebook.getFilePath() == null || !Files.exists(Paths.get(ebook.getFilePath()))) {
-                        log.info("Removing invalid record: {} (path: {})", ebook.getTitle(), ebook.getFilePath());
-                        idsToDelete.add(ebook.getId());
-                    }
-                }
-                if (!idsToDelete.isEmpty()) {
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            List<Long> idsToDelete = page.getContent().stream()
+                    .filter(e -> e.getFilePath() == null || !Files.exists(Paths.get(e.getFilePath())))
+                    .map(Ebook::getId)
+                    .toList();
+
+            if (!idsToDelete.isEmpty()) {
+                removed += transactionTemplate.execute(status -> {
                     Set<Long> seriesIdsToCheck = new HashSet<>();
                     for (Long id : idsToDelete) {
                         Ebook ebook = repository.findById(id).orElse(null);
@@ -296,23 +295,22 @@ public class EbookService {
                         readingProgressRepository.findByEbookId(id).ifPresent(readingProgressRepository::delete);
                     }
                     repository.deleteAllById(idsToDelete);
-                    removed += idsToDelete.size();
 
                     for (Long seriesId : seriesIdsToCheck) {
                         if (repository.findBySeriesRef_Id(seriesId).isEmpty()) {
                             seriesCharacterRepository.deleteBySeries_Id(seriesId);
                             seriesRepository.deleteById(seriesId);
-                            log.debug("Removed empty MediaSeries id={}", seriesId);
                         }
                     }
-                }
-            } while (page.hasNext());
-
-            if (removed > 0) {
-                log.info("Ebook cleanup completed: removed {} invalid records", removed);
+                    return idsToDelete.size();
+                });
             }
-            return removed;
-        });
+        } while (page.hasNext());
+
+        if (removed > 0) {
+            log.info("Ebook cleanup completed: removed {} invalid records", removed);
+        }
+        return removed;
     }
 
     public void scanFromRoot() {

@@ -30,7 +30,7 @@ public class MusicScrapeService {
     private String rootPathsConfig;
 
     public boolean isScrapeEnabled() {
-        return true;
+        return settingService.getBoolean("scrape.auto-scrape", true);
     }
 
     public boolean needsScraping(MusicTrack track) {

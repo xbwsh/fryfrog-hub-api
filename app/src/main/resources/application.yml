@@ -24,7 +24,7 @@ spring:
 
 watcher:
   periodic-scan: true
-  periodic-scan-interval: ${PERIODIC_SCAN_INTERVAL:300}
+  periodic-scan-interval: ${PERIODIC_SCAN_INTERVAL:30}
 
 hub:
   auth:

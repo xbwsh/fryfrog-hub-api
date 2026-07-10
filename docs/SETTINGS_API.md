@@ -33,9 +33,9 @@ Base URL: `http://localhost:20058/api/v1/settings`
 | `/{key}` | GET | 获取单个设置 |
 | `/{key}` | PUT | 更新设置 |
 | `/tmdb/status` | GET | 检查TMDB配置状态 |
-| `/performance` | GET | 获取性能相关设置 |
-
 ---
+
+
 
 ## 接口详情
 
@@ -55,14 +55,32 @@ curl http://localhost:20058/api/v1/settings
     {
       "id": 1,
       "key": "tmdb.api-key",
-      "value": "your_api_key",
-      "description": "TMDB API密钥"
+      "value": "***已配置***",
+      "description": null
     },
     {
       "id": 2,
-      "key": "tmdb.language",
-      "value": "zh-CN",
-      "description": "TMDB语言设置"
+      "key": "tmdb.auto-scrape",
+      "value": "true",
+      "description": null
+    },
+    {
+      "id": 3,
+      "key": "scrape.auto-scrape",
+      "value": "true",
+      "description": null
+    },
+    {
+      "id": 4,
+      "key": "watcher.periodic-scan",
+      "value": "true",
+      "description": null
+    },
+    {
+      "id": 5,
+      "key": "watcher.periodic-scan-interval",
+      "value": "60",
+      "description": null
     }
   ]
 }
@@ -143,11 +161,7 @@ curl http://localhost:20058/api/v1/settings/tmdb/status
 {
   "code": 200,
   "data": {
-    "configured": true,
-    "language": "zh-CN",
-    "image-size": "original",
-    "auto-scrape": false,
-    "include-adult": true
+    "configured": true
   }
 }
 ```
@@ -156,35 +170,8 @@ curl http://localhost:20058/api/v1/settings/tmdb/status
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | configured | Boolean | 是否已配置API密钥 |
-| language | String | 语言设置 |
-| image-size | String | 图片尺寸 |
-| auto-scrape | Boolean | 是否自动刮削 |
-| include-adult | Boolean | 是否包含成人内容 |
 
 ---
-
-### GET `/performance` 获取性能相关设置
-
-```bash
-curl http://localhost:20058/api/v1/settings/performance
-```
-
-**Response 示例**:
-```json
-{
-  "code": 200,
-  "data": {
-    "watcher.periodic-scan": true,
-    "watcher.periodic-scan-interval": 300
-  }
-}
-```
-
-**字段说明**:
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| watcher.periodic-scan | Boolean | 是否启用定期扫描 |
-| watcher.periodic-scan-interval | Integer | 扫描间隔（秒） |
 
 ---
 
@@ -197,35 +184,15 @@ curl http://localhost:20058/api/v1/settings/performance
 | tmdb.api-key | String | 空 | TMDB API密钥 |
 | tmdb.language | String | zh-CN | 语言（zh-CN/en-US等） |
 | tmdb.image-size | String | original | 图片尺寸 |
-| tmdb.auto-scrape | Boolean | false | 自动刮削新视频 |
-| tmdb.min-score | Double | 0.0 | 最低评分过滤 |
 | tmdb.include-adult | Boolean | true | 包含成人内容 |
 
-### 漫画刮削
+### 全局开关
 
 | 键名 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| comic.auto-scrape | Boolean | false | 自动刮削新漫画 |
-| comic.min-score | Double | 0.0 | 最低评分过滤 |
-
-### 音乐设置
-
-| 键名 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| music.auto-scrape | Boolean | true | 自动刮削元数据 |
-| music.auto-writeback | Boolean | true | 自动回写元数据到文件 |
-| music.use-folder-structure | Boolean | true | 使用文件夹结构 |
-| music.default-artist | String | 空 | 默认艺术家名称 |
-| music.scrape.enabled | Boolean | true | 启用刮削 |
-| music.scrape.lyrics-fallback | Boolean | true | 歌词回退 |
-| music.scrape.cover-fallback | Boolean | true | 封面回退 |
-
-### 文件监控
-
-| 键名 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| watcher.periodic-scan | Boolean | true | 启用定期扫描 |
-| watcher.periodic-scan-interval | int | 300 | 扫描间隔（秒） |
+| watcher.periodic-scan | Boolean | true | 启用定期扫描（发现新文件） |
+| watcher.periodic-scan-interval | int | 30 | 扫描间隔（秒） |
+| scrape.auto-scrape | Boolean | true | 启用自动刮削元数据 |
 
 ---
 
@@ -239,7 +206,6 @@ const { data: settings } = await response.json();
 
 // 按类别分组显示
 const tmdbSettings = settings.filter(s => s.key.startsWith('tmdb.'));
-const musicSettings = settings.filter(s => s.key.startsWith('music.'));
 ```
 
 ### 更新设置
@@ -273,15 +239,14 @@ if (!status.configured) {
     <section>
       <h2>视频刮削</h2>
       <setting-item key="tmdb.api-key" label="API密钥" type="password" />
-      <setting-item key="tmdb.language" label="语言" type="select" :options="['zh-CN', 'en-US']" />
-      <setting-item key="tmdb.auto-scrape" label="自动刮削" type="switch" />
     </section>
 
-    <!-- 音乐设置 -->
+    <!-- 全局开关 -->
     <section>
-      <h2>音乐设置</h2>
-      <setting-item key="music.auto-scrape" label="自动刮削" type="switch" />
-      <setting-item key="music.use-folder-structure" label="使用文件夹结构" type="switch" />
+      <h2>全局开关</h2>
+      <setting-item key="watcher.periodic-scan" label="定期扫描" type="switch" />
+      <setting-item key="watcher.periodic-scan-interval" label="扫描间隔(秒)" type="number" />
+      <setting-item key="scrape.auto-scrape" label="自动刮削" type="switch" />
     </section>
   </div>
 </template>
@@ -295,8 +260,10 @@ if (!status.configured) {
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
-| PROXY_HOST | 空 | HTTP 代理主机 |
-| PROXY_PORT | 0 | HTTP 代理端口 |
+| TMDB_API_KEY | 空 | TMDB API密钥 |
+| TMDB_LANGUAGE | zh-CN | TMDB语言 |
+| TMDB_IMAGE_SIZE | original | TMDB图片尺寸 |
+| TMDB_INCLUDE_ADULT | true | 包含成人内容 |
 
 ---
 

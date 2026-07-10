@@ -152,40 +152,14 @@ POST /api/v1/music/scrape/all?artist=周杰伦
 | tmdb.api-key | String | 空 | TMDB API密钥 |
 | tmdb.language | String | zh-CN | 语言 |
 | tmdb.image-size | String | original | 图片尺寸 |
-| tmdb.auto-scrape | Boolean | false | 自动刮削 |
-| tmdb.min-score | Double | 0.0 | 最低评分阈值 |
 | tmdb.include-adult | Boolean | true | 成人内容 |
 
-### 漫画
+### 全局开关
 | key | 类型 | 默认 | 说明 |
 |-----|------|------|------|
-| anilist.language | String | zh-CN | AniList语言 |
-| comic.auto-scrape | Boolean | false | 自动刮削 |
-| comic.min-score | Double | 0.0 | 最低评分 |
-| anilist.auto-scrape | Boolean | false | AniList自动刮削 |
-| anilist.min-score | Double | 0.0 | AniList最低评分 |
-
-### 音乐
-| key | 类型 | 默认 | 说明 |
-|-----|------|------|------|
-| music.scrape.enabled | Boolean | true | 刮削总开关 |
-| music.scrape.auto-scrape | Boolean | false | 自动刮削 |
-| music.auto-writeback | Boolean | true | 元数据回写文件 |
-| music.use-folder-structure | Boolean | true | 按艺术家整理 |
-| music.default-artist | String | 空 | 默认艺术家 |
-| music.scrape.lyrics-fallback | Boolean | true | 歌词源回退 |
-| music.scrape.cover-fallback | Boolean | true | 封面源回退 |
-
-### 代理
-| key | 类型 | 默认 | 说明 |
-|-----|------|------|------|
-| proxy.host | String | 空 | 代理地址 |
-| proxy.port | Integer | 0 | 代理端口 |
-
-### 文件监控
-| key | 类型 | 默认 | 说明 |
-|-----|------|------|------|
-| watcher.periodic-scan | Boolean | false | 定时扫描（macOS建议开启） |
+| watcher.periodic-scan | Boolean | true | 启用定期扫描（发现新文件） |
+| watcher.periodic-scan-interval | Integer | 30 | 扫描间隔（秒） |
+| scrape.auto-scrape | Boolean | true | 启用自动刮削元数据 |
 
 ---
 
