@@ -766,33 +766,52 @@ public class MangaScrapeService {
             }
         }
 
-        // 3. 包含匹配：name_cn 或 name 包含 seriesName
+        // 3. 包含匹配 + 相似度检查
+        double bestScore = 0;
+        BangumiService.SearchResult bestResult = null;
         for (BangumiService.SearchResult r : results) {
-            if (r.getNameCn() != null && r.getNameCn().contains(seriesName)) {
-                log.info("Picked contains match (nameCn='{}' contains '{}') id={}", r.getNameCn(), seriesName, r.getId());
-                return r;
-            }
-            if (r.getName() != null && r.getName().contains(seriesName)) {
-                log.info("Picked contains match (name='{}' contains '{}') id={}", r.getName(), seriesName, r.getId());
-                return r;
+            String target = r.getNameCn() != null ? r.getNameCn() : r.getName();
+            if (target == null) continue;
+            double score = calculateSimilarity(seriesName, target);
+            if (score > bestScore) {
+                bestScore = score;
+                bestResult = r;
             }
         }
 
-        // 4. 回退：seriesName 包含在 name_cn 或 name 中（方向相反）
-        for (BangumiService.SearchResult r : results) {
-            if (seriesName.contains(r.getNameCn() != null ? r.getNameCn() : "")
-                    || seriesName.contains(r.getName() != null ? r.getName() : "")) {
-                log.info("Picked reverse-contains match (seriesName='{}' contains '{}') id={}",
-                        seriesName, r.getNameCn() != null ? r.getNameCn() : r.getName(), r.getId());
-                return r;
-            }
+        if (bestResult != null && bestScore >= 0.6) {
+            String matchedName = bestResult.getNameCn() != null ? bestResult.getNameCn() : bestResult.getName();
+            log.info("Picked match (score={}): '{}' <-> '{}' id={}", String.format("%.2f", bestScore), seriesName, matchedName, bestResult.getId());
+            return bestResult;
         }
 
-        // 5. 兜底：最热门
-        BangumiService.SearchResult fallback = results.get(0);
-        log.warn("No title match for '{}', falling back to most popular: {} (id={})",
-                seriesName, fallback.getNameCn() != null ? fallback.getNameCn() : fallback.getName(), fallback.getId());
-        return fallback;
+        log.info("No confident match for '{}' (best score={}), skipping auto-scrape", seriesName, String.format("%.2f", bestScore));
+        return null;
+    }
+
+    private static double calculateSimilarity(String s1, String s2) {
+        if (s1 == null || s2 == null) return 0;
+        String a = s1.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        String b = s2.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        if (a.equals(b)) return 1.0;
+        if (a.isEmpty() || b.isEmpty()) return 0;
+
+        int maxLen = Math.max(a.length(), b.length());
+        int distance = levenshteinDistance(a, b);
+        return 1.0 - (double) distance / maxLen;
+    }
+
+    private static int levenshteinDistance(String s1, String s2) {
+        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
+        for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
+        for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
+        for (int i = 1; i <= s1.length(); i++) {
+            for (int j = 1; j <= s2.length(); j++) {
+                int cost = s1.charAt(i - 1) == s2.charAt(j - 1) ? 0 : 1;
+                dp[i][j] = Math.min(Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1), dp[i - 1][j - 1] + cost);
+            }
+        }
+        return dp[s1.length()][s2.length()];
     }
 
     private MediaSeries findOrCreateSeries(String seriesName, String mediaType, BangumiService.SubjectDetail detail) {

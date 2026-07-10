@@ -139,8 +139,8 @@ public class EbookMetadataScrapeService {
         // 优先 Bangumi（轻小说覆盖更全）
         List<BangumiService.SearchResult> bgmResults = bangumiService.searchBooks(query, "novel");
         if (!bgmResults.isEmpty()) {
-            BangumiService.SearchResult best = bgmResults.get(0);
-            if (best.getScore() != null && best.getScore() >= 0.0) {
+            BangumiService.SearchResult best = pickBestBangumiMatch(bgmResults, query);
+            if (best != null) {
                 Ebook bound = bangumiScrapeService.bindBangumi(ebook.getId(), best.getId());
                 log.info("Auto-scraped '{}' from Bangumi (id={})", bound.getTitle(), best.getId());
                 return bound;
@@ -154,8 +154,75 @@ public class EbookMetadataScrapeService {
             return ebook;
         }
 
-        OpenLibraryService.SearchResult best = olResults.get(0);
-        return scrapeAndBindFromOpenLibrary(ebook.getId(), best);
+        OpenLibraryService.SearchResult bestOl = pickBestOpenLibraryMatch(olResults, query);
+        if (bestOl == null) {
+            log.debug("No confident OpenLibrary match for '{}', skipping", query);
+            return ebook;
+        }
+        return scrapeAndBindFromOpenLibrary(ebook.getId(), bestOl);
+    }
+
+    private BangumiService.SearchResult pickBestBangumiMatch(List<BangumiService.SearchResult> results, String query) {
+        double bestScore = 0;
+        BangumiService.SearchResult bestResult = null;
+        for (BangumiService.SearchResult r : results) {
+            String target = r.getNameCn() != null ? r.getNameCn() : r.getName();
+            if (target == null) continue;
+            double score = calculateSimilarity(query, target);
+            if (score > bestScore) {
+                bestScore = score;
+                bestResult = r;
+            }
+        }
+        if (bestResult != null && bestScore >= 0.6) {
+            String matchedName = bestResult.getNameCn() != null ? bestResult.getNameCn() : bestResult.getName();
+            log.info("Bangumi match (score={}): '{}' <-> '{}'", String.format("%.2f", bestScore), query, matchedName);
+            return bestResult;
+        }
+        return null;
+    }
+
+    private OpenLibraryService.SearchResult pickBestOpenLibraryMatch(List<OpenLibraryService.SearchResult> results, String query) {
+        double bestScore = 0;
+        OpenLibraryService.SearchResult bestResult = null;
+        for (OpenLibraryService.SearchResult r : results) {
+            String target = r.getTitle();
+            if (target == null) continue;
+            double score = calculateSimilarity(query, target);
+            if (score > bestScore) {
+                bestScore = score;
+                bestResult = r;
+            }
+        }
+        if (bestResult != null && bestScore >= 0.6) {
+            log.info("OpenLibrary match (score={}): '{}' <-> '{}'", String.format("%.2f", bestScore), query, bestResult.getTitle());
+            return bestResult;
+        }
+        return null;
+    }
+
+    private static double calculateSimilarity(String s1, String s2) {
+        if (s1 == null || s2 == null) return 0;
+        String a = s1.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        String b = s2.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        if (a.equals(b)) return 1.0;
+        if (a.isEmpty() || b.isEmpty()) return 0;
+        int maxLen = Math.max(a.length(), b.length());
+        int distance = levenshteinDistance(a, b);
+        return 1.0 - (double) distance / maxLen;
+    }
+
+    private static int levenshteinDistance(String s1, String s2) {
+        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
+        for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
+        for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
+        for (int i = 1; i <= s1.length(); i++) {
+            for (int j = 1; j <= s2.length(); j++) {
+                int cost = s1.charAt(i - 1) == s2.charAt(j - 1) ? 0 : 1;
+                dp[i][j] = Math.min(Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1), dp[i - 1][j - 1] + cost);
+            }
+        }
+        return dp[s1.length()][s2.length()];
     }
 
     @Transactional
