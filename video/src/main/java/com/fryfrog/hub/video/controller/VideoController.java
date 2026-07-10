@@ -459,6 +459,35 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(subs));
     }
 
+    @GetMapping("/{id:\\d+}/subtitle/raw")
+    @Operation(summary = "获取原始字幕文件", description = "返回外挂字幕原始格式（.srt/.ass/.ssa等），由客户端自行处理")
+    public ResponseEntity<Resource> getSubtitleRaw(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "外挂字幕文件名") @RequestParam String file) throws IOException {
+        Video video = service.getVideoById(id);
+        Path videoDir = Path.of(video.getFilePath()).getParent();
+        Path subPath = videoDir.resolve(file).normalize();
+
+        if (!subPath.startsWith(videoDir) || !Files.exists(subPath)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String ext = subPath.getFileName().toString();
+        ext = ext.substring(ext.lastIndexOf('.')).toLowerCase();
+        MediaType mediaType = switch (ext) {
+            case ".srt" -> MediaType.parseMediaType("application/x-subrip");
+            case ".ass", ".ssa" -> MediaType.parseMediaType("text/x-ssa");
+            case ".vtt" -> MediaType.parseMediaType("text/vtt");
+            default -> MediaType.APPLICATION_OCTET_STREAM;
+        };
+
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + subPath.getFileName() + "\"")
+                .body(new FileSystemResource(subPath.toFile()));
+    }
+
     @GetMapping("/{id:\\d+}/subtitle/vtt")
     @Operation(summary = "获取字幕WebVTT", description = "将内嵌或外挂字幕转换为WebVTT格式返回")
     public ResponseEntity<String> getSubtitleVtt(
