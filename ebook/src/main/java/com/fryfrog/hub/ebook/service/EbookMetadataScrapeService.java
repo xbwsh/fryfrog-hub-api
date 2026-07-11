@@ -65,7 +65,6 @@ public class EbookMetadataScrapeService {
         return repository.save(ebook);
     }
 
-    @Async
     public void autoScrapeAll() {
         if (!settingService.getBoolean("scrape.auto-scrape", true)) {
             log.debug("Auto-scrape is disabled by setting");

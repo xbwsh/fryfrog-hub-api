@@ -66,13 +66,15 @@ public class PeriodicScanScheduler implements ApplicationListener<ContextRefresh
     private void runAll() {
         if (scanTasks.isEmpty()) return;
         if (!settingService.getBoolean(SWITCH_KEY, true)) return;
-        for (Runnable task : scanTasks) {
-            try {
-                task.run();
-            } catch (Exception e) {
-                log.warn("Periodic scan task failed: {}", e.getMessage());
+        com.fryfrog.hub.common.util.DatabaseWriteLock.runInWriteLock(() -> {
+            for (Runnable task : scanTasks) {
+                try {
+                    task.run();
+                } catch (Exception e) {
+                    log.warn("Periodic scan task failed: {}", e.getMessage());
+                }
             }
-        }
+        });
     }
 
     @PreDestroy

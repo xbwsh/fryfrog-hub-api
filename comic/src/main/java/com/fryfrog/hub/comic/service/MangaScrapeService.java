@@ -253,7 +253,6 @@ public class MangaScrapeService {
         return map;
     }
 
-    @Async
     public void autoScrapeAll() {
         if (!settingService.getBoolean("scrape.auto-scrape", true)) {
             log.debug("Auto-scrape is disabled by setting");
