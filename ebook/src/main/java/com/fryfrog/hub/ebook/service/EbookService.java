@@ -619,13 +619,16 @@ public class EbookService {
     }
 
     private Path findRootDir(Path currentDir) {
+        Path bestMatch = null;
+        int bestLength = 0;
         for (String rootPath : getRootPaths()) {
             Path root = Paths.get(rootPath).toAbsolutePath().normalize();
-            if (currentDir.toAbsolutePath().normalize().startsWith(root)) {
-                return root;
+            if (currentDir.toAbsolutePath().normalize().startsWith(root) && root.toString().length() > bestLength) {
+                bestMatch = root;
+                bestLength = root.toString().length();
             }
         }
-        return null;
+        return bestMatch;
     }
 
     private String sanitizeFolderName(String name) {

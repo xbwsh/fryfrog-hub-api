@@ -255,7 +255,7 @@ public class BangumiService {
             Integer vol = extractVolumeFromRelatedName(name);
             if (vol != null) map.put(vol, sub);
         }
-        log.info("Found {} volume subjects from related subjects for Bangumi id={}", map.size(), subjectId);
+        log.debug("Found {} volume subjects from related subjects for Bangumi id={}", map.size(), subjectId);
         return map;
     }
 
@@ -296,7 +296,7 @@ public class BangumiService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Files.write(coverPath, response.getBody());
-                log.info("Downloaded Bangumi cover to {}", coverPath);
+                log.debug("Downloaded Bangumi cover to {}", coverPath);
                 return coverPath.toAbsolutePath().toString();
             }
         } catch (IOException e) {

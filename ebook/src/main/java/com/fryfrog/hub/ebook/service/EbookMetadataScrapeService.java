@@ -272,7 +272,7 @@ public class EbookMetadataScrapeService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Files.write(coverPath, response.getBody());
-                log.info("Downloaded cover for '{}' to {}", ebook.getTitle(), coverPath);
+                log.debug("Downloaded cover for '{}' to {}", ebook.getTitle(), coverPath);
                 return coverPath.toAbsolutePath().toString();
             }
         } catch (Exception e) {

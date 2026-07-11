@@ -360,7 +360,7 @@ public class EbookBangumiScrapeService {
                 MediaSeriesCharacter mc = createMediaCharacter(bgmChar, ms);
                 if (mc != null) mediaCharRepo.save(mc);
             }
-            log.info("Saved {} characters for series '{}' from Bangumi", characters.size(), ms.getTitle());
+            log.debug("Saved {} characters for series '{}' from Bangumi", characters.size(), ms.getTitle());
         } catch (Exception e) {
             log.warn("Failed to save Bangumi characters for ebook id={}: {}", ebookId, e.getMessage());
         }
@@ -440,7 +440,7 @@ public class EbookBangumiScrapeService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Files.write(imagePath, response.getBody());
-                log.info("Downloaded character image '{}' to {}", characterName, imagePath);
+                log.debug("Downloaded character image '{}' to {}", characterName, imagePath);
                 return imagePath.toAbsolutePath().toString();
             } else {
                 log.warn("Failed to download character image '{}': HTTP {}", characterName, response.getStatusCode());

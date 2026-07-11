@@ -436,7 +436,7 @@ public class MangaScrapeService {
                 Files.write(coverPath, response.getBody());
                 comic.setCoverArtPath(coverPath.toAbsolutePath().toString());
                 comic.setPosterUrl(coverUrl);
-                log.info("Downloaded cover for '{}' to {}", comic.getTitle(), coverPath);
+                log.debug("Downloaded cover for '{}' to {}", comic.getTitle(), coverPath);
             }
         } catch (Exception e) {
             log.warn("Failed to download cover for '{}': {}", comic.getTitle(), e.getMessage());
@@ -476,7 +476,7 @@ public class MangaScrapeService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Files.write(imagePath, response.getBody());
-                log.info("Downloaded character image '{}' to {}", characterName, imagePath);
+                log.debug("Downloaded character image '{}' to {}", characterName, imagePath);
                 return imagePath.toAbsolutePath().toString();
             } else {
                 log.warn("Failed to download character image '{}': HTTP {}", characterName, response.getStatusCode());
@@ -558,13 +558,16 @@ public class MangaScrapeService {
     }
 
     private Path findRootDir(Path currentDir) {
+        Path bestMatch = null;
+        int bestLength = 0;
         for (String rootPath : comicMetadataService.getRootPaths()) {
             Path root = Paths.get(rootPath).toAbsolutePath().normalize();
-            if (currentDir.toAbsolutePath().normalize().startsWith(root)) {
-                return root;
+            if (currentDir.toAbsolutePath().normalize().startsWith(root) && root.toString().length() > bestLength) {
+                bestMatch = root;
+                bestLength = root.toString().length();
             }
         }
-        return currentDir.getParent();
+        return bestMatch;
     }
 
     private void updateCoverAndThumbnailPaths(Comic comic, Path oldDir, Path newDir) {
@@ -817,7 +820,7 @@ public class MangaScrapeService {
                 MediaSeriesCharacter mc = createMediaCharacter(bgmChar, ms);
                 if (mc != null) mediaCharRepo.save(mc);
             }
-            log.info("Saved {} characters for series '{}' from Bangumi", characters.size(), ms.getTitle());
+            log.debug("Saved {} characters for series '{}' from Bangumi", characters.size(), ms.getTitle());
         } catch (Exception e) {
             log.warn("Failed to save Bangumi characters for comic id={}: {}", comicId, e.getMessage());
         }
