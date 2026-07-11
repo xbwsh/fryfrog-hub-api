@@ -57,8 +57,6 @@ public class VideoService {
     private final MediaLibraryService mediaLibraryService;
     private final HanimeScraperService hanimeScraperService;
 
-    private final java.util.concurrent.locks.ReentrantLock dbWriteLock = new java.util.concurrent.locks.ReentrantLock();
-
     private volatile ExecutorService scrapeExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @Value("${hub.video.root-paths:}")
@@ -120,11 +118,11 @@ public class VideoService {
     }
 
     public Video unbindTmdb(Long videoId) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
             return transactionTemplate.execute(status -> doUnbindTmdb(videoId));
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
@@ -198,11 +196,11 @@ public class VideoService {
     }
 
     public int unbindByTmdbId(Long tmdbId) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
             return transactionTemplate.execute(status -> doUnbindByTmdbId(tmdbId));
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
@@ -529,7 +527,7 @@ public class VideoService {
     }
 
     private void autoGroupSeries() {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
         List<Video> allVideos = repository.findAll();
 
@@ -572,7 +570,7 @@ public class VideoService {
             log.info("Auto-grouped {} series from scan", groupedCount);
         }
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
@@ -700,11 +698,11 @@ public class VideoService {
     }
 
     public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
             return transactionTemplate.execute(status -> doScrapeAndBind(videoId, tmdbId, mediaType));
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
@@ -792,11 +790,11 @@ public class VideoService {
      * 绑定 Hanime 元数据到视频
      */
     public Video scrapeAndBindHanime(Long videoId, String hanimeId) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
             return transactionTemplate.execute(status -> doScrapeAndBindHanime(videoId, hanimeId));
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
@@ -1121,7 +1119,7 @@ public class VideoService {
 
     @Transactional
     public Map<String, Object> organizeVideos(String path) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
         List<Video> videos;
         if (path != null && !path.isBlank()) {
@@ -1189,7 +1187,7 @@ public class VideoService {
         result.put("failed", failed);
         return result;
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 

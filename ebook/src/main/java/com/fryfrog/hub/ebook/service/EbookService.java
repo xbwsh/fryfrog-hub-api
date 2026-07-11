@@ -49,7 +49,6 @@ public class EbookService {
     private EntityManager entityManager;
 
     private final TransactionTemplate transactionTemplate;
-    private final ReentrantLock dbWriteLock = new ReentrantLock();
 
     @Value("${hub.ebook.root-paths:}")
     private String rootPathsConfig;
@@ -204,11 +203,11 @@ public class EbookService {
     }
 
     public Ebook extractAndSaveMetadata(String filePath) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
             return transactionTemplate.execute(status -> doExtractAndSaveMetadata(filePath));
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
@@ -513,7 +512,7 @@ public class EbookService {
     }
 
     public boolean moveEbookToSeriesFolder(Ebook ebook) {
-        dbWriteLock.lock();
+        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
             return transactionTemplate.execute(status -> {
                 try {
@@ -523,7 +522,7 @@ public class EbookService {
                 }
             });
         } finally {
-            dbWriteLock.unlock();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
