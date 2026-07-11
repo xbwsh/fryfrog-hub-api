@@ -26,6 +26,13 @@ public class VideoWatcherService {
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {
+        // 优先从数据库 MediaLibrary 读取（前端配置），只取 VIDEO 类型
+        List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
+                .map(MediaLibrary::getPath)
+                .toList();
+        if (!dbPaths.isEmpty()) return dbPaths;
+        // 回退到配置文件
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
@@ -40,15 +47,10 @@ public class VideoWatcherService {
 
     private void periodicScan() {
         try {
-            List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries();
-            if (!libraries.isEmpty()) {
-                for (MediaLibrary library : libraries) {
-                    videoService.scanDirectory(library.getPath(), library.getId());
-                }
-            } else {
-                for (String rootPath : getRootPaths()) {
-                    videoService.scanDirectory(rootPath);
-                }
+            List<String> rootPaths = getRootPaths();
+            if (rootPaths.isEmpty()) return;
+            for (String rootPath : rootPaths) {
+                videoService.scanDirectory(rootPath);
             }
             videoService.organizeVideos(null);
             videoService.autoScrapeAll();

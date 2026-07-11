@@ -1,10 +1,14 @@
 package com.fryfrog.hub.music.service;
 
+import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -13,6 +17,7 @@ public class MediaWatcherService {
 
     private final MusicMetadataService metadataService;
     private final MusicScrapeService scrapeService;
+    private final MediaLibraryService mediaLibraryService;
     private final PeriodicScanScheduler scanScheduler;
 
     @PostConstruct
@@ -23,7 +28,9 @@ public class MediaWatcherService {
 
     private void periodicScan() {
         try {
-            for (String rootPath : metadataService.getRootPaths()) {
+            List<String> rootPaths = getRootPaths();
+            if (rootPaths.isEmpty()) return;
+            for (String rootPath : rootPaths) {
                 metadataService.scanDirectory(rootPath);
             }
             var tracks = metadataService.getAllTracks();
@@ -35,5 +42,14 @@ public class MediaWatcherService {
         } catch (Exception e) {
             log.warn("Periodic music scan failed: {}", e.getMessage());
         }
+    }
+
+    private List<String> getRootPaths() {
+        List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "MUSIC".equalsIgnoreCase(lib.getType()))
+                .map(MediaLibrary::getPath)
+                .toList();
+        if (!dbPaths.isEmpty()) return dbPaths;
+        return metadataService.getRootPaths();
     }
 }
