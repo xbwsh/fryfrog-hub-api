@@ -104,6 +104,12 @@ public class EbookBangumiScrapeService {
         repository.save(saved);
         saveBangumiCharacters(saved.getId(), bangumiId);
 
+        // 同步系列封面到 MediaSeries
+        if (saved.getSeriesRef() != null && saved.getCoverArtPath() != null) {
+            saved.getSeriesRef().setCoverArtPath(saved.getCoverArtPath());
+            seriesRepo.save(saved.getSeriesRef());
+        }
+
         return saved;
     }
 
