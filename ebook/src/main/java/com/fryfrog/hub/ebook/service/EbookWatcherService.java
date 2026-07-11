@@ -29,7 +29,6 @@ public class EbookWatcherService {
     private void periodicScan() {
         try {
             metadataService.fixMissingCoverPaths();
-            metadataService.fixSeriesCoverPaths();
             List<String> rootPaths = getRootPaths();
             if (rootPaths.isEmpty()) return;
             for (String rootPath : rootPaths) {

@@ -66,8 +66,9 @@ public class EbookBangumiScrapeService {
 
         // 查找或创建 MediaSeries
         String seriesName = ebook.getSeries();
+        MediaSeries ms = null;
         if (seriesName != null && !seriesName.isBlank()) {
-            MediaSeries ms = findOrCreateSeries(seriesName, "ebook", detail);
+            ms = findOrCreateSeries(seriesName, "ebook", detail);
             ebook.setSeriesRef(ms);
         }
 
@@ -80,9 +81,19 @@ public class EbookBangumiScrapeService {
         Ebook saved = repository.save(ebook);
         log.info("Bound ebook '{}' to Bangumi subject id={}", saved.getTitle(), bangumiId);
 
-        downloadCoverFromBangumi(saved, detail);
+        // 1. 下载系列封面到 MediaSeries
+        if (ms != null && (ms.getCoverArtPath() == null || ms.getCoverArtPath().isBlank())) {
+            Path seriesDir = Paths.get(saved.getFilePath()).getParent();
+            if (seriesDir != null) {
+                String seriesCoverPath = bangumiService.downloadCover(detail, "bangumi_" + bangumiId, seriesDir);
+                if (seriesCoverPath != null) {
+                    ms.setCoverArtPath(seriesCoverPath);
+                    seriesRepo.save(ms);
+                }
+            }
+        }
 
-        // 下载卷级封面（使用卷级 Bangumi 条目的封面）
+        // 2. 下载卷级封面到电子书
         if (saved.getVolume() != null) {
             Map<Integer, BangumiService.RelatedSubject> volumeMap = bangumiService.buildVolumeSubjectMap(bangumiId);
             if (volumeMap.containsKey(saved.getVolume())) {
@@ -101,14 +112,13 @@ public class EbookBangumiScrapeService {
             }
         }
 
+        // 3. 如果电子书还没有封面，用系列封面兜底
+        if (saved.getCoverArtPath() == null && ms != null && ms.getCoverArtPath() != null) {
+            saved.setCoverArtPath(ms.getCoverArtPath());
+        }
+
         repository.save(saved);
         saveBangumiCharacters(saved.getId(), bangumiId);
-
-        // 同步系列封面到 MediaSeries
-        if (saved.getSeriesRef() != null && saved.getCoverArtPath() != null) {
-            saved.getSeriesRef().setCoverArtPath(saved.getCoverArtPath());
-            seriesRepo.save(saved.getSeriesRef());
-        }
 
         return saved;
     }
@@ -218,6 +228,19 @@ public class EbookBangumiScrapeService {
         }
 
         log.info("Rescrape series '{}': {}/{} updated", series, updated, ebooks.size());
+
+        // 同步系列封面到 MediaSeries
+        if (ms.getCoverArtPath() == null || ms.getCoverArtPath().isBlank()) {
+            Ebook firstWithCover = ebooks.stream()
+                    .filter(e -> e.getCoverArtPath() != null && !e.getCoverArtPath().isBlank()
+                            && new java.io.File(e.getCoverArtPath()).exists())
+                    .findFirst().orElse(null);
+            if (firstWithCover != null) {
+                ms.setCoverArtPath(firstWithCover.getCoverArtPath());
+                seriesRepo.save(ms);
+            }
+        }
+
         return updated;
     }
 
