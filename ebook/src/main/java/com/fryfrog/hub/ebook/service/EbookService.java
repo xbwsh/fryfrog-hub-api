@@ -516,6 +516,34 @@ public class EbookService {
         }
     }
 
+    /** 补全封面路径为空但目录中有封面文件的电子书 */
+    public void fixMissingCoverPaths() {
+        List<Ebook> ebooks = repository.findAll().stream()
+                .filter(e -> (e.getCoverArtPath() == null || e.getCoverArtPath().isBlank())
+                        && e.getFilePath() != null && !e.getFilePath().isBlank())
+                .toList();
+        int fixed = 0;
+        for (Ebook ebook : ebooks) {
+            Path dir = Paths.get(ebook.getFilePath()).getParent();
+            if (dir == null || !Files.isDirectory(dir)) continue;
+            try (var stream = Files.list(dir)) {
+                var cover = stream.filter(p -> {
+                    String name = p.getFileName().toString().toLowerCase();
+                    return (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png"))
+                            && name.startsWith("bangumi_");
+                }).findFirst();
+                if (cover.isPresent()) {
+                    ebook.setCoverArtPath(cover.get().toAbsolutePath().toString());
+                    repository.save(ebook);
+                    fixed++;
+                }
+            } catch (Exception ignored) {}
+        }
+        if (fixed > 0) {
+            log.info("Fixed {} ebooks with missing cover paths", fixed);
+        }
+    }
+
     public boolean moveEbookToSeriesFolder(Ebook ebook) {
         com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {

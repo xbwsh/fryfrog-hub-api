@@ -34,6 +34,7 @@ public class EbookWatcherService {
                 metadataService.scanDirectory(rootPath);
             }
             metadataService.organizeAll();
+            metadataService.fixMissingCoverPaths();
             scrapeService.autoScrapeAll();
         } catch (Exception e) {
             log.warn("Periodic ebook scan failed: {}", e.getMessage());
