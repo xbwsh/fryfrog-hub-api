@@ -65,10 +65,11 @@ public class VideoService {
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
-        List<String> paths = mediaLibraryService.getEnabledPaths();
-        if (!paths.isEmpty()) {
-            return paths;
-        }
+        List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
+                .map(MediaLibrary::getPath)
+                .toList();
+        if (!dbPaths.isEmpty()) return dbPaths;
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())

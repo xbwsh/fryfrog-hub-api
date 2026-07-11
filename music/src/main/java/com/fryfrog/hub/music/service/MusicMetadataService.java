@@ -1,6 +1,8 @@
 package com.fryfrog.hub.music.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.music.model.MusicTrack;
@@ -39,11 +41,17 @@ public class MusicMetadataService {
     private final QQMusicService qqMusicService;
     private final NetEaseLyricsService netEaseLyricsService;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final MediaLibraryService mediaLibraryService;
 
     @Value("${hub.music.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
+        List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "MUSIC".equalsIgnoreCase(lib.getType()))
+                .map(MediaLibrary::getPath)
+                .toList();
+        if (!dbPaths.isEmpty()) return dbPaths;
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())

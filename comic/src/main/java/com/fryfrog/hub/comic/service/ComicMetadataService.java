@@ -1,6 +1,8 @@
 package com.fryfrog.hub.comic.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.comic.dto.ComicDTO;
 import com.fryfrog.hub.comic.dto.ComicSeries;
@@ -36,11 +38,17 @@ public class ComicMetadataService {
     private final com.fryfrog.hub.common.repository.MediaSeriesRepository seriesRepository;
     private final com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository seriesCharacterRepository;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final MediaLibraryService mediaLibraryService;
 
     @Value("${hub.comic.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
+        List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "COMIC".equalsIgnoreCase(lib.getType()))
+                .map(MediaLibrary::getPath)
+                .toList();
+        if (!dbPaths.isEmpty()) return dbPaths;
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())

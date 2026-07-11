@@ -1,6 +1,8 @@
 package com.fryfrog.hub.ebook.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.ebook.dto.ChapterInfo;
 import com.fryfrog.hub.ebook.dto.EbookDTO;
@@ -41,6 +43,7 @@ public class EbookService {
     private final EbookReadingProgressRepository readingProgressRepository;
     private final com.fryfrog.hub.common.repository.MediaSeriesRepository seriesRepository;
     private final com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository seriesCharacterRepository;
+    private final MediaLibraryService mediaLibraryService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -52,6 +55,11 @@ public class EbookService {
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
+        List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "EBOOK".equalsIgnoreCase(lib.getType()))
+                .map(MediaLibrary::getPath)
+                .toList();
+        if (!dbPaths.isEmpty()) return dbPaths;
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
