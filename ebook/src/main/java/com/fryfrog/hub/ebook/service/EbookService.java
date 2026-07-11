@@ -189,9 +189,14 @@ public class EbookService {
                 series.setSeriesSummary(withSummary.map(Ebook::getDescription).orElse(null));
             }
 
-            Optional<Ebook> withCover = entry.getValue().stream()
-                    .filter(e -> e.getCoverArtPath() != null && new File(e.getCoverArtPath()).exists())
+            // 优先找系列级封面（bangumi_数字_cover.jpg），再找卷级封面
+            Optional<Ebook> withSeriesCover = entry.getValue().stream()
+                    .filter(e -> e.getCoverArtPath() != null && new File(e.getCoverArtPath()).exists()
+                            && e.getCoverArtPath().matches(".*bangumi_\\d+_cover\\.jpg"))
                     .findFirst();
+            Optional<Ebook> withCover = withSeriesCover.or(() -> entry.getValue().stream()
+                    .filter(e -> e.getCoverArtPath() != null && new File(e.getCoverArtPath()).exists())
+                    .findFirst());
             series.setHasCover(withCover.isPresent());
             series.setCoverArtPath(withCover.map(Ebook::getCoverArtPath).orElse(null));
 
