@@ -362,10 +362,13 @@ public class ComicMetadataService {
             String seriesName = comic.getSeries();
             if (seriesName == null || seriesName.isBlank()) return false;
 
-            String rootPath = getFirstRootPath();
-            if (rootPath == null) return false;
+            // 根据漫画实际路径找根目录
+            Path currentDir = file.toPath().getParent();
+            if (currentDir == null) return false;
+            Path rootDir = findRootDir(currentDir);
+            if (rootDir == null) return false;
 
-            Path targetDir = Paths.get(rootPath, TitleCleaner.sanitizeFileName(seriesName));
+            Path targetDir = rootDir.resolve(TitleCleaner.sanitizeFileName(seriesName));
             Files.createDirectories(targetDir);
 
             String newName = buildComicFileName(comic);
@@ -502,5 +505,15 @@ public class ComicMetadataService {
 
     private boolean isZipBased(String ext) {
         return "cbz".equals(ext) || "zip".equals(ext) || "epub".equals(ext);
+    }
+
+    private Path findRootDir(Path currentDir) {
+        for (String rootPath : getRootPaths()) {
+            Path root = Paths.get(rootPath).toAbsolutePath().normalize();
+            if (currentDir.toAbsolutePath().normalize().startsWith(root)) {
+                return root;
+            }
+        }
+        return null;
     }
 }
