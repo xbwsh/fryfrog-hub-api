@@ -93,7 +93,7 @@ public class EbookBangumiScrapeService {
                     Path volDir = Paths.get(saved.getFilePath()).getParent();
                     if (volDir != null) {
                         String volLocalPath = bangumiService.downloadCover(volCoverUrl, volCoverPrefix, volDir);
-                        if (volLocalPath != null) {
+                        if (volLocalPath != null && !volLocalPath.isBlank()) {
                             saved.setCoverArtPath(volLocalPath);
                         }
                     }
@@ -324,7 +324,24 @@ public class EbookBangumiScrapeService {
         String localPath = bangumiService.downloadCover(detail, "bangumi_" + ebook.getBangumiId(), ebookDir);
         if (localPath != null) {
             ebook.setCoverArtPath(localPath);
+            return;
         }
+
+        // 兜底：查找目录中已有的封面文件
+        findExistingCover(ebook, ebookDir);
+    }
+
+    private void findExistingCover(Ebook ebook, Path dir) {
+        if (ebook.getCoverArtPath() != null && new java.io.File(ebook.getCoverArtPath()).exists()) return;
+        try (var stream = java.nio.file.Files.list(dir)) {
+            stream.filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase();
+                        return name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png");
+                    })
+                    .filter(p -> p.getFileName().toString().startsWith("bangumi_"))
+                    .findFirst()
+                    .ifPresent(p -> ebook.setCoverArtPath(p.toAbsolutePath().toString()));
+        } catch (Exception ignored) {}
     }
 
     // ==================== 角色保存 ====================
