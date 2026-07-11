@@ -81,8 +81,7 @@ public class VideoService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        String raw = paths.isEmpty() ? "./media-library/video" : paths.get(0);
-        return Paths.get(raw).toAbsolutePath().normalize().toString();
+        return paths.isEmpty() ? null : Paths.get(paths.get(0)).toAbsolutePath().normalize().toString();
     }
 
     private boolean isTmdbConfigured() {

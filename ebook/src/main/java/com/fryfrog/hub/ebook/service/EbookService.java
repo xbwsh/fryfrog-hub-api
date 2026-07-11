@@ -60,8 +60,7 @@ public class EbookService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        String raw = paths.isEmpty() ? "./media-library/ebook" : paths.get(0);
-        return Paths.get(raw).toAbsolutePath().normalize().toString();
+        return paths.isEmpty() ? null : Paths.get(paths.get(0)).toAbsolutePath().normalize().toString();
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("epub", "pdf", "mobi", "azw", "azw3", "fb2", "txt");
@@ -314,7 +313,9 @@ public class EbookService {
     }
 
     public void scanFromRoot() {
-        scanDirectory(getFirstRootPath());
+        String rootPath = getFirstRootPath();
+        if (rootPath == null) return;
+        scanDirectory(rootPath);
     }
 
     public void scanDirectory(String directoryPath) {

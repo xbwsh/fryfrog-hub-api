@@ -31,17 +31,17 @@ hub:
     enabled: ${AUTH_ENABLED:true}
     password: ${AUTH_PASSWORD:1234}
   media:
-    root-path: ${MEDIA_ROOT_PATH:.}
+    root-path: ${MEDIA_ROOT_PATH:}
   music:
-    root-paths: ${MUSIC_ROOT_PATHS:./music}
+    root-paths: ${MUSIC_ROOT_PATHS:}
     supported-formats: mp3,flac,ogg,wav,aac,m4a
     scrape:
       sources: ${MUSIC_SCRAPE_SOURCES:netease,qqmusic}
   comic:
-    root-paths: ${COMIC_ROOT_PATHS:./comic}
+    root-paths: ${COMIC_ROOT_PATHS:}
     supported-formats: cbz,cbr,zip,rar,epub
   video:
-    root-paths: ${VIDEO_ROOT_PATHS:./video}
+    root-paths: ${VIDEO_ROOT_PATHS:}
     supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
     ffprobe-path: ${FFMPEG_FFPROBE_PATH:ffprobe}
     ffmpeg-path: ${FFMPEG_FFMPEG_PATH:ffmpeg}
@@ -56,7 +56,7 @@ hub:
       cache-ttl: ${HANIME_CACHE_TTL:60}
       cache-max-size: ${HANIME_CACHE_MAX_SIZE:1000}
   ebook:
-    root-paths: ${EBOOK_ROOT_PATHS:./ebook}
+    root-paths: ${EBOOK_ROOT_PATHS:}
     supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt
   tmdb:
     api-key: ${TMDB_API_KEY:}

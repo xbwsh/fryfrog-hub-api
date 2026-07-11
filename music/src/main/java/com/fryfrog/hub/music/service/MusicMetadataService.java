@@ -52,8 +52,7 @@ public class MusicMetadataService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        String raw = paths.isEmpty() ? "./media-library/music" : paths.get(0);
-        return Paths.get(raw).toAbsolutePath().normalize().toString();
+        return paths.isEmpty() ? null : Paths.get(paths.get(0)).toAbsolutePath().normalize().toString();
     }
 
     public boolean isUseFolderStructure() {
@@ -160,8 +159,11 @@ public class MusicMetadataService {
             return null;
         }
 
+        String rootPath = getFirstRootPath();
+        if (rootPath == null) return null;
+
         String safeArtist = artist.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-        Path artistDir = Paths.get(getFirstRootPath(), safeArtist);
+        Path artistDir = Paths.get(rootPath, safeArtist);
         Path artistImagePath = artistDir.resolve("artist.jpg");
 
         if (Files.exists(artistImagePath)) {
@@ -209,16 +211,20 @@ public class MusicMetadataService {
         if (artist == null || artist.isBlank()) {
             return null;
         }
+        String rootPath = getFirstRootPath();
+        if (rootPath == null) return null;
         String safeArtist = artist.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-        Path artistImagePath = Paths.get(getFirstRootPath(), safeArtist, "artist.jpg");
+        Path artistImagePath = Paths.get(rootPath, safeArtist, "artist.jpg");
         return Files.exists(artistImagePath) ? artistImagePath.toAbsolutePath().toString() : null;
     }
 
     @Transactional
     public int reorganizeAllTracks() {
+        String firstRootPath = getFirstRootPath();
+        if (firstRootPath == null) return 0;
+
         int moved = 0;
         List<MusicTrack> tracks = repository.findAll();
-        String firstRootPath = getFirstRootPath();
 
         for (MusicTrack track : tracks) {
             try {
@@ -460,7 +466,7 @@ public class MusicMetadataService {
 
             Path targetDir = organizeTrackFolder(track);
 
-            if (track.getArtist() != null && !track.getArtist().isBlank()) {
+            if (track.getArtist() != null && !track.getArtist().isBlank() && getFirstRootPath() != null) {
                 String safeArtist = track.getArtist().replaceAll("[\\\\/:*?\"<>|]", "_").trim();
                 Path artistImagePath = Paths.get(getFirstRootPath(), safeArtist, "artist.jpg");
                 if (!Files.exists(artistImagePath)) {
@@ -491,6 +497,7 @@ public class MusicMetadataService {
     private Path organizeTrackFolder(MusicTrack track) {
         try {
             String firstRootPath = getFirstRootPath();
+            if (firstRootPath == null) return Paths.get(track.getFilePath()).getParent();
             Path audioPath = Paths.get(track.getFilePath());
             String artist = (track.getArtist() != null && !track.getArtist().isBlank())
                     ? track.getArtist() : "未知歌手";
@@ -546,7 +553,9 @@ public class MusicMetadataService {
     }
 
     public void scanFromRoot() {
-        scanDirectory(getFirstRootPath());
+        String rootPath = getFirstRootPath();
+        if (rootPath == null) return;
+        scanDirectory(rootPath);
     }
 
     public void scanDirectory(String directoryPath) {
@@ -619,7 +628,10 @@ public class MusicMetadataService {
     private void inferFromFolderStructure(MusicTrack track, File file) {
         if (!isUseFolderStructure()) return;
 
-        Path musicRoot = Paths.get(getFirstRootPath()).toAbsolutePath();
+        String rootPath = getFirstRootPath();
+        if (rootPath == null) return;
+
+        Path musicRoot = Paths.get(rootPath).toAbsolutePath();
         Path parent = file.toPath().getParent();
         Path grandparent = parent != null ? parent.getParent() : null;
 

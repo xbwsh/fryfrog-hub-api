@@ -49,8 +49,7 @@ public class ComicMetadataService {
 
     public String getFirstRootPath() {
         List<String> paths = getRootPaths();
-        String raw = paths.isEmpty() ? "./media-library/comic" : paths.get(0);
-        return Paths.get(raw).toAbsolutePath().normalize().toString();
+        return paths.isEmpty() ? null : Paths.get(paths.get(0)).toAbsolutePath().normalize().toString();
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("cbz", "cbr", "zip", "rar", "epub");
@@ -260,7 +259,9 @@ public class ComicMetadataService {
     }
 
     public void scanFromRoot() {
-        scanDirectory(getFirstRootPath());
+        String rootPath = getFirstRootPath();
+        if (rootPath == null) return;
+        scanDirectory(rootPath);
     }
 
     public void scanDirectory(String directoryPath) {
@@ -361,7 +362,10 @@ public class ComicMetadataService {
             String seriesName = comic.getSeries();
             if (seriesName == null || seriesName.isBlank()) return false;
 
-            Path targetDir = Paths.get(getFirstRootPath(), TitleCleaner.sanitizeFileName(seriesName));
+            String rootPath = getFirstRootPath();
+            if (rootPath == null) return false;
+
+            Path targetDir = Paths.get(rootPath, TitleCleaner.sanitizeFileName(seriesName));
             Files.createDirectories(targetDir);
 
             String newName = buildComicFileName(comic);
