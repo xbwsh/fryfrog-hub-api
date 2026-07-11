@@ -10,15 +10,13 @@ services:
       # - TMDB_API_KEY=your_tmdb_api_key
       # - PROXY_HOST=127.0.0.1
       # - PROXY_PORT=7890
-      # 视频多路径配置（逗号分隔容器内路径）
-      # - VIDEO_ROOT_PATHS=/data/media/video/电视剧,/data/media/video/电影,/data/media/学习/动漫
-      # 音乐、漫画、电子书同理，单路径不需要配置，多路径时用逗号分隔
-      # - MUSIC_ROOT_PATHS=/data/media/music
-      # - COMIC_ROOT_PATHS=/data/media/comic
-      # - EBOOK_ROOT_PATHS=/data/media/ebook
+      # - MUSIC_ROOT_PATHS=/data/music
+      # - VIDEO_ROOT_PATHS=/data/video/movie,/data/video/tv
+      # - COMIC_ROOT_PATHS=/data/comic
+      # - EBOOK_ROOT_PATHS=/data/ebook
     volumes:
       - ./db:/data
-      # - /your/music/path:/data/media/music
-      # - /your/video/path:/data/media/video
-      # - /your/comic/path:/data/media/comic
-      # - /your/ebook/path:/data/media/ebook
+      # - /your/music/path:/data/music
+      # - /your/video/path:/data/video
+      # - /your/comic/path:/data/comic
+      # - /your/ebook/path:/data/ebook
