@@ -576,34 +576,18 @@ public class VideoService {
         }
     }
 
-    private static final String DOTTED_QUALITY =
-            "(?i)\\bH\\.?264\\b|\\bH\\.?265\\b|\\bDD[P+]\\s*\\.?\\s*\\d+(?:\\.\\d+)*\\b" +
-            "|\\bDTS(?:\\s*-?\\s*HD)?(?:\\s*\\.?\\s*(?:MA|ES|RA))?(?:\\s*\\.?\\s*\\d+(?:\\.\\d+)*)?\\b" +
-            "|\\bAC\\s*\\.?\\s*3\\b|\\bE\\s*-?\\s*AC\\s*-?\\s*3\\b" +
-            "|\\bA(?:V|C)\\s*\\.?\\s*A(?:V|C)?\\s*\\.?\\s*1\\b" +
-            "|\\bMPEG\\s*-?\\s*[24]\\b" +
-            "|\\bFLAC\\s*\\.?\\s*\\d+(?:\\.\\d+)*\\b";
-
-    private static final String QUALITY_PATTERN =
-            "(?i)\\b(?:2160p|1080p|720p|480p|4K|UHD|FHD)\\b" +
-            "|\\b(?:BluRay|BDRip|BRRip|WEB-?DL|WEB-?Rip|HDRip|DVDRip|HDTV|TVRip|CamRip|TS|TC|SCR|R5)\\b" +
-            "|\\b(?:x264|x265|HEVC|AVC|AV1)\\b" +
-            "|\\b(?:AAC|FLAC|DTS(?:MA|HD)?|AC3|EAC3|DDP?\\d|Atmos|TrueHD|MP3|OGG|Opus)\\b" +
-            "|\\bHDR(?:10?)?\\b|\\bDoVi\\b|\\bDV\\b|\\bHLG\\b" +
-            "|\\b(?:10-?bit|8-?bit)\\b" +
-            "|\\bREMUX\\b|\\bBlu-?ray\\b" +
-            "|\\b(?:AVS|FRDS|Ma10p|Ma10s|NCOP|NCED)\\b" +
-            "|\\b(?:Baha|ADBA|Bilibili|ABEMA|Crunchyroll|Funimation|Netflix|Disney\\+?|Amazon|Hulu|Hi10|Nazzy|FGT|SPARKS|SHAFT)\\b" +
-            "|\\b(?:ASS|SSA|SRT|BIG5|GB2312|UTF-?8|EUC-?JP|Shift-?JIS)\\b" +
-            "|\\b(?:PART|CHAPTER|CD|DVD|BD|DISC?)\\b";
-
     private static final java.util.regex.Pattern SE_EP_PATTERN = java.util.regex.Pattern.compile("(?i)S(\\d{1,2})E(\\d{1,4})");
     private static final java.util.regex.Pattern SEASON_EPISODE_PATTERN = java.util.regex.Pattern.compile("(?i)Season\\s*(\\d{1,2})\\s*Episode\\s*(\\d{1,4})");
     private static final java.util.regex.Pattern EP_PATTERN = java.util.regex.Pattern.compile("(?i)EP?(\\d{1,4})");
     private static final java.util.regex.Pattern HASH_PATTERN = java.util.regex.Pattern.compile("[＃#](\\d{1,4})$");
     private static final java.util.regex.Pattern DASH_NUMBER_PATTERN = java.util.regex.Pattern.compile("[-–—]\\s*(\\d{1,4})\\b");
     private static final java.util.regex.Pattern TAIL_NUMBER_PATTERN = java.util.regex.Pattern.compile("^(.*?)[\\s._\\-　](\\d{1,4})$");
-    private static final java.util.regex.Pattern CJK_TAIL_NUMBER_PATTERN = java.util.regex.Pattern.compile("^(.*?[\\u4e00-\\u9fa5\\u3040-\\u309f\\u30a0-\\u30ff])(\\d{1,4})$");
+    private static final java.util.regex.Pattern CJK_TAIL_NUMBER_PATTERN = java.util.regex.Pattern.compile("^(.*?[\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3040-\\u309f\\u30a0-\\u30ff])(\\d{1,4})$");
+
+    /** 匹配中文季目录名：第1季、第一季 */
+    private static final java.util.regex.Pattern SEASON_DIR_PATTERN = java.util.regex.Pattern.compile(
+            "第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*季"
+    );
 
     public String cleanTitleForSearch(String title) {
         return com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title);
@@ -1486,7 +1470,7 @@ public class VideoService {
         while (current != null) {
             if (current.getFileName() == null) break;
             String name = current.getFileName().toString();
-            if (name.matches("第 \\d+ 季")) {
+            if (SEASON_DIR_PATTERN.matcher(name).matches()) {
                 return current;
             }
             current = current.getParent();

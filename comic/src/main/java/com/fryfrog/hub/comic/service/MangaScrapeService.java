@@ -8,6 +8,7 @@ import com.fryfrog.hub.common.repository.MediaSeriesRepository;
 import com.fryfrog.hub.common.service.BangumiService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
+import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.comic.model.Comic;
 import com.fryfrog.hub.comic.repository.ComicRepository;
 import lombok.RequiredArgsConstructor;
@@ -554,9 +555,7 @@ public class MangaScrapeService {
     }
 
     private String sanitizeFolderName(String name) {
-        if (name == null) return "Unknown";
-        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
-        return sanitized.isBlank() ? "Unknown" : sanitized;
+        return TitleCleaner.sanitizeFolderName(name);
     }
 
     private Path findRootDir(Path currentDir) {
@@ -667,52 +666,11 @@ public class MangaScrapeService {
     }
 
     private Integer extractVolumeFromFileName(String fileName) {
-        if (fileName == null) return null;
-
-        Matcher m = Pattern.compile("卷\\s*(\\d+)").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = Pattern.compile("第\\s*(\\d+)\\s*卷").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = Pattern.compile("(?i)[Vv]ol\\.?\\s*(\\d+)").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = Pattern.compile("#\\s*(\\d+)").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        // Match "标题 数字" at end (before extension), e.g. "魔女与佣兵 01"
-        String baseName = fileName.contains(".")
-                ? fileName.substring(0, fileName.lastIndexOf('.'))
-                : fileName;
-        m = Pattern.compile("\\s+(\\d{1,3})$").matcher(baseName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        return null;
+        return TitleCleaner.extractVolumeNumber(fileName);
     }
 
     public String cleanTitleForSearch(String title) {
-        if (title == null || title.isBlank()) return title;
-
-        String cleaned = title;
-        cleaned = cleaned.replaceAll("(?i)\\[.*?(?:raw|scanned|digital|uncensored|hololive|moe|kmoe|ahoge|comic|magazine|tankoubon|bilibili|dmzj|包子漫画|拷贝漫画).*?\\]", " ");
-        cleaned = cleaned.replaceAll("(?i)【.*?(?:raw|scanned|digital|uncensored|moe|kmoe|ahoge|comic|magazine|bilibili|dmzj).*?】", " ");
-
-        cleaned = cleaned.replaceAll("\\[|\\]", " ");
-        cleaned = cleaned.replaceAll("【|】", " ");
-
-        cleaned = cleaned.replaceAll("(?i)[Vv]ol\\.?\\s*\\d+", " ");
-        cleaned = cleaned.replaceAll("卷\\s*\\d+", " ");
-        cleaned = cleaned.replaceAll("第\\s*\\d+\\s*卷", " ");
-        cleaned = cleaned.replaceAll("#\\s*\\d+", " ");
-
-        // Strip trailing number (volume) preceded by space, e.g. "魔女与佣兵 01"
-        cleaned = cleaned.replaceAll("\\s+\\d{1,3}$", "");
-
-        cleaned = cleaned.replaceAll("\\.(?:cbz|cbr|zip|rar|epub)$", "");
-        cleaned = cleaned.replaceAll("\\s+", " ").trim();
-
-        return cleaned.isBlank() ? title : cleaned;
+        return TitleCleaner.cleanForSearch(title);
     }
 
     public String extractSeriesName(Comic comic) {
@@ -725,9 +683,7 @@ public class MangaScrapeService {
             String fromFile = cleanTitleForSearch(fileBase);
             if (fromFile != null && !fromFile.isBlank()) {
                 // 文件名含中日文字符 → 说明命名有意义，直接用它
-                if (fromFile.codePoints().anyMatch(cp ->
-                        (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF)
-                        || (cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF))) {
+                if (TitleCleaner.hasCJK(fromFile)) {
                     return fromFile;
                 }
             }
@@ -790,28 +746,7 @@ public class MangaScrapeService {
     }
 
     private static double calculateSimilarity(String s1, String s2) {
-        if (s1 == null || s2 == null) return 0;
-        String a = s1.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
-        String b = s2.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
-        if (a.equals(b)) return 1.0;
-        if (a.isEmpty() || b.isEmpty()) return 0;
-
-        int maxLen = Math.max(a.length(), b.length());
-        int distance = levenshteinDistance(a, b);
-        return 1.0 - (double) distance / maxLen;
-    }
-
-    private static int levenshteinDistance(String s1, String s2) {
-        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
-        for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
-        for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
-        for (int i = 1; i <= s1.length(); i++) {
-            for (int j = 1; j <= s2.length(); j++) {
-                int cost = s1.charAt(i - 1) == s2.charAt(j - 1) ? 0 : 1;
-                dp[i][j] = Math.min(Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1), dp[i - 1][j - 1] + cost);
-            }
-        }
-        return dp[s1.length()][s2.length()];
+        return TitleCleaner.calculateSimilarity(s1, s2);
     }
 
     private MediaSeries findOrCreateSeries(String seriesName, String mediaType, BangumiService.SubjectDetail detail) {

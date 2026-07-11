@@ -348,38 +348,14 @@ public class EbookService {
         }
     }
 
-    private static final Pattern VOLUME_PATTERN = Pattern.compile(
-            "(?i)(?:卷|Vol\\.?|Volume|#)[\\s]*(\\d+)|[\\s]*(\\d+)\\s*(?:卷|卷目)"
-    );
-
-    private static final Pattern TRAILING_NUMBER_PATTERN = Pattern.compile(
-            "[\\s]*(\\d{1,3})$"
-    );
-
-    private Integer extractVolumeFromName(String fileName) {
-        if (fileName == null) return null;
-        // 先试带标记的卷号（卷01、Vol.1、#1）
-        Matcher m = VOLUME_PATTERN.matcher(fileName);
-        if (m.find()) {
-            for (int i = 1; i <= m.groupCount(); i++) {
-                if (m.group(i) != null) return Integer.parseInt(m.group(i));
-            }
-        }
-        // 回退到文件名末尾的数字（如 刀剑神域进击篇 01）
-        String baseName = fileName.contains(".")
-                ? fileName.substring(0, fileName.lastIndexOf('.'))
-                : fileName;
-        Matcher tm = TRAILING_NUMBER_PATTERN.matcher(baseName);
-        if (tm.find()) {
-            return Integer.parseInt(tm.group(1));
-        }
-        return null;
-    }
-
     private static final Pattern CHAPTER_PATTERN = Pattern.compile(
             "^\\s*(第[零一二三四五六七八九十百千万\\d]+[章节目回篇]|Chapter\\s+\\d+|CHAPTER\\s+\\d+).*",
             Pattern.MULTILINE
     );
+
+    private Integer extractVolumeFromName(String fileName) {
+        return com.fryfrog.hub.common.util.TitleCleaner.extractVolumeNumber(fileName);
+    }
 
     public List<ChapterInfo> getChapterList(Long id) {
         Ebook ebook = getEbookEntityById(id);
@@ -478,58 +454,25 @@ public class EbookService {
     }
 
     private String cleanTitleForSearch(String title) {
-        String clean = title;
-
-        // 移除包含标签的方括号: [台版] [digital] [Uncensored] [DL版]
-        clean = clean.replaceAll("(?i)\\[.*?(?:台版|日版|港版|简中|繁中|中文版|digital|uncensored|dl版|raw|scanned).*?\\]", " ");
-
-        // 移除纯数字/卷号方括号: [01] [1] [Vol.1] [第1卷]
-        clean = clean.replaceAll("(?i)\\[\\s*(?:第?\\s*)?\\d+\\s*(?:卷|集|话|期)?\\s*\\]", " ");
-        clean = clean.replaceAll("(?i)\\[\\s*Vol\\.?\\s*\\d+\\s*\\]", " ");
-
-        // 移除数字文件扩展名
-        clean = clean.replaceAll("\\d+\\.epub$", " ");
-
-        // 移除所有剩余方括号
-        clean = clean.replaceAll("[\\[\\]［］]", " ");
-
-        // 移除圆括号内容
-        clean = clean.replaceAll("[（(][^）)]*[）)]", " ");
-
-        // 移除卷号格式: Vol.1, 卷1, 第1卷, #1
-        clean = clean.replaceAll("(?i)Vol\\.?\\s*\\d+", " ");
-        clean = clean.replaceAll("卷\\s*\\d+", " ");
-        clean = clean.replaceAll("第\\s*\\d+\\s*卷", " ");
-        clean = clean.replaceAll("#\\s*\\d+", " ");
-
-        // 移除末尾的纯数字（卷号）: 001, 002, 01
-        clean = clean.replaceAll("[\\s]*\\d{1,3}$", " ");
-
-        // 压缩空格
-        clean = clean.replaceAll("\\s+", " ").trim();
-        return clean.isEmpty() ? title : clean;
+        return com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title);
     }
 
     public String extractSeriesName(Ebook ebook) {
-        // 优先从文件名提取系列名 —— 文件名是用户可控的，命名更一致
+        // 优先从文件名提取系列名
         String fileName = ebook.getFileName();
         if (fileName != null && !fileName.isBlank()) {
-            // 去掉扩展名再提取
             String fileBase = fileName.contains(".")
                     ? fileName.substring(0, fileName.lastIndexOf('.'))
                     : fileName;
             String fromFile = cleanTitleForSearch(fileBase);
             if (fromFile != null && !fromFile.isBlank()) {
-                // 文件名含中日文字符 → 说明命名有意义，直接用它
-                if (fromFile.codePoints().anyMatch(cp ->
-                        (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF)
-                        || (cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF))) {
+                if (com.fryfrog.hub.common.util.TitleCleaner.hasCJK(fromFile)) {
                     return fromFile;
                 }
             }
         }
 
-        // 文件名不含中文字符（如英文数字命名），回退到 EPUB 内嵌标题
+        // 回退到 EPUB 内嵌标题
         String title = ebook.getTitle();
         if (title != null && !title.isBlank()) {
             String fromTitle = cleanTitleForSearch(title);
@@ -685,9 +628,7 @@ public class EbookService {
     }
 
     private String sanitizeFolderName(String name) {
-        if (name == null) return "Unknown";
-        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "").replaceAll("\\s+", " ").trim();
-        return sanitized.isBlank() ? "Unknown" : sanitized;
+        return com.fryfrog.hub.common.util.TitleCleaner.sanitizeFolderName(name);
     }
 
 }

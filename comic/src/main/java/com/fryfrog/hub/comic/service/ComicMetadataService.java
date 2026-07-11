@@ -409,70 +409,18 @@ public class ComicMetadataService {
     }
 
     private String cleanTitleForSearch(String title) {
-        String clean = title;
-        clean = clean.replaceAll("[\\[\\]［］]", "").trim();
-        clean = clean.replaceAll("[（(].*?[）)]", "").trim();
-        clean = clean.replaceAll("\\s*[Vv]ol\\.?\\s*\\d+\\s*", " ").trim();
-        clean = clean.replaceAll("\\s*卷\\s*\\d+\\s*", " ").trim();
-        clean = clean.replaceAll("\\s*#\\s*\\d+\\s*", " ").trim();
-        clean = clean.replaceAll("\\s+", " ").trim();
-        log.debug("Title cleaned: '{}' -> '{}'", title, clean);
-        return clean.isEmpty() ? title : clean;
+        String cleaned = TitleCleaner.cleanForSearch(title);
+        log.debug("Title cleaned: '{}' -> '{}'", title, cleaned);
+        return cleaned;
     }
 
     private String extractSeriesName(String fileName) {
-        List<String> bracketContents = new ArrayList<>();
-
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("[\\[\\[（(]([^\\]）)]+)[\\]）)]").matcher(fileName);
-        while (m.find()) {
-            bracketContents.add(m.group(1).trim());
-        }
-
-        String withoutBrackets = fileName.replaceAll("[\\[\\]（）()［］]", " ").trim();
-
-        String series = null;
-        for (String content : bracketContents) {
-            if (content.matches("\\d+")) continue;
-            if (content.toLowerCase().matches("(progressive|extra|online|alzation|unlasting|rainbow|clover|regret|mother|deepening|candid|calibur|divine|editorial|illustration|fanbox|doujin|dl版|tl|翻)")) continue;
-            if (content.matches("[台日港]版")) continue;
-            if (content.length() > 1) {
-                series = content;
-            }
-        }
-
-        if (series == null) {
-            series = cleanTitleForSearch(withoutBrackets).split("[\\s._-]")[0].trim();
-        }
-
-        return series.isEmpty() ? null : series;
+        String series = TitleCleaner.extractSeriesNameFromFileName(fileName);
+        return "Unknown".equals(series) ? null : series;
     }
 
     private Integer extractVolumeFromFileName(String fileName) {
-        if (fileName == null) return null;
-
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("卷\\s*(\\d+)").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = java.util.regex.Pattern.compile("第\\s*(\\d+)\\s*卷").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = java.util.regex.Pattern.compile("(?i)[Vv]ol\\.?\\s*(\\d+)").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = java.util.regex.Pattern.compile("#\\s*(\\d+)").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        m = java.util.regex.Pattern.compile("[(\\[]\\s*(\\d+)\\s*[)\\]]").matcher(fileName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        // Match "标题 数字" at end (before extension), e.g. "魔女与佣兵 01"
-        String baseName = fileName.contains(".")
-                ? fileName.substring(0, fileName.lastIndexOf('.'))
-                : fileName;
-        m = java.util.regex.Pattern.compile("\\s+(\\d{1,3})$").matcher(baseName);
-        if (m.find()) return Integer.parseInt(m.group(1));
-
-        return null;
+        return TitleCleaner.extractVolumeNumber(fileName);
     }
 
     private List<PageInfo> listZipPages(File file) throws IOException {
