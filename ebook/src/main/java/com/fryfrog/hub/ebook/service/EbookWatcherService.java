@@ -28,13 +28,13 @@ public class EbookWatcherService {
 
     private void periodicScan() {
         try {
+            metadataService.fixMissingCoverPaths();
             List<String> rootPaths = getRootPaths();
             if (rootPaths.isEmpty()) return;
             for (String rootPath : rootPaths) {
                 metadataService.scanDirectory(rootPath);
             }
             metadataService.organizeAll();
-            metadataService.fixMissingCoverPaths();
             scrapeService.autoScrapeAll();
         } catch (Exception e) {
             log.warn("Periodic ebook scan failed: {}", e.getMessage());
