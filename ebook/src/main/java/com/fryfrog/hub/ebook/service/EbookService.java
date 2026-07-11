@@ -544,6 +544,32 @@ public class EbookService {
         }
     }
 
+    /** 补全 media_series 中电子书系列的封面路径 */
+    public void fixSeriesCoverPaths() {
+        var allSeries = seriesRepository.findAll();
+        int fixed = 0;
+        for (var ms : allSeries) {
+            if (!"ebook".equalsIgnoreCase(ms.getMediaType())) continue;
+            if (ms.getCoverArtPath() != null && !ms.getCoverArtPath().isBlank()) continue;
+            if (ms.getId() == null) continue;
+
+            // 找该系列下第一本有封面的电子书
+            var ebooks = repository.findBySeriesRef_Id(ms.getId());
+            var withCover = ebooks.stream()
+                    .filter(e -> e.getCoverArtPath() != null && !e.getCoverArtPath().isBlank()
+                            && new java.io.File(e.getCoverArtPath()).exists())
+                    .findFirst();
+            if (withCover.isPresent()) {
+                ms.setCoverArtPath(withCover.get().getCoverArtPath());
+                seriesRepository.save(ms);
+                fixed++;
+            }
+        }
+        if (fixed > 0) {
+            log.info("Fixed {} ebook series with missing cover paths", fixed);
+        }
+    }
+
     public boolean moveEbookToSeriesFolder(Ebook ebook) {
         com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
