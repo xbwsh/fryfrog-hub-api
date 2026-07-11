@@ -172,7 +172,8 @@ public final class TitleCleaner {
             return title;
         }
 
-        String cleaned = title;
+        // 繁体转简体
+        String cleaned = ChineseConverter.toSimplified(title);
 
         // 1. 移除方括号/圆括号中的所有内容（标签、版本标记、源组等）
         cleaned = cleaned.replaceAll("\\[.*?\\]", " ");
