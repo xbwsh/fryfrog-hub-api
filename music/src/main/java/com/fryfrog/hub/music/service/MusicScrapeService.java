@@ -26,7 +26,7 @@ public class MusicScrapeService {
     private final NetEaseLyricsService netEaseLyricsService;
     private final SystemSettingService settingService;
 
-    @Value("${hub.music.root-paths:./media-library/music}")
+    @Value("${hub.music.root-paths:}")
     private String rootPathsConfig;
 
     public boolean isScrapeEnabled() {

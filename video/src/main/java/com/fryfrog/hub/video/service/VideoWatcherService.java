@@ -22,7 +22,7 @@ public class VideoWatcherService {
     private final PeriodicScanScheduler scanScheduler;
     private final MediaLibraryService mediaLibraryService;
 
-    @Value("${hub.video.root-paths:./media-library/video}")
+    @Value("${hub.video.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {

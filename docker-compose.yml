@@ -7,16 +7,9 @@ services:
       - "20058:20058"
     environment:
       - DB_PATH=/data/fryfrog.db
-      # - TMDB_API_KEY=your_tmdb_api_key
-      # - PROXY_HOST=127.0.0.1
-      # - PROXY_PORT=7890
-      # - MUSIC_ROOT_PATHS=/data/music
-      # - VIDEO_ROOT_PATHS=/data/video/movie,/data/video/tv
-      # - COMIC_ROOT_PATHS=/data/comic
-      # - EBOOK_ROOT_PATHS=/data/ebook
     volumes:
       - ./db:/data
-      # - /your/music/path:/data/music
-      # - /your/video/path:/data/video
-      # - /your/comic/path:/data/comic
-      # - /your/ebook/path:/data/ebook
+      # - /your/music/path:/data/media/music
+      # - /your/video/path:/data/media/video
+      # - /your/comic/path:/data/media/comic
+      # - /your/ebook/path:/data/media/ebook

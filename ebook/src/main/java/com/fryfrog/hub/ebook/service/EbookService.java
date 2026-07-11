@@ -48,7 +48,7 @@ public class EbookService {
     private final TransactionTemplate transactionTemplate;
     private final ReentrantLock dbWriteLock = new ReentrantLock();
 
-    @Value("${hub.ebook.root-paths:./media-library/ebook}")
+    @Value("${hub.ebook.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {

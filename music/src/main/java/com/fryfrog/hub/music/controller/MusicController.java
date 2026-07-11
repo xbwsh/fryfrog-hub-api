@@ -37,7 +37,7 @@ public class MusicController {
 
     private final MusicMetadataService service;
 
-    @Value("${hub.music.root-paths:./media-library/music}")
+    @Value("${hub.music.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {

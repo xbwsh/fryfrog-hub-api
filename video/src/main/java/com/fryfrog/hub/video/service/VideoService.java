@@ -61,7 +61,7 @@ public class VideoService {
 
     private volatile ExecutorService scrapeExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    @Value("${hub.video.root-paths:./media-library/video}")
+    @Value("${hub.video.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {

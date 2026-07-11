@@ -37,7 +37,7 @@ public class ComicMetadataService {
     private final com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository seriesCharacterRepository;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
-    @Value("${hub.comic.root-paths:./media-library/comic}")
+    @Value("${hub.comic.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {

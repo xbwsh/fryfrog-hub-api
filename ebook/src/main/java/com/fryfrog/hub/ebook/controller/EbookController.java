@@ -58,7 +58,7 @@ public class EbookController {
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
 
-    @Value("${hub.ebook.root-paths:./media-library/ebook}")
+    @Value("${hub.ebook.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {

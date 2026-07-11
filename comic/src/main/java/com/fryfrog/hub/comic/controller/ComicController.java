@@ -48,7 +48,7 @@ public class ComicController {
     private final MediaSeriesCharacterRepository mediaCharacterRepository;
     private final ScrapeProgressService scrapeProgressService;
 
-    @Value("${hub.comic.root-paths:./media-library/comic}")
+    @Value("${hub.comic.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {

@@ -40,7 +40,7 @@ public class MusicMetadataService {
     private final NetEaseLyricsService netEaseLyricsService;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
-    @Value("${hub.music.root-paths:./media-library/music}")
+    @Value("${hub.music.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
