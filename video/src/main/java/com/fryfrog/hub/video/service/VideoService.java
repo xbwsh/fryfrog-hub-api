@@ -762,6 +762,9 @@ public class VideoService {
             Path metadataDir = nfoService.getMetadataDir(video);
             series.setMetadataDir(metadataDir.toString());
             seriesService.saveSeries(series);
+
+            // 下载系列封面到季目录
+            downloadSeriesCovers(series, metadataDir);
         } else {
             throw new IllegalArgumentException("Invalid media type: " + mediaType);
         }
@@ -1064,6 +1067,55 @@ public class VideoService {
             log.debug("Downloaded covers for: {}", video.getTitle());
         } catch (Exception e) {
             log.warn("Failed to download covers for {}: {}", video.getTitle(), e.getMessage());
+        }
+    }
+
+    /**
+     * 下载系列封面到季目录（tvshow-poster.jpg, tvshow-fanart.jpg）
+     */
+    private void downloadSeriesCovers(VideoSeries series, Path episodeMetadataDir) {
+        if (series.getPosterUrl() == null && series.getBackdropUrl() == null) return;
+
+        // 季目录 = 集目录的父目录
+        Path seasonDir = episodeMetadataDir.getParent();
+        if (seasonDir == null) return;
+
+        try {
+            Files.createDirectories(seasonDir);
+        } catch (IOException e) {
+            log.warn("Failed to create season dir: {}", seasonDir);
+            return;
+        }
+
+        // 下载系列海报
+        if (series.getPosterUrl() != null) {
+            Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
+            if (!Files.exists(posterPath)) {
+                downloadCoverImage(series.getPosterUrl(), posterPath);
+            }
+        }
+
+        // 下载系列背景图
+        if (series.getBackdropUrl() != null) {
+            Path fanartPath = seasonDir.resolve("tvshow-fanart.jpg");
+            if (!Files.exists(fanartPath)) {
+                downloadCoverImage(series.getBackdropUrl(), fanartPath);
+            }
+        }
+    }
+
+    private void downloadCoverImage(String imageUrl, Path targetPath) {
+        try {
+            String fullUrl = imageUrl.startsWith("http") ? imageUrl : "https://image.tmdb.org/t/p/original" + imageUrl;
+            var resource = scraperRestTemplate.getForObject(fullUrl, org.springframework.core.io.Resource.class);
+            if (resource != null) {
+                try (var inputStream = resource.getInputStream()) {
+                    Files.copy(inputStream, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                log.debug("Downloaded series cover: {}", targetPath);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to download series cover to {}: {}", targetPath, e.getMessage());
         }
     }
 
