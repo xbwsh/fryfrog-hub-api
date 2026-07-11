@@ -293,7 +293,7 @@ public class MangaScrapeService {
 
         // 如果已有 MediaSeries 关联，复用其 bangumiId
         if (comic.getSeriesRef() != null && comic.getSeriesRef().getMetadataSourceId() != null) {
-            log.info("Reusing bangumiId={} from MediaSeries '{}' for '{}'",
+            log.debug("Reusing bangumiId={} from MediaSeries '{}' for '{}'",
                     comic.getSeriesRef().getMetadataSourceId(), comic.getSeriesRef().getTitle(), comic.getTitle());
             return bindBangumi(comic.getId(), comic.getSeriesRef().getMetadataSourceId());
         }
@@ -307,7 +307,7 @@ public class MangaScrapeService {
                     .findFirst()
                     .orElse(null);
             if (inheritedBangumiId != null) {
-                log.info("Reusing bangumiId={} from series '{}' for '{}'",
+                log.debug("Reusing bangumiId={} from series '{}' for '{}'",
                         inheritedBangumiId, comic.getSeries(), comic.getTitle());
                 return bindBangumi(comic.getId(), inheritedBangumiId);
             }

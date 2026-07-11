@@ -71,7 +71,7 @@ public class EbookMetadataScrapeService {
             return;
         }
         List<Ebook> unboundEbooks = repository.findAll().stream()
-                .filter(e -> e.getOpenLibraryId() == null)
+                .filter(e -> e.getOpenLibraryId() == null && e.getBangumiId() == null)
                 .toList();
 
         if (unboundEbooks.isEmpty()) {
@@ -106,10 +106,10 @@ public class EbookMetadataScrapeService {
 
         // 如果已有 MediaSeries 关联，复用其 bangumiId
         if (ebook.getSeriesRef() != null && ebook.getSeriesRef().getMetadataSourceId() != null) {
-            log.info("Reusing bangumiId={} from MediaSeries '{}' for '{}'",
+            log.debug("Reusing bangumiId={} from MediaSeries '{}' for '{}'",
                     ebook.getSeriesRef().getMetadataSourceId(), ebook.getSeriesRef().getTitle(), ebook.getTitle());
             Ebook bound = bangumiScrapeService.bindBangumi(ebook.getId(), ebook.getSeriesRef().getMetadataSourceId());
-            log.info("Auto-scraped '{}' from MediaSeries (id={})", bound.getTitle(), ebook.getSeriesRef().getMetadataSourceId());
+            log.debug("Auto-scraped '{}' from MediaSeries (id={})", bound.getTitle(), ebook.getSeriesRef().getMetadataSourceId());
             return bound;
         }
 
@@ -122,10 +122,10 @@ public class EbookMetadataScrapeService {
                     .findFirst()
                     .orElse(null);
             if (inheritedBangumiId != null) {
-                log.info("Reusing bangumiId={} from series '{}' for '{}'",
+                log.debug("Reusing bangumiId={} from series '{}' for '{}'",
                         inheritedBangumiId, ebook.getSeries(), ebook.getTitle());
                 Ebook bound = bangumiScrapeService.bindBangumi(ebook.getId(), inheritedBangumiId);
-                log.info("Auto-scraped '{}' from series sibling (id={})", bound.getTitle(), inheritedBangumiId);
+                log.debug("Auto-scraped '{}' from series sibling (id={})", bound.getTitle(), inheritedBangumiId);
                 return bound;
             }
         }

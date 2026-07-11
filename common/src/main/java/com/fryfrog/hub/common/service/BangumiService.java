@@ -61,7 +61,7 @@ public class BangumiService {
             if (data.isArray()) {
                 List<SearchResult> results = objectMapper.convertValue(data,
                         objectMapper.getTypeFactory().constructCollectionType(List.class, SearchResult.class));
-                log.info("Bangumi search for '{}' returned {} results", query, results.size());
+                log.debug("Bangumi search for '{}' returned {} results", query, results.size());
                 return results;
             }
         } catch (Exception e) {
@@ -82,10 +82,10 @@ public class BangumiService {
                 .filter(r -> matchSubType(r, subType))
                 .collect(Collectors.toList());
 
-        log.info("Bangumi searchBooks '{}' subType='{}': {} total, {} matched",
+        log.debug("Bangumi searchBooks '{}' subType='{}': {} total, {} matched",
                 query, subType, all.size(), filtered.size());
         if (!all.isEmpty()) {
-            log.info("All candidates: {}",
+            log.debug("All candidates: {}",
                     all.stream().limit(8)
                             .map(r -> r.getId() + ":" + r.getNameCn() + "/" + r.getName()
                                     + " [platform=" + r.getPlatform() + ", tags=" + formatTags(r.getTags()) + "]"
