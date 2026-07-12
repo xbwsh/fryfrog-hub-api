@@ -55,19 +55,18 @@ public class NfoService {
             // 构建正确的集目录名
             String correctEpisodeDirName = "第 " + episode + " 集";
 
-            // 检查当前目录是否已经是正确的集目录
-            if (videoDir.getFileName().toString().equals(correctEpisodeDirName)) {
-                return videoDir;
-            }
-
-            // 向上查找季目录（以"第 X 季"命名）
+            // 向上查找季目录（以"第 X 季"命名），但必须验证上级目录是正确的 showName
             Path parentDir = videoDir.getParent();
             while (parentDir != null) {
                 if (parentDir.getFileName() == null) break;
                 String parentName = parentDir.getFileName().toString();
                 if (parentName.matches("第 \\d+ 季")) {
-                    // 找到季目录，返回对应的集子目录
-                    return parentDir.resolve(correctEpisodeDirName);
+                    // 找到季目录，验证其父目录是否是正确的 showName
+                    Path seasonParent = parentDir.getParent();
+                    if (seasonParent != null && cleanTitle(seasonParent.getFileName().toString()).equals(showName)) {
+                        return parentDir.resolve(correctEpisodeDirName);
+                    }
+                    // 父目录不是正确的 showName，继续向上查找
                 }
                 parentDir = parentDir.getParent();
             }
@@ -83,9 +82,19 @@ public class NfoService {
                 checkDir = checkDir.getParent();
             }
 
-            // 没找到 showName 目录，按规范结构创建：showName/第 X 季/第 X 集/
+            // 没找到 showName 目录，向上找到合适的根目录再创建
+            Path baseDir = videoDir;
+            while (baseDir.getParent() != null) {
+                String dirName = baseDir.getFileName().toString();
+                // 遇到已整理的季/集目录结构时，继续向上
+                if (dirName.matches("第 \\d+ 季") || dirName.matches("第 \\d+ 集")) {
+                    baseDir = baseDir.getParent();
+                    continue;
+                }
+                break;
+            }
             String seasonDirName = "第 " + season + " 季";
-            return videoDir.resolve(showName).resolve(seasonDirName).resolve(correctEpisodeDirName);
+            return baseDir.resolve(showName).resolve(seasonDirName).resolve(correctEpisodeDirName);
         }
 
         // 对于电影，在视频目录下创建以清洗后标题命名的子目录
