@@ -752,16 +752,20 @@ public class VideoService {
     }
 
     public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType) {
+        return scrapeAndBindTmdb(videoId, tmdbId, mediaType, false);
+    }
+
+    public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType, boolean isAdult) {
         com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
         try {
-            return transactionTemplate.execute(status -> doScrapeAndBind(videoId, tmdbId, mediaType));
+            return transactionTemplate.execute(status -> doScrapeAndBind(videoId, tmdbId, mediaType, isAdult));
         } finally {
             com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
         }
     }
 
     @Transactional
-    Video doScrapeAndBind(Long videoId, Long tmdbId, String mediaType) {
+    Video doScrapeAndBind(Long videoId, Long tmdbId, String mediaType, boolean isAdult) {
         Video video = getVideoById(videoId);
         Object detail = null;
 
@@ -825,6 +829,9 @@ public class VideoService {
         video.setMediaType(mediaType);
         video.setMetadataSource("tmdb");
         video.setMetadataUpdatedAt(LocalDateTime.now());
+        if (isAdult) {
+            video.setIsAdult(true);
+        }
 
         Video saved = repository.save(video);
 
@@ -1403,7 +1410,8 @@ public class VideoService {
                             continue;
                         }
 
-                        scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
+                        boolean isAdult = Boolean.TRUE.equals(bestMatch.getAdult());
+                        scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType(), isAdult);
                         scraped.incrementAndGet();
                         scrapeProgressService.updateItem("video", video.getFileName(), "completed", null);
 

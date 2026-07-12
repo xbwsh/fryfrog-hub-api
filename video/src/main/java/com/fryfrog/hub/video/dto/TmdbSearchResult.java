@@ -71,6 +71,9 @@ public class TmdbSearchResult {
         @JsonProperty("popularity")
         private Double popularity;
 
+        @JsonProperty("adult")
+        private Boolean adult;
+
         public String getTitle() {
             return title != null ? title : name;
         }

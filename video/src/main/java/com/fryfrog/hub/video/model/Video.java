@@ -95,6 +95,9 @@ public class Video extends BaseEntity {
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
 
+    @Schema(description = "是否为成人内容", example = "false")
+    private Boolean isAdult = false;
+
     @Schema(description = "TMDB ID", example = "545611")
     private Long tmdbId;
 
