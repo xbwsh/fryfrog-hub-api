@@ -298,9 +298,8 @@ public class VideoService {
                         if (video.getSeries() != null) {
                             seriesService.removeVideoFromSeries(video);
                         }
-                        actorRepository.deleteByVideo_Id(video.getId());
-                        watchProgressRepository.findByVideo_Id(video.getId()).ifPresent(watchProgressRepository::delete);
                     }
+                    // Video 上有 cascade = CascadeType.REMOVE，删除 Video 时自动级联删除 actor 和 watchProgress
                     repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
                     entityManager.clear();
                     return invalidVideos.size();
