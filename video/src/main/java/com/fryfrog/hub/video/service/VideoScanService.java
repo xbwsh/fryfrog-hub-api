@@ -69,7 +69,7 @@ public class VideoScanService {
             Path path = videoFiles.get(i);
             try {
                 if ((i + 1) % 10 == 0 || i == 0) {
-                    log.info("[Scan] Processing file {}/{}: {}", i + 1, videoFiles.size(), path.getFileName());
+                    log.debug("[Scan] Processing file {}/{}: {}", i + 1, videoFiles.size(), path.getFileName());
                 }
                 Video video = extractMetadata(path, libraryId);
                 videos.add(video);
@@ -82,7 +82,7 @@ public class VideoScanService {
         DatabaseWriteLock.runInWriteLock(() -> {
             repository.saveAll(videos);
         });
-        log.info("[Scan] Saved {} videos to database", videos.size());
+        log.debug("[Scan] Saved {} videos to database", videos.size());
 
         // Phase 5: ffprobe 分析技术元数据（无锁，可并发）
         for (Video video : videos) {
@@ -137,7 +137,7 @@ public class VideoScanService {
         if (existing == null) {
             existing = repository.findByFileName(fileName).orElse(null);
             if (existing != null) {
-                log.info("[Scan] Updating moved video path: {} -> {}", existing.getFilePath(), absolutePath);
+                log.debug("[Scan] Updating moved video path: {} -> {}", existing.getFilePath(), absolutePath);
                 existing.setFilePath(absolutePath);
                 existing.setFileName(fileName);
                 existing.setFileSize(file.length());

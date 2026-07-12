@@ -69,7 +69,7 @@ public class VideoAssetService {
             }
         }
 
-        log.info("[Asset] Batch asset generation complete: {} success, {} failed", success, failed);
+        log.debug("[Asset] Batch asset generation complete: {} success, {} failed", success, failed);
     }
 
     /**
@@ -79,7 +79,7 @@ public class VideoAssetService {
         // 生成 NFO
         try {
             nfoService.generateNfo(video);
-            log.info("[Asset] Generated NFO for: {}", video.getTitle());
+            log.debug("[Asset] Generated NFO for: {}", video.getTitle());
         } catch (Exception e) {
             log.warn("[Asset] Failed to generate NFO for {}: {}", video.getTitle(), e.getMessage());
         }
@@ -89,7 +89,7 @@ public class VideoAssetService {
             try {
                 Path seasonDir = nfoService.getSeasonDir(video);
                 nfoService.generateTvShowNfo(video.getSeries(), seasonDir);
-                log.info("[Asset] Generated tvshow.nfo for series: {}", video.getSeries().getTitle());
+                log.debug("[Asset] Generated tvshow.nfo for series: {}", video.getSeries().getTitle());
             } catch (Exception e) {
                 log.warn("[Asset] Failed to generate tvshow.nfo for {}: {}", video.getTitle(), e.getMessage());
             }

@@ -108,13 +108,13 @@ public class VideoScrapeService {
 
         // 按系列分组，优先处理同一系列的内容
         List<List<Video>> seriesGroups = groupVideosBySeries(videos);
-        log.info("[Scrape] Grouped {} videos into {} series groups", videos.size(), seriesGroups.size());
+        log.debug("[Scrape] Grouped {} videos into {} series groups", videos.size(), seriesGroups.size());
 
         for (List<Video> seriesGroup : seriesGroups) {
             if (seriesGroup.isEmpty()) continue;
 
             String seriesKey = getSeriesKey(seriesGroup.get(0));
-            log.info("[Scrape] Processing series group '{}' ({} videos)", seriesKey, seriesGroup.size());
+            log.debug("[Scrape] Processing series group '{}' ({} videos)", seriesKey, seriesGroup.size());
 
             for (Video video : seriesGroup) {
                 try {
@@ -138,7 +138,7 @@ public class VideoScrapeService {
                     // Phase 1: TMDB 搜索（无锁）
                     List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                     if (results.isEmpty()) {
-                        log.info("[Scrape] No TMDB results for: '{}'", video.getTitle());
+                        log.debug("[Scrape] No TMDB results for: '{}'", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                         continue;
@@ -146,7 +146,7 @@ public class VideoScrapeService {
 
                     TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
                     if (bestMatch == null) {
-                        log.info("[Scrape] No confident TMDB match for: '{}'", video.getTitle());
+                        log.debug("[Scrape] No confident TMDB match for: '{}'", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
                         continue;
@@ -182,7 +182,7 @@ public class VideoScrapeService {
                     scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
                 }
             }
-            log.info("[Scrape] Completed series group '{}' ({} videos)", seriesKey, seriesGroup.size());
+            log.debug("[Scrape] Completed series group '{}' ({} videos)", seriesKey, seriesGroup.size());
         }
 
         scrapeProgressService.finish("video");
@@ -594,13 +594,13 @@ public class VideoScrapeService {
             MediaLibrary library = mediaLibraryService.getLibraryById(video.getLibraryId());
             String filter = library.getMediaTypeFilter();
             if (filter != null) {
-                log.info("[Scrape] Library filter for '{}': libraryId={}, filter={}", video.getTitle(), video.getLibraryId(), filter);
+                log.debug("[Scrape] Library filter for '{}': libraryId={}, filter={}", video.getTitle(), video.getLibraryId(), filter);
                 return filter;
             }
         }
 
         if (scanService.isTvEpisode(video)) {
-            log.info("[Scrape] File '{}' parsed as TV episode, forcing mediaType=tv", video.getFileName());
+            log.debug("[Scrape] File '{}' parsed as TV episode, forcing mediaType=tv", video.getFileName());
             return "tv";
         }
 

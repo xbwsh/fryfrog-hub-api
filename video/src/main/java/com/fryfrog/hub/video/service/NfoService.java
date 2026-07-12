@@ -36,7 +36,7 @@ public class NfoService {
             String nfoContent = buildNfoContent(video);
             Files.writeString(nfoPath, nfoContent, StandardCharsets.UTF_8);
 
-            log.info("Generated NFO: {}", nfoPath);
+            log.debug("Generated NFO: {}", nfoPath);
             return nfoPath.toString();
         } catch (IOException e) {
             log.error("Failed to generate NFO for video {}: {}", video.getTitle(), e.getMessage(), e);
@@ -54,7 +54,7 @@ public class NfoService {
             String nfoContent = buildTvShowNfoContent(series);
             Files.writeString(nfoPath, nfoContent, StandardCharsets.UTF_8);
 
-            log.info("Generated tvshow.nfo: {}", nfoPath);
+            log.debug("Generated tvshow.nfo: {}", nfoPath);
             return nfoPath.toString();
         } catch (IOException e) {
             log.error("Failed to generate tvshow.nfo for series {}: {}", series.getTitle(), e.getMessage(), e);
