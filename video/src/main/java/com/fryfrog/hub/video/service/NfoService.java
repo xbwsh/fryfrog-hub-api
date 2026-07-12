@@ -110,6 +110,8 @@ public class NfoService {
         }
 
         appendField(sb, "rating", series.getRating());
+        appendField(sb, "season", series.getNumberOfSeasons());
+        appendField(sb, "episode", series.getTotalEpisodes());
 
         // TMDB ID
         if (series.getTmdbId() != null) {
@@ -118,14 +120,16 @@ public class NfoService {
                     .append("</uniqueid>\n");
         }
 
-        // IMDB ID（从系列的第一个视频获取）
-        if (series.getVideos() != null && !series.getVideos().isEmpty()) {
+        // IMDB ID（优先从 series 获取，没有则从第一个视频获取）
+        String imdbId = series.getImdbId();
+        if (imdbId == null && series.getVideos() != null && !series.getVideos().isEmpty()) {
             Video firstVideo = series.getVideos().get(0);
-            if (firstVideo.getImdbId() != null && !firstVideo.getImdbId().isBlank()) {
-                sb.append("  <uniqueid type=\"imdb\">")
-                        .append(firstVideo.getImdbId())
-                        .append("</uniqueid>\n");
-            }
+            imdbId = firstVideo.getImdbId();
+        }
+        if (imdbId != null && !imdbId.isBlank()) {
+            sb.append("  <uniqueid type=\"imdb\">")
+                    .append(imdbId)
+                    .append("</uniqueid>\n");
         }
 
         // 封面
@@ -456,7 +460,7 @@ public class NfoService {
             }
 
             // 电视剧额外字段
-            if ("episodedetails".equalsIgnoreCase(rootTag)) {
+            if ("episodedetails".equalsIgnoreCase(rootTag) || "tvshow".equalsIgnoreCase(rootTag)) {
                 data.season = getTagText(root, "season");
                 data.episode = getTagText(root, "episode");
             }
@@ -563,6 +567,32 @@ public class NfoService {
                 }
             }
         }
+    }
+
+    /**
+     * 将 tvshow.nfo 数据应用到 VideoSeries
+     */
+    public void applyTvShowNfoData(VideoSeries series, NfoData data) {
+        if (data.title != null) series.setTitle(data.title);
+        if (data.originalTitle != null) series.setOriginalTitle(data.originalTitle);
+        if (data.plot != null) series.setOverview(data.plot);
+        if (data.year != null) {
+            try { series.setYear(Integer.parseInt(data.year)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.rating != null) {
+            try { series.setRating(Double.parseDouble(data.rating)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.tmdbId != null) series.setTmdbId(data.tmdbId);
+        if (data.imdbId != null) series.setImdbId(data.imdbId);
+        if (data.status != null) series.setStatus(data.status);
+        if (data.season != null) {
+            try { series.setNumberOfSeasons(Integer.parseInt(data.season)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.episode != null) {
+            try { series.setTotalEpisodes(Integer.parseInt(data.episode)); } catch (NumberFormatException ignored) {}
+        }
+        if (data.isAdult) series.setIsAdult(true);
+        series.setMetadataSource("nfo");
     }
 
     // ==================== XML 工具 ====================

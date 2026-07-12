@@ -394,6 +394,26 @@ public class VideoService {
             // 用 ffprobe 分析技术元数据（同步执行，避免 SQLite 并发写锁）
             mediaInfoService.updateVideoMediaInfo(saved);
 
+            // 如果是电视剧，读取 tvshow.nfo 并应用到系列
+            if ("tv".equals(saved.getMediaType()) && saved.getSeries() != null) {
+                try {
+                    Path tvShowNfo = Paths.get(saved.getFilePath()).getParent().resolve("tvshow.nfo");
+                    while (tvShowNfo != null && !Files.exists(tvShowNfo)) {
+                        tvShowNfo = tvShowNfo.getParent() != null ? tvShowNfo.getParent().resolve("tvshow.nfo") : null;
+                    }
+                    if (tvShowNfo != null && Files.exists(tvShowNfo)) {
+                        NfoService.NfoData tvShowData = nfoService.readNfoForVideo(tvShowNfo);
+                        if (tvShowData != null) {
+                            nfoService.applyTvShowNfoData(saved.getSeries(), tvShowData);
+                            seriesService.saveSeries(saved.getSeries());
+                            log.debug("Applied tvshow.nfo to series: {}", saved.getSeries().getTitle());
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to apply tvshow.nfo: {}", e.getMessage());
+                }
+            }
+
             // 扫描阶段只提取元数据，不移动文件
             // 文件移动在刮削完成后进行（doScrapeAndBind 中）
 
