@@ -40,11 +40,22 @@ public class VideoOrganizeService {
     public Map<String, Object> batchOrganize(List<Video> videos) {
         log.debug("[Organize] Starting batch organize for {} videos", videos.size());
 
+        // 按季数+集数排序
+        List<Video> sorted = new ArrayList<>(videos);
+        sorted.sort((a, b) -> {
+            int sa = a.getSeasonNumber() != null ? a.getSeasonNumber() : 1;
+            int sb = b.getSeasonNumber() != null ? b.getSeasonNumber() : 1;
+            if (sa != sb) return Integer.compare(sa, sb);
+            int ea = a.getEpisodeNumber() != null ? a.getEpisodeNumber() : 1;
+            int eb = b.getEpisodeNumber() != null ? b.getEpisodeNumber() : 1;
+            return Integer.compare(ea, eb);
+        });
+
         int moved = 0;
         int skipped = 0;
         int failed = 0;
 
-        for (Video video : videos) {
+        for (Video video : sorted) {
             try {
                 // 先重命名文件（如果有 metadata）
                 renameVideoFile(video);
