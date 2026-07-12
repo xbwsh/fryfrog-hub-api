@@ -95,10 +95,13 @@ public class VideoAssetService {
             }
         }
 
-        // 下载封面
+        // 下载封面并保存路径
         try {
-            coverArtService.downloadAllCovers(video);
-            log.debug("[Asset] Downloaded covers for: {}", video.getTitle());
+            boolean downloaded = coverArtService.downloadAllCovers(video);
+            if (downloaded) {
+                DatabaseWriteLock.runInWriteLock(() -> videoRepository.save(video));
+                log.debug("[Asset] Downloaded covers for: {}", video.getTitle());
+            }
         } catch (Exception e) {
             log.warn("[Asset] Failed to download covers for {}: {}", video.getTitle(), e.getMessage());
         }
