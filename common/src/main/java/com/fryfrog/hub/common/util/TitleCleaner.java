@@ -473,12 +473,13 @@ public final class TitleCleaner {
 
     /**
      * 计算两个字符串的相似度（0.0 ~ 1.0）。
-     * 预处理：转小写，移除所有非字母数字和 CJK 字符。
+     * 预处理：繁体转简体，转小写，移除所有非字母数字和 CJK 字符。
      */
     public static double calculateSimilarity(String s1, String s2) {
         if (s1 == null || s2 == null) return 0;
-        String a = s1.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
-        String b = s2.toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        // 繁体转简体，统一比较
+        String a = ChineseConverter.toSimplified(s1).toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        String b = ChineseConverter.toSimplified(s2).toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
         if (a.equals(b)) return 1.0;
         if (a.isEmpty() || b.isEmpty()) return 0;
         int maxLen = Math.max(a.length(), b.length());
