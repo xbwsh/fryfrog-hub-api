@@ -125,9 +125,11 @@ public class VideoDTO {
     private Boolean hasFanart;
 
     @Schema(description = "竖屏海报本地路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String coverArtPath;
 
     @Schema(description = "横屏背景图本地路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropLocalPath;
 
     @Schema(description = "是否已刮削元数据")

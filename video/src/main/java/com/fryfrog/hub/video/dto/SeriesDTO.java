@@ -68,9 +68,11 @@ public class SeriesDTO {
     private List<VideoDTO> episodes;
 
     @Schema(description = "海报本地路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterLocalPath;
 
     @Schema(description = "背景图本地路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropLocalPath;
 
     public static SeriesDTO fromEntity(VideoSeries series, List<VideoDTO> episodes) {
