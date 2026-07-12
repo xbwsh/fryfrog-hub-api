@@ -46,7 +46,7 @@ public class VideoScanService {
      * 扫描目录并批量入库（完整流程：扫描 → 提取元数据 → ffprobe → DB 写入）
      */
     public List<Video> scanAndSave(String directoryPath, Long libraryId) {
-        log.info("[Scan] Start scanning directory: {} (libraryId={})", directoryPath, libraryId);
+        log.debug("[Scan] Start scanning directory: {} (libraryId={})", directoryPath, libraryId);
         long startTime = System.currentTimeMillis();
 
         // Phase 1: 清理无效记录（需要写锁）
@@ -58,10 +58,10 @@ public class VideoScanService {
         // Phase 2: 扫描文件系统（无锁）
         List<Path> videoFiles = collectVideoFiles(directoryPath);
         if (videoFiles.isEmpty()) {
-            log.info("[Scan] No video files found in: {}", directoryPath);
+            log.debug("[Scan] No video files found in: {}", directoryPath);
             return Collections.emptyList();
         }
-        log.info("[Scan] Found {} video files", videoFiles.size());
+        log.debug("[Scan] Found {} video files", videoFiles.size());
 
         // Phase 3: 批量提取元数据（无锁，内存操作）
         List<Video> videos = new ArrayList<>();
@@ -97,7 +97,7 @@ public class VideoScanService {
         DatabaseWriteLock.runInWriteLock(this::autoGroupSeries);
 
         long elapsed = System.currentTimeMillis() - startTime;
-        log.info("[Scan] Scan complete: {} videos in {}ms (dir={})", videos.size(), elapsed, directoryPath);
+        log.debug("[Scan] Scan complete: {} videos in {}ms (dir={})", videos.size(), elapsed, directoryPath);
         return videos;
     }
 

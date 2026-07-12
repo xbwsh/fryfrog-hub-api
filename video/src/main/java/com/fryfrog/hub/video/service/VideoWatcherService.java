@@ -45,15 +45,15 @@ public class VideoWatcherService {
     @PostConstruct
     public void init() {
         scanScheduler.registerTask(this::periodicScan);
-        log.info("[PeriodicScan] Video watcher initialized (polling mode)");
+        log.debug("[PeriodicScan] Video watcher initialized (polling mode)");
     }
 
     private void periodicScan() {
         try {
-            log.info("[PeriodicScan] Starting periodic scan...");
+            log.debug("[PeriodicScan] Starting periodic scan...");
             List<String> rootPaths = getRootPaths();
             if (rootPaths.isEmpty()) {
-                log.info("[PeriodicScan] No root paths configured, skipping");
+                log.debug("[PeriodicScan] No root paths configured, skipping");
                 return;
             }
 
@@ -72,7 +72,7 @@ public class VideoWatcherService {
                 assetService.batchGenerateAssets(videos);
             }
 
-            log.info("[PeriodicScan] Periodic scan completed");
+            log.debug("[PeriodicScan] Periodic scan completed");
         } catch (Exception e) {
             log.warn("[PeriodicScan] Periodic video scan failed: {}", e.getMessage());
         }

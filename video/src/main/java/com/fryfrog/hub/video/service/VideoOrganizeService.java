@@ -38,7 +38,7 @@ public class VideoOrganizeService {
      * 批量整理视频文件（重命名 + 移动到元数据目录）
      */
     public Map<String, Object> batchOrganize(List<Video> videos) {
-        log.info("[Organize] Starting batch organize for {} videos", videos.size());
+        log.debug("[Organize] Starting batch organize for {} videos", videos.size());
 
         int moved = 0;
         int skipped = 0;
@@ -100,7 +100,7 @@ public class VideoOrganizeService {
         result.put("moved", moved);
         result.put("skipped", skipped);
         result.put("failed", failed);
-        log.info("[Organize] Batch organize complete: {} moved, {} skipped, {} failed", moved, skipped, failed);
+        log.debug("[Organize] Batch organize complete: {} moved, {} skipped, {} failed", moved, skipped, failed);
         return result;
     }
 

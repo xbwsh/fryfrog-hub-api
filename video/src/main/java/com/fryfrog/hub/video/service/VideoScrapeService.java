@@ -72,14 +72,14 @@ public class VideoScrapeService {
      * @param async true 时异步执行（从 API 调用），false 时同步执行
      */
     public List<Video> autoScrapeAll(boolean async) {
-        log.info("[Scrape] autoScrapeAll called, async={}", async);
+        log.debug("[Scrape] autoScrapeAll called, async={}", async);
         if (!settingService.getBoolean("scrape.auto-scrape", true)) {
-            log.info("[Scrape] Auto-scrape is disabled by setting");
+            log.debug("[Scrape] Auto-scrape is disabled by setting");
             return repository.findAll();
         }
 
         List<Video> videos = scanService.findUnscraped(null);
-        log.info("[Scrape] Found {} unscraped videos", videos.size());
+        log.debug("[Scrape] Found {} unscraped videos", videos.size());
         if (videos.isEmpty()) {
             return repository.findAll();
         }
@@ -187,7 +187,7 @@ public class VideoScrapeService {
         }
 
         scrapeProgressService.finish("video");
-        log.info("[Scrape] Auto-scrape completed: {}/{} scraped, {} failed", scraped.get(), videos.size(), failed.get());
+        log.debug("[Scrape] Auto-scrape completed: {}/{} scraped, {} failed", scraped.get(), videos.size(), failed.get());
     }
 
     // ==================== TMDB 搜索 ====================

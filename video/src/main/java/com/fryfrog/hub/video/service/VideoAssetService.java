@@ -52,7 +52,7 @@ public class VideoAssetService {
      */
     @Transactional(readOnly = true)
     public void batchGenerateAssets(List<Video> videos) {
-        log.info("[Asset] Starting batch asset generation for {} videos", videos.size());
+        log.debug("[Asset] Starting batch asset generation for {} videos", videos.size());
 
         int success = 0;
         int failed = 0;
