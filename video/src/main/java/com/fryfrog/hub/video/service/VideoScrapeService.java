@@ -109,7 +109,7 @@ public class VideoScrapeService {
 
         // 按系列分组，优先处理同一系列的内容
         List<List<Video>> seriesGroups = groupVideosBySeries(videos);
-        log.debug("[Scrape] Grouped {} videos into {} series groups", videos.size(), seriesGroups.size());
+        log.info("[Scrape] Starting batch scrape: {} videos in {} groups", videos.size(), seriesGroups.size());
 
         for (List<Video> seriesGroup : seriesGroups) {
             if (seriesGroup.isEmpty()) continue;
@@ -121,6 +121,7 @@ public class VideoScrapeService {
                 try {
                     String query = video.getTitle();
                     if (query == null || query.isBlank()) {
+                        log.debug("[Scrape] Skipping video with empty title: {}", video.getFileName());
                         scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
                         continue;
                     }
@@ -132,26 +133,37 @@ public class VideoScrapeService {
                         video.setTmdbId(null);
                     }
 
+                    // 如果已经有 tmdbId，跳过
+                    if (video.getTmdbId() != null) {
+                        log.debug("[Scrape] Video '{}' already has tmdbId={}, skipping", video.getTitle(), video.getTmdbId());
+                        continue;
+                    }
+
                     String mediaTypeFilter = resolveMediaTypeFilter(video);
+                    log.info("[Scrape] Scraping '{}' (filter={})", video.getTitle(), mediaTypeFilter);
 
                     scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
 
                     // Phase 1: TMDB 搜索（无锁）
                     List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                     if (results.isEmpty()) {
-                        log.debug("[Scrape] No TMDB results for: '{}'", video.getTitle());
+                        log.info("[Scrape] No TMDB results for: '{}'", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                         continue;
                     }
 
+                    log.info("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
+
                     TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
                     if (bestMatch == null) {
-                        log.debug("[Scrape] No confident TMDB match for: '{}'", video.getTitle());
+                        log.info("[Scrape] No confident TMDB match for: '{}' (best score < 0.6)", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
                         continue;
                     }
+
+                    log.info("[Scrape] Matched '{}' -> TMDB {} '{}' ({})", video.getTitle(), bestMatch.getId(), bestMatch.getTitle(), bestMatch.getMediaType());
 
                     boolean isAdult = Boolean.TRUE.equals(bestMatch.getAdult());
 
