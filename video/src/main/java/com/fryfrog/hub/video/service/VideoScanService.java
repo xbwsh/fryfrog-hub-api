@@ -260,10 +260,14 @@ public class VideoScanService {
         }
         if (video.getFileName() != null) {
             String name = video.getFileName();
+            // 匹配明确的剧集模式
             if (SE_EP_PATTERN.matcher(name).find()) return true;
             if (SEASON_EPISODE_PATTERN.matcher(name).find()) return true;
             if (EP_PATTERN.matcher(name).find()) return true;
+            // 匹配 ＃数字 或 #数字 模式（即使集数为1也视为电视剧）
             if (HASH_PATTERN.matcher(name).find()) return true;
+            // 匹配尾部数字模式（需要集数 > 1 才视为电视剧）
+            if (video.getEpisodeNumber() != null && video.getEpisodeNumber() > 1) return true;
         }
         return false;
     }
