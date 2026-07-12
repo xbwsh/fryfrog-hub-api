@@ -207,19 +207,39 @@ public class NfoService {
 
     /**
      * 计算视频的元数据目录（NFO、封面等存放位置）
-     * 简化逻辑：直接在视频当前目录下创建整理结构
+     * 检查文件是否已在正确的目录结构中，避免重复嵌套
      */
     public Path getMetadataDir(Video video) {
         Path videoPath = Paths.get(video.getFilePath());
         Path videoDir = videoPath.getParent();
         String showName = cleanTitle(selectShowName(video));
 
-        // 如果已在正确的 showName 目录下，直接返回
-        if (videoDir.getFileName() != null && cleanTitle(videoDir.getFileName().toString()).equals(showName)) {
-            return videoDir;
+        // 检查是否已在正确的目录结构中（向上查找 showName 目录）
+        Path checkDir = videoDir;
+        while (checkDir != null) {
+            if (checkDir.getFileName() != null && cleanTitle(checkDir.getFileName().toString()).equals(showName)) {
+                // 已在 showName 目录下，检查是否需要季/集子目录
+                if ("tv".equalsIgnoreCase(video.getMediaType())) {
+                    int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
+                    int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
+                    String seasonDirName = "第 " + season + " 季";
+                    String episodeDirName = "第 " + episode + " 集";
+                    Path seasonDir = checkDir.resolve(seasonDirName);
+                    Path episodeDir = seasonDir.resolve(episodeDirName);
+                    // 如果当前目录已经是正确的季/集目录，返回它
+                    if (videoDir.equals(episodeDir) || videoDir.equals(seasonDir) || videoDir.equals(checkDir)) {
+                        return videoDir;
+                    }
+                    // 否则返回标准结构
+                    return episodeDir;
+                }
+                // 电影已在 showName 目录下
+                return checkDir;
+            }
+            checkDir = checkDir.getParent();
         }
 
-        // 电视剧：{当前目录}/{剧名}/第 X 季/第 Y 集/
+        // 未在任何 showName 目录下，在当前目录创建结构
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
             int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
             int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
@@ -228,7 +248,6 @@ public class NfoService {
             return videoDir.resolve(showName).resolve(seasonDirName).resolve(episodeDirName);
         }
 
-        // 电影：{当前目录}/{电影名}/
         return videoDir.resolve(showName);
     }
 
