@@ -1078,11 +1078,17 @@ public class VideoService {
             return;
         }
 
+        boolean updated = false;
+
         // 下载系列海报
         if (series.getPosterUrl() != null) {
             Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
             if (!Files.exists(posterPath)) {
                 downloadCoverImage(series.getPosterUrl(), posterPath);
+            }
+            if (Files.exists(posterPath) && series.getPosterLocalPath() == null) {
+                series.setPosterLocalPath(posterPath.toString());
+                updated = true;
             }
         }
 
@@ -1092,6 +1098,14 @@ public class VideoService {
             if (!Files.exists(fanartPath)) {
                 downloadCoverImage(series.getBackdropUrl(), fanartPath);
             }
+            if (Files.exists(fanartPath) && series.getBackdropLocalPath() == null) {
+                series.setBackdropLocalPath(fanartPath.toString());
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            seriesService.saveSeries(series);
         }
     }
 

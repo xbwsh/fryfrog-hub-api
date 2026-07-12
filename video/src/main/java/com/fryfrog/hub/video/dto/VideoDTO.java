@@ -124,6 +124,12 @@ public class VideoDTO {
     @Schema(description = "是否有横屏背景图")
     private Boolean hasFanart;
 
+    @Schema(description = "竖屏海报本地路径")
+    private String coverArtPath;
+
+    @Schema(description = "横屏背景图本地路径")
+    private String backdropLocalPath;
+
     @Schema(description = "是否已刮削元数据")
     private Boolean scraped;
 
@@ -200,6 +206,8 @@ public class VideoDTO {
         dto.setHasPoster(hasPoster);
         dto.setHasFanart(hasFanart);
         dto.setHasMetadataDir(hasMetadataDir);
+        dto.setCoverArtPath(video.getCoverArtPath());
+        dto.setBackdropLocalPath(video.getBackdropLocalPath());
         dto.setScraped(video.getTmdbId() != null);
         dto.setIsSeries(video.getIsSeries());
         dto.setIsAdult(video.getIsAdult());

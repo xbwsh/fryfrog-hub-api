@@ -89,8 +89,11 @@ public class Video extends BaseEntity {
     @Schema(description = "视频格式", example = "MKV")
     private String format;
 
-    @Schema(description = "封面图片缓存路径")
+    @Schema(description = "封面图片本地路径（竖屏海报）")
     private String coverArtPath;
+
+    @Schema(description = "背景图片本地路径（横屏）")
+    private String backdropLocalPath;
 
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;

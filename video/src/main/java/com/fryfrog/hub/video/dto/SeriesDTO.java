@@ -67,6 +67,12 @@ public class SeriesDTO {
     @Schema(description = "包含的视频列表")
     private List<VideoDTO> episodes;
 
+    @Schema(description = "海报本地路径")
+    private String posterLocalPath;
+
+    @Schema(description = "背景图本地路径")
+    private String backdropLocalPath;
+
     public static SeriesDTO fromEntity(VideoSeries series, List<VideoDTO> episodes) {
         SeriesDTO dto = new SeriesDTO();
         dto.setId(series.getId());
@@ -86,6 +92,8 @@ public class SeriesDTO {
         dto.setEpisodeCount(series.getEpisodeCount());
         dto.setStatus(series.getStatus());
         dto.setMetadataDir(series.getMetadataDir());
+        dto.setPosterLocalPath(series.getPosterLocalPath());
+        dto.setBackdropLocalPath(series.getBackdropLocalPath());
         dto.setEpisodes(episodes);
         return dto;
     }
@@ -108,6 +116,8 @@ public class SeriesDTO {
         dto.setTotalEpisodes(1);
         dto.setEpisodeCount(1);
         dto.setStatus(video.getStatus());
+        dto.setPosterLocalPath(video.getCoverArtPath());
+        dto.setBackdropLocalPath(video.getBackdropLocalPath());
         dto.setEpisodes(List.of(episode));
         return dto;
     }

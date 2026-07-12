@@ -91,6 +91,9 @@ public class CoverArtService {
         if (posterOk) {
             video.setCoverArtPath(nfoService.getPosterPath(video).toString());
         }
+        if (fanartOk) {
+            video.setBackdropLocalPath(nfoService.getFanartPath(video).toString());
+        }
     }
 
 }

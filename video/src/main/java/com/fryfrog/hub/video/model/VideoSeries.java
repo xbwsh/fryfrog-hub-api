@@ -47,13 +47,19 @@ public class VideoSeries extends BaseEntity {
     @Schema(description = "年份")
     private Integer year;
 
-    @Schema(description = "海报URL")
+    @Schema(description = "海报URL（TMDB）")
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterUrl;
 
-    @Schema(description = "背景图URL")
+    @Schema(description = "背景图URL（TMDB）")
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropUrl;
+
+    @Schema(description = "海报本地路径")
+    private String posterLocalPath;
+
+    @Schema(description = "背景图本地路径")
+    private String backdropLocalPath;
 
     @Schema(description = "元数据来源")
     private String metadataSource;
