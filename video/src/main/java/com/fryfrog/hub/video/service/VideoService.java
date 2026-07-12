@@ -394,11 +394,8 @@ public class VideoService {
             // 用 ffprobe 分析技术元数据（同步执行，避免 SQLite 并发写锁）
             mediaInfoService.updateVideoMediaInfo(saved);
 
-            // 扫描阶段立即整理文件到规范目录结构，刮削只负责更新元数据
-            if (saved.getMediaType() != null) {
-                moveVideoToMetadataDir(saved);
-                renameVideoFile(saved);
-            }
+            // 扫描阶段只提取元数据，不移动文件
+            // 文件移动在刮削完成后进行（doScrapeAndBind 中）
 
             return saved;
         } catch (Exception e) {
