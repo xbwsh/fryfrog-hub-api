@@ -40,6 +40,7 @@ public class VideoScrapeService {
     private final NfoService nfoService;
     private final SeriesService seriesService;
     private final VideoActorRepository actorRepository;
+    private final VideoAssetService assetService;
     private final TransactionTemplate transactionTemplate;
     private final SystemSettingService settingService;
     private final ScrapeProgressService scrapeProgressService;
@@ -322,8 +323,9 @@ public class VideoScrapeService {
             video.setMetadataUpdatedAt(LocalDateTime.now());
             if (isAdult) video.setIsAdult(true);
 
-            repository.save(video);
-            return video;
+            Video saved = repository.save(video);
+            assetService.saveActors(saved, mediaType, tmdbId, movieDetail);
+            return saved;
 
         } else if ("tv".equalsIgnoreCase(mediaType)) {
             TmdbTvDetail tvDetail = tmdbService.getTvDetail(tmdbId);
@@ -368,8 +370,9 @@ public class VideoScrapeService {
             video.setMetadataUpdatedAt(LocalDateTime.now());
             if (isAdult) video.setIsAdult(true);
 
-            repository.save(video);
-            return video;
+            Video saved = repository.save(video);
+            assetService.saveActors(saved, mediaType, tmdbId, tvDetail);
+            return saved;
 
         } else {
             throw new IllegalArgumentException("Invalid media type: " + mediaType);
