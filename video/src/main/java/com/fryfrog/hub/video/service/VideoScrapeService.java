@@ -338,6 +338,7 @@ public class VideoScrapeService {
             if (isAdult) video.setIsAdult(true);
 
             Video saved = repository.save(video);
+            log.debug("[Scrape] Saved movie video {} with posterUrl={}, backdropUrl={}", saved.getId(), saved.getPosterUrl(), saved.getBackdropUrl());
             return saved;
 
         } else if ("tv".equalsIgnoreCase(mediaType)) {
@@ -346,6 +347,7 @@ public class VideoScrapeService {
                 throw new ResourceNotFoundException("TMDB TV", "id", tmdbId);
             }
             updateVideoFromTvDetail(video, tvDetail);
+            log.debug("[Scrape] Set posterUrl={}, backdropUrl={} for video: {}", video.getPosterUrl(), video.getBackdropUrl(), video.getTitle());
 
             int[] seasonEpisode = scanService.parseSeasonEpisode(video.getFileName());
             video.setSeasonNumber(seasonEpisode[0]);
@@ -384,6 +386,7 @@ public class VideoScrapeService {
             if (isAdult) video.setIsAdult(true);
 
             Video saved = repository.save(video);
+            log.debug("[Scrape] Saved TV video {} with posterUrl={}, backdropUrl={}", saved.getId(), saved.getPosterUrl(), saved.getBackdropUrl());
             return saved;
 
         } else {
