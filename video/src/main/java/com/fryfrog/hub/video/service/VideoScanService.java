@@ -334,6 +334,9 @@ public class VideoScanService {
 
             if (!invalidVideos.isEmpty()) {
                 log.info("[Cleanup] Found {} invalid records on page {}, removing...", invalidVideos.size(), pageNum);
+                for (Video video : invalidVideos) {
+                    cleanupVideoFiles(video);
+                }
                 repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
                 removed += invalidVideos.size();
             }
@@ -342,6 +345,34 @@ public class VideoScanService {
         if (removed > 0) {
             log.info("[Cleanup] Removed {} invalid records", removed);
         }
+    }
+
+    private void cleanupVideoFiles(Video video) {
+        try {
+            // 删除 NFO 文件
+            var nfoPath = nfoService.getNfoPath(video);
+            Files.deleteIfExists(nfoPath);
+        } catch (Exception ignored) {}
+        try {
+            // 删除海报
+            var posterPath = nfoService.getPosterPath(video);
+            Files.deleteIfExists(posterPath);
+        } catch (Exception ignored) {}
+        try {
+            // 删除背景图
+            var fanartPath = nfoService.getFanartPath(video);
+            Files.deleteIfExists(fanartPath);
+        } catch (Exception ignored) {}
+        try {
+            // 删除演员目录
+            var metadataDir = nfoService.getMetadataDir(video);
+            var actorsDir = metadataDir.resolve("actors");
+            if (Files.isDirectory(actorsDir)) {
+                Files.walk(actorsDir).sorted((a, b) -> b.compareTo(a)).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        } catch (Exception ignored) {}
     }
 
     private void cleanupDuplicateSeries() {
