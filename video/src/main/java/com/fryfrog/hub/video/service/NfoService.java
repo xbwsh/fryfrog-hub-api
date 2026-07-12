@@ -423,6 +423,10 @@ public class NfoService {
                 data.genre = genres.toString();
             }
 
+            // 读取封面文件名（本地文件名，不是URL）
+            data.thumb = getTagText(root, "thumb");
+            data.fanart = getTagText(root, "fanart");
+
             return data;
         } catch (Exception e) {
             log.warn("Failed to parse NFO file {}: {}", nfoPath, e.getMessage());
@@ -473,6 +477,26 @@ public class NfoService {
         if (data.seriesTitle != null) {
             video.setSeriesName(data.seriesTitle);
         }
+
+        // 设置本地封面路径
+        if (data.thumb != null && !data.thumb.isBlank()) {
+            java.nio.file.Path videoDir = java.nio.file.Paths.get(video.getFilePath()).getParent();
+            if (videoDir != null) {
+                java.nio.file.Path posterPath = videoDir.resolve(data.thumb);
+                if (java.nio.file.Files.exists(posterPath)) {
+                    video.setCoverArtPath(posterPath.toString());
+                }
+            }
+        }
+        if (data.fanart != null && !data.fanart.isBlank()) {
+            java.nio.file.Path videoDir = java.nio.file.Paths.get(video.getFilePath()).getParent();
+            if (videoDir != null) {
+                java.nio.file.Path fanartPath = videoDir.resolve(data.fanart);
+                if (java.nio.file.Files.exists(fanartPath)) {
+                    video.setBackdropLocalPath(fanartPath.toString());
+                }
+            }
+        }
     }
 
     public static class NfoData {
@@ -493,5 +517,7 @@ public class NfoService {
         public String episode;
         public boolean isTvShow;
         public String seriesTitle;
+        public String thumb;  // 封面文件名
+        public String fanart; // 背景图文件名
     }
 }
