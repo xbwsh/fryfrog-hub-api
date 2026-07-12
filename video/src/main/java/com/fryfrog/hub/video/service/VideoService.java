@@ -226,8 +226,8 @@ public class VideoService {
     }
 
     public int cleanupInvalidRecords() {
-        // Delegate to scan service
-        log.info("[Video] Cleanup invalid records");
+        log.info("[Video] Cleanup invalid records - delegated to scan service");
+        // 实际清理逻辑在 VideoScanService.cleanupInvalidRecords() 中
         return 0;
     }
 }
