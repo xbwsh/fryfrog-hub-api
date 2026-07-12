@@ -499,4 +499,9 @@ public final class TitleCleaner {
         }
         return dp[s1.length()][s2.length()];
     }
+
+    /** 简体转繁体 */
+    public static String toTraditional(String text) {
+        return ChineseConverter.toTraditional(text);
+    }
 }

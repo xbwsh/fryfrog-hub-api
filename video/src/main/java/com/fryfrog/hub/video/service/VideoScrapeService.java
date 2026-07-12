@@ -208,10 +208,13 @@ public class VideoScrapeService {
         }
 
         String cleanedQuery = TitleCleaner.cleanForSearch(query);
+        // 简体转繁体（用于搜索繁体中文数据库）
+        String traditionalQuery = TitleCleaner.toTraditional(cleanedQuery);
 
         List<TmdbSearchResult.TmdbSearchItem> movieResults = List.of();
         List<TmdbSearchResult.TmdbSearchItem> tvResults = List.of();
 
+        // 第一次搜索：简体
         if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
             movieResults = tmdbService.searchMovies(cleanedQuery);
         }
@@ -219,9 +222,20 @@ public class VideoScrapeService {
             tvResults = tmdbService.searchTv(cleanedQuery);
         }
 
-        // 如果清洗后的查询无结果，尝试原始查询
+        // 第二次搜索：繁体（如果简体无结果且繁体不同）
+        if (movieResults.isEmpty() && tvResults.isEmpty() && !traditionalQuery.equals(cleanedQuery)) {
+            log.debug("[Scrape] No results for simplified '{}', trying traditional '{}'", cleanedQuery, traditionalQuery);
+            if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+                movieResults = tmdbService.searchMovies(traditionalQuery);
+            }
+            if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+                tvResults = tmdbService.searchTv(traditionalQuery);
+            }
+        }
+
+        // 第三次搜索：原始查询（如果都无结果）
         if (movieResults.isEmpty() && tvResults.isEmpty() && !cleanedQuery.equals(query)) {
-            log.info("[Scrape] No results for cleaned query '{}', trying original: '{}'", cleanedQuery, query);
+            log.debug("[Scrape] No results for cleaned '{}', trying original '{}'", cleanedQuery, query);
             if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
                 movieResults = tmdbService.searchMovies(query);
             }

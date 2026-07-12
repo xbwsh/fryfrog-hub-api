@@ -101,4 +101,24 @@ public final class ChineseConverter {
         }
         return sb.toString();
     }
+
+    /** 简体转繁体（反向映射） */
+    public static String toTraditional(String text) {
+        if (text == null || text.isBlank()) return text;
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            // 查找反向映射
+            Character traditional = REVERSE_MAP.get(c);
+            sb.append(traditional != null ? traditional : c);
+        }
+        return sb.toString();
+    }
+
+    private static final Map<Character, Character> REVERSE_MAP = new HashMap<>();
+    static {
+        for (Map.Entry<Character, Character> entry : MAP.entrySet()) {
+            REVERSE_MAP.put(entry.getValue(), entry.getKey());
+        }
+    }
 }
