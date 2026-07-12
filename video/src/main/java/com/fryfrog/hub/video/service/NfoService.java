@@ -207,7 +207,8 @@ public class NfoService {
 
     /**
      * 计算视频的元数据目录（NFO、封面等存放位置）
-     * 简化结构：电视剧直接放在季目录下，不再创建集子目录
+     * 电视剧：{剧名}/第 X 季/第 Y 集/
+     * 电影：{电影名}/
      */
     public Path getMetadataDir(Video video) {
         Path videoPath = Paths.get(video.getFilePath());
@@ -218,19 +219,19 @@ public class NfoService {
         Path checkDir = videoDir;
         while (checkDir != null) {
             if (checkDir.getFileName() != null && cleanTitle(checkDir.getFileName().toString()).equals(showName)) {
-                // 已在 showName 目录下
                 if ("tv".equalsIgnoreCase(video.getMediaType())) {
                     int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
+                    int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
                     String seasonDirName = "第 " + season + " 季";
+                    String episodeDirName = "第 " + episode + " 集";
                     Path seasonDir = checkDir.resolve(seasonDirName);
-                    // 如果当前目录已经是正确的季目录，返回它
-                    if (videoDir.equals(seasonDir) || videoDir.equals(checkDir)) {
+                    Path episodeDir = seasonDir.resolve(episodeDirName);
+                    // 如果当前目录已经是正确的季/集目录，返回它
+                    if (videoDir.equals(episodeDir) || videoDir.equals(seasonDir) || videoDir.equals(checkDir)) {
                         return videoDir;
                     }
-                    // 返回季目录（不再创建集子目录）
-                    return seasonDir;
+                    return episodeDir;
                 }
-                // 电影已在 showName 目录下
                 return checkDir;
             }
             checkDir = checkDir.getParent();
@@ -239,8 +240,10 @@ public class NfoService {
         // 未在任何 showName 目录下，在当前目录创建结构
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
             int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
+            int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
             String seasonDirName = "第 " + season + " 季";
-            return videoDir.resolve(showName).resolve(seasonDirName);
+            String episodeDirName = "第 " + episode + " 集";
+            return videoDir.resolve(showName).resolve(seasonDirName).resolve(episodeDirName);
         }
 
         return videoDir.resolve(showName);
