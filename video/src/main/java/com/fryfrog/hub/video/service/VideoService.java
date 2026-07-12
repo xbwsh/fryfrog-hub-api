@@ -458,19 +458,31 @@ public class VideoService {
             List<TmdbSearchResult.TmdbSearchItem> results, String query) {
         String cleanedQuery = cleanTitleForSearch(query);
 
+        // 1. 精确匹配 title 或 original_title
         for (var r : results) {
             String name = r.getTitle();
+            String originalName = r.getOriginalTitle();
             if (name != null && (name.equals(cleanedQuery) || name.equals(query))) {
+                return r;
+            }
+            if (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query))) {
                 return r;
             }
         }
 
+        // 2. 相似度匹配（同时检查 title 和 original_title）
         double bestScore = 0;
         TmdbSearchResult.TmdbSearchItem best = null;
         for (var r : results) {
             String name = r.getTitle();
-            if (name == null) continue;
-            double score = TitleCleaner.calculateSimilarity(cleanedQuery, name);
+            String originalName = r.getOriginalTitle();
+            double score = 0;
+            if (name != null) {
+                score = Math.max(score, TitleCleaner.calculateSimilarity(cleanedQuery, name));
+            }
+            if (originalName != null) {
+                score = Math.max(score, TitleCleaner.calculateSimilarity(cleanedQuery, originalName));
+            }
             if (score > bestScore) {
                 bestScore = score;
                 best = r;
