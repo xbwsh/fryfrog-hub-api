@@ -1425,7 +1425,7 @@ public class VideoService {
 
                         List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                         if (results.isEmpty()) {
-                            log.info("No TMDB results for: {}", video.getTitle());
+                            log.info("No TMDB results for: '{}', file remains at: {}", video.getTitle(), video.getFilePath());
                             markScrapeAttempted(video);
                             scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                             continue;
@@ -1433,7 +1433,7 @@ public class VideoService {
 
                         TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
                         if (bestMatch == null) {
-                            log.info("No confident TMDB match for: {}", video.getTitle());
+                            log.info("No confident TMDB match for: '{}', file remains at: {}", video.getTitle(), video.getFilePath());
                             markScrapeAttempted(video);
                             scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
                             continue;
