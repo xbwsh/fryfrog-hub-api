@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.repository.VideoRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ public class VideoWatcherService {
     private final VideoScrapeService scrapeService;
     private final VideoOrganizeService organizeService;
     private final VideoAssetService assetService;
+    private final VideoRepository videoRepository;
     private final PeriodicScanScheduler scanScheduler;
     private final MediaLibraryService mediaLibraryService;
 
@@ -71,6 +73,10 @@ public class VideoWatcherService {
 
                 // Phase 2: TMDB 刮削
                 scrapeService.batchScrapeAndBind(videos);
+
+                // 重新获取视频列表（刮削后 posterUrl/backdropUrl 等字段已更新）
+                List<Long> videoIds = videos.stream().map(Video::getId).toList();
+                videos = videoRepository.findAllById(videoIds);
 
                 // Phase 3: 文件整理
                 organizeService.batchOrganize(videos);
