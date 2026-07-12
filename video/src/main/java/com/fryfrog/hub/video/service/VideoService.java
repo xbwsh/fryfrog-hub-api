@@ -1333,14 +1333,24 @@ public class VideoService {
             java.util.concurrent.atomic.AtomicInteger skipped = new java.util.concurrent.atomic.AtomicInteger(0);
             scrapeProgressService.start("video", videos.size());
 
-            List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
-            for (Video video : videos) {
-                futures.add(scrapeExecutor.submit(() -> {
+            // 按系列分组，优先处理同一系列的内容
+            List<List<Video>> seriesGroups = groupVideosBySeries(videos);
+            log.info("Grouped {} videos into {} series groups (serial mode)", videos.size(), seriesGroups.size());
+
+            // 完全串行处理：按系列顺序，每个视频依次处理
+            for (List<Video> seriesGroup : seriesGroups) {
+                if (seriesGroup.isEmpty()) continue;
+
+                String seriesKey = getSeriesKey(seriesGroup.get(0));
+                log.info("Processing series group '{}' ({} videos)", seriesKey, seriesGroup.size());
+
+                // 同一系列内串行处理
+                for (Video video : seriesGroup) {
                     try {
                         String query = video.getTitle();
                         if (query == null || query.isBlank()) {
                             scrapeProgressService.updateItem("video", video.getFileName(), "skipped", "empty title");
-                            return;
+                            continue;
                         }
 
                         String mediaTypeFilter = null;
@@ -1366,7 +1376,7 @@ public class VideoService {
                             log.info("No TMDB results for: {}", video.getTitle());
                             markScrapeAttempted(video);
                             scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
-                            return;
+                            continue;
                         }
 
                         TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
@@ -1374,7 +1384,7 @@ public class VideoService {
                             log.info("No confident TMDB match for: {}", video.getTitle());
                             markScrapeAttempted(video);
                             scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
-                            return;
+                            continue;
                         }
 
                         scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
@@ -1388,15 +1398,8 @@ public class VideoService {
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
                     }
-                }));
-            }
-
-            for (java.util.concurrent.Future<?> future : futures) {
-                try {
-                    future.get();
-                } catch (Exception e) {
-                    log.warn("Wait for scrape task failed: {}", e.getMessage());
                 }
+                log.info("Completed series group '{}' ({} videos)", seriesKey, seriesGroup.size());
             }
 
             scrapeProgressService.finish("video");
@@ -1406,6 +1409,42 @@ public class VideoService {
         });
 
         return repository.findAll();
+    }
+
+    /**
+     * 按系列分组视频，优先处理同一系列的内容
+     * 已绑定series的按series分组，未绑定的按标题相似度分组
+     */
+    private List<List<Video>> groupVideosBySeries(List<Video> videos) {
+        // 使用LinkedHashMap保持插入顺序
+        Map<String, List<Video>> grouped = new LinkedHashMap<>();
+
+        for (Video video : videos) {
+            String key = getSeriesKey(video);
+            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(video);
+        }
+
+        // 按组大小降序排列，大的系列优先处理
+        List<List<Video>> result = new ArrayList<>(grouped.values());
+        result.sort((a, b) -> Integer.compare(b.size(), a.size()));
+
+        return result;
+    }
+
+    /**
+     * 获取视频的系列键，用于分组
+     */
+    private String getSeriesKey(Video video) {
+        // 已绑定series的按series分组
+        if (video.getSeries() != null) {
+            return "series:" + video.getSeries().getId();
+        }
+        // 未绑定的按标题分组
+        String title = video.getTitle();
+        if (title == null || title.isBlank()) {
+            return "unknown:" + video.getId();
+        }
+        return "title:" + cleanTitleForSearch(title);
     }
 
     private void updateVideoFromMovieDetail(Video video, TmdbMovieDetail detail) {

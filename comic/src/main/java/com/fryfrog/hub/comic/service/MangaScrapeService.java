@@ -264,18 +264,27 @@ public class MangaScrapeService {
             log.debug("No unbound comics to scrape");
             return;
         }
-        log.debug("Found {} unbound comics, starting auto-scrape", unboundComics.size());
+        log.debug("Found {} unbound comics, starting auto-scrape (serial mode)", unboundComics.size());
 
         scrapeProgressService.start("comic", unboundComics.size());
-        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
-        List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
 
-        for (Comic comic : unboundComics) {
-            futures.add(executor.submit(() -> {
+        // 按系列分组，优先处理同一系列的内容
+        List<List<Comic>> seriesGroups = groupComicsBySeries(unboundComics);
+        log.info("Grouped {} comics into {} series groups (serial mode)", unboundComics.size(), seriesGroups.size());
+
+        // 完全串行处理：按系列顺序，每个漫画依次处理
+        for (List<Comic> seriesGroup : seriesGroups) {
+            if (seriesGroup.isEmpty()) continue;
+
+            String seriesKey = getSeriesKey(seriesGroup.get(0));
+            log.info("Processing series group '{}' ({} comics)", seriesKey, seriesGroup.size());
+
+            // 同一系列内串行处理
+            for (Comic comic : seriesGroup) {
                 try {
                     Comic fresh = repository.findById(comic.getId()).orElse(null);
                     if (fresh == null || fresh.getMetadataSourceId() != null) {
-                        return;
+                        continue;
                     }
                     scrapeProgressService.updateItem("comic", fresh.getTitle(), "processing", null);
                     autoScrapeComic(fresh);
@@ -285,21 +294,58 @@ public class MangaScrapeService {
                     markScrapeAttempted(comic);
                     scrapeProgressService.updateItem("comic", comic.getTitle(), "failed", e.getMessage());
                 }
-            }));
+            }
+            log.info("Completed series group '{}' ({} comics)", seriesKey, seriesGroup.size());
         }
 
-        for (java.util.concurrent.Future<?> future : futures) {
-            try {
-                future.get();
-            } catch (Exception e) {
-                log.warn("Wait for scrape task failed: {}", e.getMessage());
-            }
-        }
-        executor.shutdown();
         scrapeProgressService.finish("comic");
         if (!unboundComics.isEmpty()) {
             log.debug("Auto-scrape completed");
         }
+    }
+
+    /**
+     * 按系列分组漫画，优先处理同一系列的内容
+     * 已绑定MediaSeries的按seriesRef分组，未绑定的按标题相似度分组
+     */
+    private List<List<Comic>> groupComicsBySeries(List<Comic> comics) {
+        // 使用LinkedHashMap保持插入顺序
+        Map<String, List<Comic>> grouped = new LinkedHashMap<>();
+
+        for (Comic comic : comics) {
+            String key = getSeriesKey(comic);
+            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(comic);
+        }
+
+        // 按组大小降序排列，大的系列优先处理
+        List<List<Comic>> result = new ArrayList<>(grouped.values());
+        result.sort((a, b) -> Integer.compare(b.size(), a.size()));
+
+        return result;
+    }
+
+    /**
+     * 获取漫画的系列键，用于分组
+     */
+    private String getSeriesKey(Comic comic) {
+        // 已绑定MediaSeries的按seriesRef分组
+        if (comic.getSeriesRef() != null) {
+            return "series:" + comic.getSeriesRef().getId();
+        }
+        // 有seriesName的按seriesName分组
+        if (comic.getSeriesName() != null && !comic.getSeriesName().isBlank()) {
+            return "seriesName:" + cleanTitleForSearch(comic.getSeriesName());
+        }
+        // 有series字段的按series分组
+        if (comic.getSeries() != null && !comic.getSeries().isBlank()) {
+            return "series:" + cleanTitleForSearch(comic.getSeries());
+        }
+        // 其他按标题分组
+        String title = comic.getTitle();
+        if (title == null || title.isBlank()) {
+            return "unknown:" + comic.getId();
+        }
+        return "title:" + extractSeriesName(comic);
     }
 
     @Transactional
