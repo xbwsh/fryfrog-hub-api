@@ -198,6 +198,11 @@ public class VideoOrganizeService {
 
     // ==================== 文件名生成 ====================
 
+    /**
+     * 生成干净的文件名
+     * 电视剧：{标题} - {集数}.{扩展名}
+     * 电影：{标题}.{扩展名}
+     */
     private String generateCleanFileName(Video video) {
         String title = video.getTitle();
         if (title == null || title.isBlank()) {
@@ -207,9 +212,8 @@ public class VideoOrganizeService {
         String extension = TitleCleaner.getFileExtension(video.getFileName());
 
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
-            int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
             int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
-            return String.format("%s - S%02dE%02d.%s", title, season, episode, extension);
+            return String.format("%s - %d.%s", title, episode, extension);
         } else {
             return title + "." + extension;
         }
