@@ -75,7 +75,18 @@ public class VideoWatcherService {
                 // Phase 3: 文件整理
                 organizeService.batchOrganize(videos);
 
-                // Phase 4: 资产生成（NFO + 封面）
+                // Phase 4: 保存演员（整理后再保存，确保 actors 目录在正确位置）
+                for (Video video : videos) {
+                    if (video.getTmdbId() != null && video.getMediaType() != null) {
+                        try {
+                            assetService.saveActors(video, video.getMediaType(), video.getTmdbId(), null);
+                        } catch (Exception e) {
+                            log.debug("[PeriodicScan] Failed to save actors for {}: {}", video.getTitle(), e.getMessage());
+                        }
+                    }
+                }
+
+                // Phase 5: 资产生成（NFO + 封面）
                 assetService.batchGenerateAssets(videos);
             }
 

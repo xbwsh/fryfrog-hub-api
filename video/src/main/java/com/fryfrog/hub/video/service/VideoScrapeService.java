@@ -324,7 +324,6 @@ public class VideoScrapeService {
             if (isAdult) video.setIsAdult(true);
 
             Video saved = repository.save(video);
-            assetService.saveActors(saved, mediaType, tmdbId, movieDetail);
             return saved;
 
         } else if ("tv".equalsIgnoreCase(mediaType)) {
@@ -371,7 +370,6 @@ public class VideoScrapeService {
             if (isAdult) video.setIsAdult(true);
 
             Video saved = repository.save(video);
-            assetService.saveActors(saved, mediaType, tmdbId, tvDetail);
             return saved;
 
         } else {
