@@ -374,7 +374,7 @@ public class NfoService {
             if (Files.exists(tvshowNfo)) {
                 NfoData seriesData = parseNfoFile(tvshowNfo);
                 if (seriesData != null && seriesData.title != null) {
-                    log.info("Found tvshow.nfo in parent dir: {}", tvshowNfo);
+                    log.debug("Found tvshow.nfo in parent dir: {}", tvshowNfo);
                     return seriesData.title;
                 }
             }
