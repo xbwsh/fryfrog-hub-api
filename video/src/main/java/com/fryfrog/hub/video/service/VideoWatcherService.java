@@ -58,8 +58,15 @@ public class VideoWatcherService {
             }
 
             for (String rootPath : rootPaths) {
+                // 查找对应的库 ID
+                Long libraryId = null;
+                var library = mediaLibraryService.findByPath(rootPath);
+                if (library != null) {
+                    libraryId = library.getId();
+                }
+
                 // Phase 1: 扫描 + 入库
-                List<Video> videos = scanService.scanAndSave(rootPath, null);
+                List<Video> videos = scanService.scanAndSave(rootPath, libraryId);
                 if (videos.isEmpty()) continue;
 
                 // Phase 2: TMDB 刮削
