@@ -46,6 +46,9 @@ public class VideoOrganizeService {
 
         for (Video video : videos) {
             try {
+                // 先重命名文件（如果有 metadata）
+                renameVideoFile(video);
+
                 Path oldDir = Paths.get(video.getFilePath()).getParent();
                 Path metadataDir = nfoService.getMetadataDir(video);
 
