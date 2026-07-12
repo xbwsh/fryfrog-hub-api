@@ -109,8 +109,8 @@ public class VideoAssetService {
         // 下载系列封面（tvshow-poster.jpg, tvshow-fanart.jpg）
         if ("tv".equalsIgnoreCase(video.getMediaType()) && video.getSeries() != null) {
             try {
-                Path seasonDir = nfoService.getSeasonDir(video);
-                downloadSeriesCovers(video.getSeries(), seasonDir);
+                Path episodeDir = nfoService.getMetadataDir(video);
+                downloadSeriesCovers(video.getSeries(), episodeDir);
             } catch (Exception e) {
                 log.debug("[Asset] Failed to download series covers for {}: {}", video.getTitle(), e.getMessage());
             }
