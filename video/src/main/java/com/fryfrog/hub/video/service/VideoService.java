@@ -779,10 +779,6 @@ public class VideoService {
         renameVideoFile(saved);
         saveActors(saved, mediaType, tmdbId, detail);
 
-        if ("tv".equalsIgnoreCase(mediaType)) {
-            bindSiblingVideos(saved, tmdbId);
-        }
-
         return saved;
     }
 
@@ -848,62 +844,6 @@ public class VideoService {
      */
     public HanimeMetadata scrapeHanimeOnly(String hanimeId) {
         return hanimeScraperService.scrape(hanimeId);
-    }
-
-    private void bindSiblingVideos(Video boundVideo, Long tmdbId) {
-        String dirPath = Paths.get(boundVideo.getFilePath()).getParent().toString();
-        String dirPattern = dirPath + "/%";
-        List<Video> siblings = repository.findUnboundInDirectory(dirPattern);
-        for (Video sibling : siblings) {
-            if (sibling.getId().equals(boundVideo.getId())) {
-                continue;
-            }
-            try {
-                int[] seasonEpisode = parseSeasonEpisode(sibling.getFileName());
-                sibling.setTmdbId(tmdbId);
-                sibling.setMediaType("tv");
-                sibling.setMetadataSource("tmdb");
-                sibling.setSeasonNumber(seasonEpisode[0]);
-                sibling.setEpisodeNumber(seasonEpisode[1]);
-                sibling.setMetadataUpdatedAt(LocalDateTime.now());
-
-                try {
-                    TmdbEpisodeDetail episodeDetail = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1]);
-                    if (episodeDetail != null) {
-                        if (episodeDetail.getOverview() != null && !episodeDetail.getOverview().isBlank()) {
-                            sibling.setOverview(episodeDetail.getOverview());
-                        }
-                        if (episodeDetail.getVoteAverage() != null) {
-                            sibling.setRating(episodeDetail.getVoteAverage());
-                        }
-                        if (episodeDetail.getVoteCount() != null) {
-                            sibling.setVoteCount(episodeDetail.getVoteCount());
-                        }
-                        if (episodeDetail.getYear() != null) {
-                            sibling.setYear(episodeDetail.getYear());
-                        }
-                        if (episodeDetail.getStillPath() != null && !episodeDetail.getStillPath().isBlank()) {
-                            sibling.setBackdropUrl(tmdbService.getBackdropUrl(episodeDetail.getStillPath()));
-                        }
-                        log.info("Fetched episode metadata for sibling: S{}E{} - {}",
-                                seasonEpisode[0], seasonEpisode[1], episodeDetail.getName());
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to fetch episode detail for sibling S{}E{}: {}", seasonEpisode[0], seasonEpisode[1], e.getMessage());
-                }
-
-                VideoSeries series = seriesService.getOrCreateAndBindSeries(boundVideo.getTitle(), tmdbId);
-                seriesService.assignVideoToSeries(sibling, series);
-
-                repository.save(sibling);
-                generateNfoAndCovers(sibling);
-                moveVideoToMetadataDir(sibling);
-                saveActors(sibling, "tv", tmdbId, null);
-                log.info("Auto-bound sibling video: {} -> TMDB {}", sibling.getFileName(), tmdbId);
-            } catch (Exception e) {
-                log.warn("Failed to auto-bind sibling video {}: {}", sibling.getFileName(), e.getMessage());
-            }
-        }
     }
 
     private void moveVideoToMetadataDir(Video video) {

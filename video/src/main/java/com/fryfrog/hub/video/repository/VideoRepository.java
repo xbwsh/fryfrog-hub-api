@@ -38,7 +38,4 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     List<Video> findBySeries(com.fryfrog.hub.video.model.VideoSeries series);
 
     List<Video> findByFilePathContaining(String path);
-
-    @Query("SELECT v FROM Video v WHERE v.filePath LIKE :dirPattern AND v.tmdbId IS NULL")
-    List<Video> findUnboundInDirectory(@Param("dirPattern") String dirPattern);
 }
