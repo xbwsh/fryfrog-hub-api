@@ -82,16 +82,17 @@ public class NfoService {
                 checkDir = checkDir.getParent();
             }
 
-            // 没找到 showName 目录，向上找到合适的根目录再创建
+            // 没找到正确的 showName 目录，向上找到合适的根目录再创建
+            // 一直向上直到父目录为 null（根目录）
             Path baseDir = videoDir;
             while (baseDir.getParent() != null) {
                 String dirName = baseDir.getFileName().toString();
-                // 遇到已整理的季/集目录结构时，继续向上
+                // 跳过已整理的季/集目录结构
                 if (dirName.matches("第 \\d+ 季") || dirName.matches("第 \\d+ 集")) {
                     baseDir = baseDir.getParent();
                     continue;
                 }
-                break;
+                baseDir = baseDir.getParent();
             }
             String seasonDirName = "第 " + season + " 季";
             return baseDir.resolve(showName).resolve(seasonDirName).resolve(correctEpisodeDirName);
