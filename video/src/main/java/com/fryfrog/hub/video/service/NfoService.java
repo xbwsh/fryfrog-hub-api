@@ -133,7 +133,7 @@ public class NfoService {
         appendField(sb, "fanart", "tvshow-fanart.jpg");
 
         // 成人内容标记
-        if (series.getVideos() != null && series.getVideos().stream().anyMatch(v -> Boolean.TRUE.equals(v.getIsAdult()))) {
+        if (Boolean.TRUE.equals(series.getIsAdult())) {
             sb.append("  <adult>true</adult>\n");
         }
 

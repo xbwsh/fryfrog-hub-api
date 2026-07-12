@@ -58,6 +58,9 @@ public class SeriesDTO {
     @Schema(description = "播出状态", example = "Returning Series")
     private String status;
 
+    @Schema(description = "是否为成人内容", example = "false")
+    private Boolean isAdult;
+
     @Schema(description = "实际集数")
     private Integer episodeCount;
 
@@ -93,6 +96,7 @@ public class SeriesDTO {
         dto.setTotalEpisodes(series.getTotalEpisodes());
         dto.setEpisodeCount(series.getEpisodeCount());
         dto.setStatus(series.getStatus());
+        dto.setIsAdult(series.getIsAdult());
         dto.setMetadataDir(series.getMetadataDir());
         dto.setPosterLocalPath(series.getPosterLocalPath());
         dto.setBackdropLocalPath(series.getBackdropLocalPath());

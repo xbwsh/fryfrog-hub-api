@@ -812,6 +812,11 @@ public class VideoService {
             VideoSeries series = seriesService.getOrCreateAndBindSeries(tvDetail.getName(), tmdbId);
             seriesService.assignVideoToSeries(video, series);
 
+            // 设置系列的成人内容标记
+            if (isAdult) {
+                series.setIsAdult(true);
+            }
+
             Path metadataDir = nfoService.getMetadataDir(video);
             series.setMetadataDir(metadataDir.toString());
             seriesService.saveSeries(series);
