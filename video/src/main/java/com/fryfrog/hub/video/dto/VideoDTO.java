@@ -157,6 +157,9 @@ public class VideoDTO {
     @Schema(description = "音频是否浏览器不兼容（需用本地播放器）", example = "true")
     private Boolean audioIncompatible;
 
+    @Schema(description = "是否为成人内容", example = "false")
+    private Boolean isAdult;
+
     public static VideoDTO fromEntity(Video video, boolean hasNfo, boolean hasPoster, boolean hasFanart, boolean hasMetadataDir) {
         VideoDTO dto = new VideoDTO();
         dto.setId(video.getId());
@@ -199,6 +202,7 @@ public class VideoDTO {
         dto.setHasMetadataDir(hasMetadataDir);
         dto.setScraped(video.getTmdbId() != null);
         dto.setIsSeries(video.getIsSeries());
+        dto.setIsAdult(video.getIsAdult());
         dto.setLibraryId(video.getLibraryId());
         dto.setSeasonNumber(video.getSeasonNumber());
         dto.setEpisodeNumber(video.getEpisodeNumber());
