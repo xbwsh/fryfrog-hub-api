@@ -25,8 +25,8 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     List<Video> findByTmdbIdIsNull();
 
-    @Query("SELECT v FROM Video v WHERE (v.tmdbId IS NULL OR v.metadataUpdatedAt IS NULL) AND (v.scrapeAttemptedAt IS NULL OR v.scrapeAttemptedAt < :cutoff)")
-    List<Video> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);
+    @Query("SELECT v FROM Video v WHERE (v.tmdbId IS NULL OR v.metadataUpdatedAt IS NULL)")
+    List<Video> findUnscrapedVideos();
 
     Optional<Video> findByTmdbId(Long tmdbId);
 

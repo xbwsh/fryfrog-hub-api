@@ -3,6 +3,7 @@ package com.fryfrog.hub.video.service;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
+import com.fryfrog.hub.video.model.Video;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +20,10 @@ import java.util.stream.Collectors;
 public class VideoWatcherService {
 
     private final VideoService videoService;
+    private final VideoScanService scanService;
+    private final VideoScrapeService scrapeService;
+    private final VideoOrganizeService organizeService;
+    private final VideoAssetService assetService;
     private final PeriodicScanScheduler scanScheduler;
     private final MediaLibraryService mediaLibraryService;
 
@@ -26,13 +31,11 @@ public class VideoWatcherService {
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {
-        // 优先从数据库 MediaLibrary 读取（前端配置），只取 VIDEO 类型
         List<String> dbPaths = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
                 .map(MediaLibrary::getPath)
                 .toList();
         if (!dbPaths.isEmpty()) return dbPaths;
-        // 回退到配置文件
         return Arrays.stream(rootPathsConfig.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
@@ -42,20 +45,36 @@ public class VideoWatcherService {
     @PostConstruct
     public void init() {
         scanScheduler.registerTask(this::periodicScan);
-        log.info("Video watcher initialized (polling mode)");
+        log.info("[PeriodicScan] Video watcher initialized (polling mode)");
     }
 
     private void periodicScan() {
         try {
+            log.info("[PeriodicScan] Starting periodic scan...");
             List<String> rootPaths = getRootPaths();
-            if (rootPaths.isEmpty()) return;
-            for (String rootPath : rootPaths) {
-                videoService.scanDirectory(rootPath);
+            if (rootPaths.isEmpty()) {
+                log.info("[PeriodicScan] No root paths configured, skipping");
+                return;
             }
-            videoService.organizeVideos(null);
-            videoService.autoScrapeAll(false);
+
+            for (String rootPath : rootPaths) {
+                // Phase 1: 扫描 + 入库
+                List<Video> videos = scanService.scanAndSave(rootPath, null);
+                if (videos.isEmpty()) continue;
+
+                // Phase 2: TMDB 刮削
+                scrapeService.batchScrapeAndBind(videos);
+
+                // Phase 3: 文件整理
+                organizeService.batchOrganize(videos);
+
+                // Phase 4: 资产生成（NFO + 封面）
+                assetService.batchGenerateAssets(videos);
+            }
+
+            log.info("[PeriodicScan] Periodic scan completed");
         } catch (Exception e) {
-            log.warn("Periodic video scan failed: {}", e.getMessage());
+            log.warn("[PeriodicScan] Periodic video scan failed: {}", e.getMessage());
         }
     }
 }
