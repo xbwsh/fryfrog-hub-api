@@ -154,6 +154,10 @@ public class VideoScrapeService {
                     }
 
                     log.info("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
+                    for (var r : results) {
+                        log.info("[Scrape] Result: id={}, title='{}', originalTitle='{}', name='{}', originalName='{}'",
+                                r.getId(), r.getTitle(), r.getOriginalTitle(), r.getName(), r.getOriginalName());
+                    }
 
                     TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
                     if (bestMatch == null) {
