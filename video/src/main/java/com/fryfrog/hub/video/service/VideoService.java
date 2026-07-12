@@ -1053,6 +1053,17 @@ public class VideoService {
             log.warn("Failed to generate NFO for {}: {}", video.getTitle(), e.getMessage());
         }
 
+        // 电视剧同时生成 tvshow.nfo
+        if ("tv".equalsIgnoreCase(video.getMediaType()) && video.getSeries() != null) {
+            try {
+                Path seasonDir = nfoService.getSeasonDir(video);
+                nfoService.generateTvShowNfo(video.getSeries(), seasonDir);
+                log.info("Generated tvshow.nfo for series: {}", video.getSeries().getTitle());
+            } catch (Exception e) {
+                log.warn("Failed to generate tvshow.nfo for {}: {}", video.getTitle(), e.getMessage());
+            }
+        }
+
         try {
             coverArtService.downloadAllCovers(video);
             log.debug("Downloaded covers for: {}", video.getTitle());

@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.model.VideoSeries;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
@@ -10,27 +11,28 @@ import org.xml.sax.InputSource;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
-import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
 
 @Service
 @Slf4j
 public class NfoService {
 
+    // ==================== NFO 生成 ====================
+
+    /**
+     * 生成单集/电影 NFO 文件
+     */
     public String generateNfo(Video video) {
         try {
             Path metadataDir = getMetadataDir(video);
             Files.createDirectories(metadataDir);
 
             Path nfoPath = metadataDir.resolve(getNfoFileName(video));
-
             String nfoContent = buildNfoContent(video);
             Files.writeString(nfoPath, nfoContent, StandardCharsets.UTF_8);
 
@@ -41,6 +43,163 @@ public class NfoService {
             return null;
         }
     }
+
+    /**
+     * 生成系列 NFO 文件 (tvshow.nfo)
+     */
+    public String generateTvShowNfo(VideoSeries series, Path seasonDir) {
+        try {
+            Files.createDirectories(seasonDir);
+            Path nfoPath = seasonDir.resolve("tvshow.nfo");
+            String nfoContent = buildTvShowNfoContent(series);
+            Files.writeString(nfoPath, nfoContent, StandardCharsets.UTF_8);
+
+            log.info("Generated tvshow.nfo: {}", nfoPath);
+            return nfoPath.toString();
+        } catch (IOException e) {
+            log.error("Failed to generate tvshow.nfo for series {}: {}", series.getTitle(), e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private String buildNfoContent(Video video) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+
+        if ("tv".equalsIgnoreCase(video.getMediaType())) {
+            sb.append("<episodedetails>\n");
+        } else {
+            sb.append("<movie>\n");
+        }
+
+        appendCommonFields(sb, video);
+
+        // 电视剧额外字段
+        if ("tv".equalsIgnoreCase(video.getMediaType())) {
+            appendField(sb, "season", video.getSeasonNumber() != null ? video.getSeasonNumber() : 1);
+            appendField(sb, "episode", video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1);
+        }
+
+        // 封面文件名
+        appendField(sb, "thumb", getPosterFileName(video));
+        appendField(sb, "fanart", getFanartFileName(video));
+
+        if ("tv".equalsIgnoreCase(video.getMediaType())) {
+            sb.append("</episodedetails>\n");
+        } else {
+            sb.append("</movie>\n");
+        }
+
+        return sb.toString();
+    }
+
+    private String buildTvShowNfoContent(VideoSeries series) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+        sb.append("<tvshow>\n");
+
+        appendField(sb, "title", series.getTitle());
+        appendField(sb, "originaltitle", series.getOriginalTitle());
+        appendField(sb, "plot", series.getOverview());
+        appendField(sb, "year", series.getYear());
+        appendField(sb, "status", series.getStatus());
+
+        // 类型
+        if (series.getMediaType() != null) {
+            appendField(sb, "genre", series.getMediaType());
+        }
+
+        appendField(sb, "rating", series.getRating());
+
+        // TMDB ID
+        if (series.getTmdbId() != null) {
+            sb.append("  <uniqueid type=\"tmdb\" default=\"false\">")
+                    .append(series.getTmdbId())
+                    .append("</uniqueid>\n");
+        }
+
+        // IMDB ID（从系列的第一个视频获取）
+        if (series.getVideos() != null && !series.getVideos().isEmpty()) {
+            Video firstVideo = series.getVideos().get(0);
+            if (firstVideo.getImdbId() != null && !firstVideo.getImdbId().isBlank()) {
+                sb.append("  <uniqueid type=\"imdb\">")
+                        .append(firstVideo.getImdbId())
+                        .append("</uniqueid>\n");
+            }
+        }
+
+        // 封面
+        appendField(sb, "thumb", "tvshow-poster.jpg");
+        appendField(sb, "fanart", "tvshow-fanart.jpg");
+
+        // 成人内容标记
+        if (series.getVideos() != null && series.getVideos().stream().anyMatch(v -> Boolean.TRUE.equals(v.getIsAdult()))) {
+            sb.append("  <adult>true</adult>\n");
+        }
+
+        sb.append("</tvshow>\n");
+        return sb.toString();
+    }
+
+    /**
+     * 写入通用字段（movie 和 episode 共用）
+     */
+    private void appendCommonFields(StringBuilder sb, Video video) {
+        appendField(sb, "title", video.getTitle());
+        appendField(sb, "originaltitle", video.getOriginalTitle());
+        appendField(sb, "plot", video.getOverview());
+        appendField(sb, "year", video.getYear());
+        appendField(sb, "director", video.getDirector());
+
+        // 演员
+        if (video.getActors() != null) {
+            String[] actors = video.getActors().split(",");
+            for (String actor : actors) {
+                String trimmed = actor.trim();
+                if (!trimmed.isEmpty()) {
+                    sb.append("  <actor>\n");
+                    sb.append("    <name>").append(escapeXml(trimmed)).append("</name>\n");
+                    sb.append("  </actor>\n");
+                }
+            }
+        }
+
+        // 类型
+        if (video.getGenre() != null) {
+            String[] genres = video.getGenre().split(",");
+            for (String genre : genres) {
+                String trimmed = genre.trim();
+                if (!trimmed.isEmpty()) {
+                    appendField(sb, "genre", trimmed);
+                }
+            }
+        }
+
+        appendField(sb, "rating", video.getRating());
+        appendField(sb, "votes", video.getVoteCount());
+        appendField(sb, "runtime", video.getDurationMinutes());
+
+        // TMDB ID
+        if (video.getTmdbId() != null) {
+            sb.append("  <uniqueid type=\"tmdb\" default=\"false\">")
+                    .append(video.getTmdbId())
+                    .append("</uniqueid>\n");
+        }
+
+        // IMDB ID
+        if (video.getImdbId() != null && !video.getImdbId().isBlank()) {
+            sb.append("  <uniqueid type=\"imdb\">")
+                    .append(video.getImdbId())
+                    .append("</uniqueid>\n");
+        }
+
+        // 成人内容标记
+        if (Boolean.TRUE.equals(video.getIsAdult())) {
+            sb.append("  <adult>true</adult>\n");
+        }
+    }
+
+    // ==================== 路径计算 ====================
 
     public Path getMetadataDir(Video video) {
         Path videoPath = Paths.get(video.getFilePath());
@@ -109,6 +268,14 @@ public class NfoService {
         return videoDir.resolve(showName);
     }
 
+    /**
+     * 获取季目录路径（用于 tvshow.nfo）
+     */
+    public Path getSeasonDir(Video video) {
+        Path metadataDir = getMetadataDir(video);
+        return metadataDir.getParent(); // 集目录的父目录就是季目录
+    }
+
     private String selectShowName(Video video) {
         String title = video.getTitle();
         String originalTitle = video.getOriginalTitle();
@@ -132,6 +299,8 @@ public class NfoService {
         return (cleaned == null || cleaned.isBlank()) ? "Unknown" : cleaned;
     }
 
+    // ==================== 文件名工具 ====================
+
     private String getNfoFileName(Video video) {
         String baseName = getBaseName(video.getFileName());
         return baseName + ".nfo";
@@ -140,144 +309,6 @@ public class NfoService {
     public String getBaseName(String fileName) {
         int lastDot = fileName.lastIndexOf('.');
         return lastDot >= 0 ? fileName.substring(0, lastDot) : fileName;
-    }
-
-    private String buildNfoContent(Video video) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
-
-        if ("tv".equalsIgnoreCase(video.getMediaType())) {
-            sb.append("<episodedetails>\n");
-            appendTvFields(sb, video);
-            sb.append("</episodedetails>\n");
-        } else {
-            sb.append("<movie>\n");
-            appendMovieFields(sb, video);
-            sb.append("</movie>\n");
-        }
-
-        return sb.toString();
-    }
-
-    private void appendMovieFields(StringBuilder sb, Video video) {
-        appendField(sb, "title", video.getTitle());
-        appendField(sb, "originaltitle", video.getOriginalTitle());
-        appendField(sb, "year", video.getYear());
-        appendField(sb, "plot", video.getOverview());
-        appendField(sb, "director", video.getDirector());
-
-        if (video.getActors() != null) {
-            String[] actors = video.getActors().split(",");
-            for (String actor : actors) {
-                String trimmed = actor.trim();
-                if (!trimmed.isEmpty()) {
-                    sb.append("  <actor>\n");
-                    sb.append("    <name>").append(escapeXml(trimmed)).append("</name>\n");
-                    sb.append("  </actor>\n");
-                }
-            }
-        }
-
-        if (video.getGenre() != null) {
-            String[] genres = video.getGenre().split(",");
-            for (String genre : genres) {
-                String trimmed = genre.trim();
-                if (!trimmed.isEmpty()) {
-                    appendField(sb, "genre", trimmed);
-                }
-            }
-        }
-
-        appendField(sb, "rating", video.getRating());
-        appendField(sb, "votes", video.getVoteCount());
-        appendField(sb, "imdbid", video.getImdbId());
-
-        if (video.getDurationMinutes() != null) {
-            appendField(sb, "runtime", video.getDurationMinutes());
-        }
-
-        if (video.getTmdbId() != null) {
-            sb.append("  <uniqueid type=\"tmdb\" default=\"false\">")
-                    .append(video.getTmdbId())
-                    .append("</uniqueid>\n");
-        }
-
-        appendField(sb, "thumb", getPosterFileName(video));
-        appendField(sb, "fanart", getFanartFileName(video));
-    }
-
-    private void appendTvFields(StringBuilder sb, Video video) {
-        appendField(sb, "title", video.getTitle());
-        appendField(sb, "originaltitle", video.getOriginalTitle());
-        appendField(sb, "season", video.getSeasonNumber() != null ? video.getSeasonNumber() : 1);
-        appendField(sb, "episode", video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1);
-        appendField(sb, "plot", video.getOverview());
-        appendField(sb, "director", video.getDirector());
-
-        if (video.getActors() != null) {
-            String[] actors = video.getActors().split(",");
-            for (String actor : actors) {
-                String trimmed = actor.trim();
-                if (!trimmed.isEmpty()) {
-                    sb.append("  <actor>\n");
-                    sb.append("    <name>").append(escapeXml(trimmed)).append("</name>\n");
-                    sb.append("  </actor>\n");
-                }
-            }
-        }
-
-        if (video.getGenre() != null) {
-            String[] genres = video.getGenre().split(",");
-            for (String genre : genres) {
-                String trimmed = genre.trim();
-                if (!trimmed.isEmpty()) {
-                    appendField(sb, "genre", trimmed);
-                }
-            }
-        }
-
-        appendField(sb, "rating", video.getRating());
-        appendField(sb, "votes", video.getVoteCount());
-
-        if (video.getYear() != null) {
-            appendField(sb, "year", video.getYear());
-        }
-
-        if (video.getTmdbId() != null) {
-            sb.append("  <uniqueid type=\"tmdb\" default=\"false\">")
-                    .append(video.getTmdbId())
-                    .append("</uniqueid>\n");
-        }
-
-        if (video.getImdbId() != null && !video.getImdbId().isBlank()) {
-            sb.append("  <uniqueid type=\"imdb\">")
-                    .append(video.getImdbId())
-                    .append("</uniqueid>\n");
-        }
-
-        if (Boolean.TRUE.equals(video.getIsAdult())) {
-            sb.append("  <adult>true</adult>\n");
-        }
-
-        appendField(sb, "thumb", getPosterFileName(video));
-        appendField(sb, "fanart", getFanartFileName(video));
-    }
-
-    private void appendField(StringBuilder sb, String tag, Object value) {
-        if (value != null) {
-            sb.append("  <").append(tag).append(">")
-                    .append(escapeXml(String.valueOf(value)))
-                    .append("</").append(tag).append(">\n");
-        }
-    }
-
-    private String escapeXml(String text) {
-        if (text == null) return "";
-        return text.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&apos;");
     }
 
     public String getPosterFileName(Video video) {
@@ -300,10 +331,13 @@ public class NfoService {
         return getMetadataDir(video).resolve(getNfoFileName(video));
     }
 
+    // ==================== NFO 读取 ====================
+
     public NfoData readNfoForVideo(Path videoPath) {
         Path videoDir = videoPath.getParent();
         String videoBaseName = getBaseName(videoPath.getFileName().toString());
 
+        // 搜索顺序：单集NFO > tvshow.nfo > movie.nfo > xml
         Path[] searchPaths = {
                 videoDir.resolve(videoBaseName + ".nfo"),
                 videoDir.resolve("tvshow.nfo"),
@@ -315,15 +349,18 @@ public class NfoService {
             if (Files.exists(nfoPath)) {
                 log.debug("Found NFO file: {}", nfoPath);
                 NfoData data = parseNfoFile(nfoPath);
-                if (data != null && data.isTvShow) {
+                if (data != null) {
+                    // 如果是 tvshow.nfo，提取系列标题
                     if ("tvshow.nfo".equals(nfoPath.getFileName().toString())) {
+                        data.isTvShow = true;
                         data.seriesTitle = data.showTitle != null ? data.showTitle : data.title;
                     }
-                    if (data.seriesTitle == null) {
+                    // 如果是 episode NFO，尝试从父目录获取系列标题
+                    if (data.isTvShow && data.seriesTitle == null) {
                         data.seriesTitle = findSeriesTitleFromParentDirs(videoDir);
                     }
+                    return data;
                 }
-                return data;
             }
         }
 
@@ -360,8 +397,10 @@ public class NfoService {
 
             NfoData data = new NfoData();
             Element root = doc.getDocumentElement();
-            data.isTvShow = "episodedetails".equalsIgnoreCase(root.getTagName());
+            String rootTag = root.getTagName();
+            data.isTvShow = "episodedetails".equalsIgnoreCase(rootTag) || "tvshow".equalsIgnoreCase(rootTag);
 
+            // 通用字段
             data.title = getTagText(root, "title");
             data.originalTitle = getTagText(root, "originaltitle");
             data.showTitle = getTagText(root, "showtitle");
@@ -370,6 +409,7 @@ public class NfoService {
             data.year = getTagText(root, "year");
             data.genre = getTagText(root, "genre");
             data.runtime = getTagText(root, "runtime");
+            data.status = getTagText(root, "status");
 
             if (data.year == null) {
                 String premiered = getTagText(root, "premiered");
@@ -378,18 +418,30 @@ public class NfoService {
                 }
             }
 
-            NodeList ratingNodes = root.getElementsByTagName("rating");
-            for (int i = 0; i < ratingNodes.getLength(); i++) {
-                Element ratingEl = (Element) ratingNodes.item(i);
-                String value = getTagText(ratingEl, "value");
-                if (value != null && !value.isBlank()) {
-                    data.rating = value;
-                    String votes = getTagText(ratingEl, "votes");
-                    if (votes != null) data.votes = votes;
-                    break;
+            // 评分（支持两种格式：<rating>8.5</rating> 和 <rating><value>8.5</value></rating>）
+            String ratingText = getTagText(root, "rating");
+            if (ratingText != null && !ratingText.isBlank()) {
+                data.rating = ratingText;
+            } else {
+                NodeList ratingNodes = root.getElementsByTagName("rating");
+                for (int i = 0; i < ratingNodes.getLength(); i++) {
+                    Element ratingEl = (Element) ratingNodes.item(i);
+                    String value = getTagText(ratingEl, "value");
+                    if (value != null && !value.isBlank()) {
+                        data.rating = value;
+                        String votes = getTagText(ratingEl, "votes");
+                        if (votes != null) data.votes = votes;
+                        break;
+                    }
                 }
             }
 
+            // 投票数
+            if (data.votes == null) {
+                data.votes = getTagText(root, "votes");
+            }
+
+            // ID
             NodeList uniqueIdNodes = root.getElementsByTagName("uniqueid");
             for (int i = 0; i < uniqueIdNodes.getLength(); i++) {
                 Element uidEl = (Element) uniqueIdNodes.item(i);
@@ -403,11 +455,13 @@ public class NfoService {
                 }
             }
 
-            if (data.isTvShow) {
+            // 电视剧额外字段
+            if ("episodedetails".equalsIgnoreCase(rootTag)) {
                 data.season = getTagText(root, "season");
                 data.episode = getTagText(root, "episode");
             }
 
+            // 演员
             NodeList actorNodes = root.getElementsByTagName("actor");
             StringBuilder actors = new StringBuilder();
             for (int i = 0; i < actorNodes.getLength(); i++) {
@@ -420,6 +474,7 @@ public class NfoService {
             }
             data.actors = actors.toString();
 
+            // 类型（支持多个 genre 标签）
             NodeList genreNodes = root.getElementsByTagName("genre");
             StringBuilder genres = new StringBuilder();
             for (int i = 0; i < genreNodes.getLength(); i++) {
@@ -433,11 +488,11 @@ public class NfoService {
                 data.genre = genres.toString();
             }
 
-            // 读取封面文件名（本地文件名，不是URL）
+            // 封面文件名
             data.thumb = getTagText(root, "thumb");
             data.fanart = getTagText(root, "fanart");
 
-            // 读取成人内容标记
+            // 成人内容标记
             String adultText = getTagText(root, "adult");
             data.isAdult = "true".equalsIgnoreCase(adultText);
 
@@ -448,14 +503,7 @@ public class NfoService {
         }
     }
 
-    private String getTagText(Element parent, String tagName) {
-        NodeList nodes = parent.getElementsByTagName(tagName);
-        if (nodes.getLength() > 0) {
-            String text = nodes.item(0).getTextContent();
-            return (text != null && !text.isBlank()) ? text.trim() : null;
-        }
-        return null;
-    }
+    // ==================== NFO 数据应用 ====================
 
     public void applyNfoData(Video video, NfoData data) {
         if (data.title != null) video.setTitle(data.title);
@@ -478,6 +526,7 @@ public class NfoService {
         if (data.runtime != null) {
             try { video.setDurationMinutes(Integer.parseInt(data.runtime)); } catch (NumberFormatException ignored) {}
         }
+        if (data.status != null) video.setStatus(data.status);
 
         video.setMediaType(data.isTvShow ? "tv" : "movie");
         video.setMetadataSource("nfo");
@@ -497,24 +546,54 @@ public class NfoService {
 
         // 设置本地封面路径
         if (data.thumb != null && !data.thumb.isBlank()) {
-            java.nio.file.Path videoDir = java.nio.file.Paths.get(video.getFilePath()).getParent();
+            Path videoDir = Paths.get(video.getFilePath()).getParent();
             if (videoDir != null) {
-                java.nio.file.Path posterPath = videoDir.resolve(data.thumb);
-                if (java.nio.file.Files.exists(posterPath)) {
+                Path posterPath = videoDir.resolve(data.thumb);
+                if (Files.exists(posterPath)) {
                     video.setCoverArtPath(posterPath.toString());
                 }
             }
         }
         if (data.fanart != null && !data.fanart.isBlank()) {
-            java.nio.file.Path videoDir = java.nio.file.Paths.get(video.getFilePath()).getParent();
+            Path videoDir = Paths.get(video.getFilePath()).getParent();
             if (videoDir != null) {
-                java.nio.file.Path fanartPath = videoDir.resolve(data.fanart);
-                if (java.nio.file.Files.exists(fanartPath)) {
+                Path fanartPath = videoDir.resolve(data.fanart);
+                if (Files.exists(fanartPath)) {
                     video.setBackdropLocalPath(fanartPath.toString());
                 }
             }
         }
     }
+
+    // ==================== XML 工具 ====================
+
+    private void appendField(StringBuilder sb, String tag, Object value) {
+        if (value != null) {
+            sb.append("  <").append(tag).append(">")
+                    .append(escapeXml(String.valueOf(value)))
+                    .append("</").append(tag).append(">\n");
+        }
+    }
+
+    private String escapeXml(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
+    }
+
+    private String getTagText(Element parent, String tagName) {
+        NodeList nodes = parent.getElementsByTagName(tagName);
+        if (nodes.getLength() > 0) {
+            String text = nodes.item(0).getTextContent();
+            return (text != null && !text.isBlank()) ? text.trim() : null;
+        }
+        return null;
+    }
+
+    // ==================== NFO 数据类 ====================
 
     public static class NfoData {
         public String title;
@@ -532,10 +611,11 @@ public class NfoService {
         public String runtime;
         public String season;
         public String episode;
+        public String status;
         public boolean isTvShow;
         public String seriesTitle;
-        public String thumb;  // 封面文件名
-        public String fanart; // 背景图文件名
-        public boolean isAdult; // 是否为成人内容
+        public String thumb;
+        public String fanart;
+        public boolean isAdult;
     }
 }
