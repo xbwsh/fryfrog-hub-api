@@ -249,6 +249,12 @@ public class NfoService {
                     .append("</uniqueid>\n");
         }
 
+        if (video.getImdbId() != null && !video.getImdbId().isBlank()) {
+            sb.append("  <uniqueid type=\"imdb\">")
+                    .append(video.getImdbId())
+                    .append("</uniqueid>\n");
+        }
+
         appendField(sb, "thumb", getPosterFileName(video));
         appendField(sb, "fanart", getFanartFileName(video));
     }
