@@ -279,9 +279,11 @@ public class VideoScrapeService {
             String name = r.getTitle();
             String originalName = r.getOriginalTitle();
             if (name != null && (name.equals(cleanedQuery) || name.equals(query))) {
+                log.info("[Scrape] Exact match: '{}' == '{}'", query, name);
                 return r;
             }
             if (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query))) {
+                log.info("[Scrape] Exact match: '{}' == '{}'", query, originalName);
                 return r;
             }
         }
@@ -299,12 +301,14 @@ public class VideoScrapeService {
             if (originalName != null) {
                 score = Math.max(score, TitleCleaner.calculateSimilarity(cleanedQuery, originalName));
             }
+            log.info("[Scrape] Similarity: '{}' vs '{}'/'{}' = {}", cleanedQuery, name, originalName, score);
             if (score > bestScore) {
                 bestScore = score;
                 best = r;
             }
         }
 
+        log.info("[Scrape] Best similarity score: {} (threshold: 0.6)", bestScore);
         if (best != null && bestScore >= 0.6) {
             return best;
         }
