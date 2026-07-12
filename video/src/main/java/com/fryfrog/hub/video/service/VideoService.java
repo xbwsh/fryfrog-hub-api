@@ -355,7 +355,9 @@ public class VideoService {
                     ? fileName.substring(0, fileName.lastIndexOf('.'))
                     : fileName;
 
-            video.setTitle(baseName);
+            // 清洗 title，去除集数信息，避免重复叠加
+            String cleanTitle = cleanTitleForSearch(baseName);
+            video.setTitle(cleanTitle.isBlank() ? baseName : cleanTitle);
             video.setFilePath(absolutePath);
             video.setFileName(fileName);
             video.setFileSize(file.length());
