@@ -1401,6 +1401,13 @@ public class VideoService {
                             continue;
                         }
 
+                        // 检查是否需要重新刮削（已有 tmdbId 但元数据不完整）
+                        if (video.getTmdbId() != null && !isMetadataComplete(video)) {
+                            log.info("Metadata incomplete for '{}', re-scraping", video.getTitle());
+                            unbindTmdb(video.getId());
+                            video.setTmdbId(null);
+                        }
+
                         String mediaTypeFilter = null;
                         if (video.getLibraryId() != null) {
                             MediaLibrary library = mediaLibraryService.getLibraryById(video.getLibraryId());
@@ -1464,6 +1471,24 @@ public class VideoService {
         }
 
         return repository.findAll();
+    }
+
+    /**
+     * 检查视频元数据是否完整
+     */
+    private boolean isMetadataComplete(Video video) {
+        // 如果没有 poster_url 或 backdrop_url，认为元数据不完整
+        if (video.getPosterUrl() == null || video.getPosterUrl().isBlank()) {
+            return false;
+        }
+        if (video.getBackdropUrl() == null || video.getBackdropUrl().isBlank()) {
+            return false;
+        }
+        // 如果没有 overview，认为元数据不完整
+        if (video.getOverview() == null || video.getOverview().isBlank()) {
+            return false;
+        }
+        return true;
     }
 
     /**
