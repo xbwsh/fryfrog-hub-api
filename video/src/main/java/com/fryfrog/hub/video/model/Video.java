@@ -145,6 +145,9 @@ public class Video extends BaseEntity {
     @Schema(description = "元数据最后更新时间")
     private java.time.LocalDateTime metadataUpdatedAt;
 
+    @Schema(description = "刮削尝试时间（用于跳过近期已尝试的视频）")
+    private java.time.LocalDateTime scrapeAttemptedAt;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "series_id")
     @Schema(description = "所属系列")

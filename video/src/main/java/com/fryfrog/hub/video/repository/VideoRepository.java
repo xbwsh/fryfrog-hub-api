@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,6 +24,9 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     List<Video> findByFavoriteTrue();
 
     List<Video> findByTmdbIdIsNull();
+
+    @Query("SELECT v FROM Video v WHERE v.tmdbId IS NULL AND (v.scrapeAttemptedAt IS NULL OR v.scrapeAttemptedAt < :cutoff)")
+    List<Video> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);
 
     Optional<Video> findByTmdbId(Long tmdbId);
 

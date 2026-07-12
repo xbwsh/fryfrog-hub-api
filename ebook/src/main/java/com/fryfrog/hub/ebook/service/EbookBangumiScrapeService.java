@@ -21,8 +21,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 @Slf4j
@@ -183,7 +181,7 @@ public class EbookBangumiScrapeService {
                 ebook.setBangumiId(subjectId);
 
                 // 匹配卷级封面和简介
-                Integer vol = extractVolume(ebook.getFileName());
+                Integer vol = com.fryfrog.hub.common.util.TitleCleaner.extractVolumeNumber(ebook.getFileName());
                 if (vol != null && volumeMap.containsKey(vol)) {
                     BangumiService.RelatedSubject volSub = volumeMap.get(vol);
                     BangumiService.SubjectDetail volDetail = bangumiService.getSubjectDetail(volSub.getId());
@@ -287,7 +285,7 @@ public class EbookBangumiScrapeService {
             ebook.setGenre(genres);
         }
 
-        Integer volume = extractVolume(ebook.getFileName());
+        Integer volume = com.fryfrog.hub.common.util.TitleCleaner.extractVolumeNumber(ebook.getFileName());
         if (volume != null) {
             log.info("Setting volume={} for '{}' (fileName={})", volume, ebook.getTitle(), ebook.getFileName());
             ebook.setVolume(volume);
@@ -754,19 +752,4 @@ public class EbookBangumiScrapeService {
     }
 
     // ==================== 工具方法 ====================
-
-    private static final Pattern VOLUME_PATTERN = Pattern.compile(
-            "(?i)(?:卷|Vol\\.?|Volume|#)[\\s]*(\\d+)|[\\s]*(\\d+)\\s*(?:卷|卷目)"
-    );
-
-    private Integer extractVolume(String fileName) {
-        if (fileName == null) return null;
-        Matcher m = VOLUME_PATTERN.matcher(fileName);
-        if (m.find()) {
-            for (int i = 1; i <= m.groupCount(); i++) {
-                if (m.group(i) != null) return Integer.parseInt(m.group(i));
-            }
-        }
-        return null;
-    }
 }

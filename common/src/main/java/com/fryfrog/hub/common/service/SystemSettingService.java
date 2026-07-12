@@ -31,10 +31,6 @@ public class SystemSettingService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    private static final Map<String, String> KEY_MIGRATION = Map.ofEntries(
-            entry("tmdb.api-key", "hub.tmdb.api-key")
-    );
-
     private static final Map<String, String> DEFAULT_SETTINGS = Map.ofEntries(
             // TMDB
             entry("tmdb.api-key", ""),
@@ -55,7 +51,6 @@ public class SystemSettingService {
 
     @PostConstruct
     public void init() {
-        migrateKeys();
         seedDefaults();
         List<SystemSetting> settings = repository.findAll();
         for (SystemSetting setting : settings) {
@@ -81,36 +76,6 @@ public class SystemSettingService {
             }
             if (seeded > 0) {
                 log.info("Seeded {} default system settings", seeded);
-            }
-        });
-    }
-
-    private void migrateKeys() {
-        boolean hasOldKeys = KEY_MIGRATION.keySet().stream()
-                .anyMatch(key -> repository.findByKey(key).isPresent());
-        if (!hasOldKeys) return;
-
-        transactionTemplate.executeWithoutResult(status -> {
-            int migrated = 0;
-            for (Map.Entry<String, String> entry : KEY_MIGRATION.entrySet()) {
-                String oldKey = entry.getKey();
-                String newKey = entry.getValue();
-                Optional<SystemSetting> oldSetting = repository.findByKey(oldKey);
-                if (oldSetting.isEmpty()) {
-                    continue;
-                }
-                Optional<SystemSetting> newSetting = repository.findByKey(newKey);
-                if (newSetting.isPresent()) {
-                    repository.delete(oldSetting.get());
-                } else {
-                    SystemSetting setting = oldSetting.get();
-                    setting.setKey(newKey);
-                    repository.save(setting);
-                }
-                migrated++;
-            }
-            if (migrated > 0) {
-                log.info("Migrated {} system settings to hub.* key format", migrated);
             }
         });
     }

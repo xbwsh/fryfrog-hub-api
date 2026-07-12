@@ -91,6 +91,9 @@ public class Ebook extends BaseEntity {
     @Schema(description = "Open Library Work ID", example = "OL123456W")
     private String openLibraryId;
 
+    @Schema(description = "刮削尝试时间（用于跳过近期已尝试的电子书）")
+    private java.time.LocalDateTime scrapeAttemptedAt;
+
     @Schema(description = "系列名称")
     @com.fasterxml.jackson.annotation.JsonGetter("series")
     public String getSeries() {

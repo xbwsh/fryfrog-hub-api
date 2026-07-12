@@ -345,9 +345,6 @@ public class VideoService {
                     }
                     Video updated = repository.save(existing);
                     log.debug("Updated video id={}, libraryId={}", updated.getId(), updated.getLibraryId());
-                    if (isTmdbConfigured() && updated.getTmdbId() == null) {
-                        scrapeExecutor.submit(() -> tryScrapeVideo(updated));
-                    }
                     return updated;
                 }
             }
@@ -401,10 +398,6 @@ public class VideoService {
                 renameVideoFile(saved);
             }
 
-            if (isTmdbConfigured() && saved.getTmdbId() == null && nfoData == null) {
-                scrapeExecutor.submit(() -> tryScrapeVideo(saved));
-            }
-
             return saved;
         } catch (Exception e) {
             log.error("Failed to extract metadata from: {}", filePath, e);
@@ -438,10 +431,16 @@ public class VideoService {
             List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
             if (results.isEmpty()) {
                 log.info("No TMDB results for: {}", video.getTitle());
+                markScrapeAttempted(video);
                 return;
             }
 
-            TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
+            TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
+            if (bestMatch == null) {
+                log.info("No confident TMDB match for: {}", video.getTitle());
+                markScrapeAttempted(video);
+                return;
+            }
 
             scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
 
@@ -449,6 +448,45 @@ public class VideoService {
                     video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), mediaTypeFilter);
         } catch (Exception e) {
             log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage(), e);
+            markScrapeAttempted(video);
+        }
+    }
+
+    private TmdbSearchResult.TmdbSearchItem pickBestTmdbMatch(
+            List<TmdbSearchResult.TmdbSearchItem> results, String query) {
+        String cleanedQuery = cleanTitleForSearch(query);
+
+        for (var r : results) {
+            String name = r.getTitle();
+            if (name != null && (name.equals(cleanedQuery) || name.equals(query))) {
+                return r;
+            }
+        }
+
+        double bestScore = 0;
+        TmdbSearchResult.TmdbSearchItem best = null;
+        for (var r : results) {
+            String name = r.getTitle();
+            if (name == null) continue;
+            double score = TitleCleaner.calculateSimilarity(cleanedQuery, name);
+            if (score > bestScore) {
+                bestScore = score;
+                best = r;
+            }
+        }
+
+        if (best != null && bestScore >= 0.6) {
+            return best;
+        }
+        return null;
+    }
+
+    private void markScrapeAttempted(Video video) {
+        try {
+            video.setScrapeAttemptedAt(java.time.LocalDateTime.now());
+            repository.save(video);
+        } catch (Exception e) {
+            log.debug("Failed to mark scrape attempt for video {}: {}", video.getId(), e.getMessage());
         }
     }
 
@@ -1283,7 +1321,8 @@ public class VideoService {
             log.debug("Auto-scrape is disabled by setting");
             return repository.findAll();
         }
-        List<Video> videos = repository.findByTmdbIdIsNull();
+        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusDays(7);
+        List<Video> videos = repository.findUnscrapedAfterCutoff(cutoff);
         if (videos.isEmpty()) {
             log.debug("No unbound videos to scrape");
             return repository.findAll();
@@ -1325,11 +1364,18 @@ public class VideoService {
                         List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                         if (results.isEmpty()) {
                             log.info("No TMDB results for: {}", video.getTitle());
+                            markScrapeAttempted(video);
                             scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                             return;
                         }
 
-                        TmdbSearchResult.TmdbSearchItem bestMatch = results.get(0);
+                        TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
+                        if (bestMatch == null) {
+                            log.info("No confident TMDB match for: {}", video.getTitle());
+                            markScrapeAttempted(video);
+                            scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
+                            return;
+                        }
 
                         scrapeAndBindTmdb(video.getId(), bestMatch.getId(), bestMatch.getMediaType());
                         scraped.incrementAndGet();
@@ -1339,6 +1385,7 @@ public class VideoService {
                                 video.getTitle(), bestMatch.getId(), bestMatch.getMediaType(), mediaTypeFilter);
                     } catch (Exception e) {
                         log.warn("Failed to auto-scrape video {}: {}", video.getTitle(), e.getMessage());
+                        markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", e.getMessage());
                     }
                 }));

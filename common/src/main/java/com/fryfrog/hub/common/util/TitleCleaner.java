@@ -187,52 +187,55 @@ public final class TitleCleaner {
         // 3. 句点/下划线/全角句点替换为空格
         cleaned = cleaned.replaceAll("[._。．]", " ");
 
-        // 4. 移除 S01E01 格式
+        // 4. 移除重复的 - S01E02 模式（如文件名中多次粘贴的情况）
+        cleaned = cleaned.replaceAll("(?i)(\\s*-\\s*S\\d{1,2}\\s*E\\d{1,4}){2,}", " ");
+
+        // 5. 移除剩余的单个 S01E01 格式
         cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\s*E\\d{1,4}\\b", " ");
 
-        // 5. 移除视频质量/来源/编码/字幕/发布组标记
+        // 6. 移除视频质量/来源/编码/字幕/发布组标记
         cleaned = QUALITY_COMPILE_PATTERN.matcher(cleaned).replaceAll(" ");
 
-        // 6. 移除中文季/部/期号：第一季、第二部、第三期
+        // 7. 移除中文季/部/期号：第一季、第二部、第三期
         cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:季|部|期)", " ");
 
-        // 7. 移除中文集数标记：第一话、第二集、第三回、第四篇、第五章
+        // 8. 移除中文集数标记：第一话、第二集、第三回、第四篇、第五章
         cleaned = cleaned.replaceAll("(?i)第[\\s]*[一二三四五六七八九十百千万零\\d]+[\\s]*(?:话|集|回|篇|章)", " ");
 
-        // 8. 移除英文季数标记：Season 1, S01
+        // 9. 移除英文季数标记：Season 1, S01
         cleaned = cleaned.replaceAll("(?i)\\bSeason\\s*\\d+\\b", " ");
         cleaned = cleaned.replaceAll("(?i)\\bS\\d{1,2}\\b", " ");
 
-        // 9. 移除英文集数标记：Ep01, Episode 01, #1
+        // 10. 移除英文集数标记：Ep01, Episode 01, #1
         cleaned = cleaned.replaceAll("(?i)\\bE(?:p(?:isode)?)?\\s*\\d{1,4}\\b", " ");
         cleaned = cleaned.replaceAll("[＃#]\\s*\\d{1,4}\\b", " ");
 
-        // 10. 移除卷号标记：Vol.1, vol 1, 卷1, 第1卷, #1
+        // 11. 移除卷号标记：Vol.1, vol 1, 卷1, 第1卷, #1
         cleaned = cleaned.replaceAll("(?i)\\bVol\\.?\\s*\\d+\\b", " ");
         cleaned = cleaned.replaceAll("卷\\s*\\d+", " ");
         cleaned = cleaned.replaceAll("第\\s*\\d+\\s*卷", " ");
 
-        // 11. 移除尾部：破折号+数字、空格+数字
+        // 12. 移除尾部：破折号+数字、空格+数字
         cleaned = cleaned.replaceAll("\\s*[-–—]\\s*\\d{1,4}\\s*$", "");
         cleaned = cleaned.replaceAll("\\s+\\d{1,4}\\s*$", "");
 
-        // 12. 移除开头：数字+破折号
+        // 13. 移除开头：数字+破折号
         cleaned = cleaned.replaceAll("^\\d{1,4}\\s*[-–—]\\s*", "");
 
-        // 13. 清理尾部破折号和逗号
+        // 14. 清理尾部破折号和逗号
         cleaned = cleaned.replaceAll("\\s*[-–—]\\s*$", "");
         cleaned = cleaned.replaceAll("[,;]+\\s*$", "");
 
-        // 14. 移除 CJK 字符直接连接的尾部数字（如 魔都精兵的奴隶1 → 魔都精兵的奴隶）
+        // 15. 移除 CJK 字符直接连接的尾部数字（如 魔都精兵的奴隶1 → 魔都精兵的奴隶）
         cleaned = CJK_TAIL_NUMBER.matcher(cleaned).replaceAll("$1");
 
-        // 15. 移除文件扩展名
+        // 16. 移除文件扩展名
         cleaned = FILE_EXTENSION_PATTERN.matcher(cleaned).replaceAll("");
 
-        // 16. 统一破折号为空格
+        // 17. 统一破折号为空格
         cleaned = cleaned.replaceAll("\\s*[-–—]+\\s*", " ");
 
-        // 17. 压缩多余空格
+        // 18. 压缩多余空格
         cleaned = cleaned.replaceAll("\\s+", " ").trim();
 
         return cleaned.isBlank() ? title : cleaned;

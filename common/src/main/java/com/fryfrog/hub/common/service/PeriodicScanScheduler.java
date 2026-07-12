@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class PeriodicScanScheduler implements ApplicationListener<ContextRefreshedEvent> {
 
-    private static final String INTERVAL_KEY = "hub.watcher.periodic-scan-interval";
-    private static final String SWITCH_KEY = "hub.watcher.periodic-scan";
+    private static final String INTERVAL_KEY = "watcher.periodic-scan-interval";
+    private static final String SWITCH_KEY = "watcher.periodic-scan";
 
     @Value("${watcher.periodic-scan-interval:30}")
     private int configInterval = 30;

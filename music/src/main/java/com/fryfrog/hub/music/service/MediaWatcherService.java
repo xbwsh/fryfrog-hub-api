@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 @RequiredArgsConstructor
@@ -19,6 +21,7 @@ public class MediaWatcherService {
     private final MusicScrapeService scrapeService;
     private final MediaLibraryService mediaLibraryService;
     private final PeriodicScanScheduler scanScheduler;
+    private final ExecutorService scrapeExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @PostConstruct
     public void init() {
@@ -33,6 +36,14 @@ public class MediaWatcherService {
             for (String rootPath : rootPaths) {
                 metadataService.scanDirectory(rootPath);
             }
+            scrapeExecutor.submit(this::scrapeUnscrapedTracks);
+        } catch (Exception e) {
+            log.warn("Periodic music scan failed: {}", e.getMessage());
+        }
+    }
+
+    private void scrapeUnscrapedTracks() {
+        try {
             var tracks = metadataService.getAllTracks();
             for (var track : tracks) {
                 if (scrapeService.needsScraping(track)) {
@@ -40,7 +51,7 @@ public class MediaWatcherService {
                 }
             }
         } catch (Exception e) {
-            log.warn("Periodic music scan failed: {}", e.getMessage());
+            log.warn("Music scrape failed: {}", e.getMessage());
         }
     }
 

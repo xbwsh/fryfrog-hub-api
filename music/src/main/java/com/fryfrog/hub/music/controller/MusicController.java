@@ -5,6 +5,7 @@ import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.model.Playlist;
 import com.fryfrog.hub.music.model.PlaylistTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
+import com.fryfrog.hub.music.service.MusicScrapeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 public class MusicController {
 
     private final MusicMetadataService service;
+    private final MusicScrapeService scrapeService;
 
     @Value("${hub.music.root-paths:}")
     private String rootPathsConfig;
@@ -346,6 +348,14 @@ public class MusicController {
             return ResponseEntity.ok(ApiResponse.error("未找到歌手图片"));
         }
         return ResponseEntity.ok(ApiResponse.success(imagePath));
+    }
+
+    @PostMapping("/{id:\\d+}/cover/scrape")
+    @Operation(summary = "刮削封面", description = "从在线源获取专辑封面并保存到本地")
+    public ResponseEntity<ApiResponse<MusicTrack>> scrapeCover(
+            @Parameter(description = "曲目ID") @PathVariable Long id) {
+        MusicTrack track = scrapeService.scrapeTrack(id);
+        return ResponseEntity.ok(ApiResponse.success(track));
     }
 
     private File findCoverFile(MusicTrack track) {

@@ -70,9 +70,8 @@ public class EbookMetadataScrapeService {
             log.debug("Auto-scrape is disabled by setting");
             return;
         }
-        List<Ebook> unboundEbooks = repository.findAll().stream()
-                .filter(e -> e.getOpenLibraryId() == null && e.getBangumiId() == null)
-                .toList();
+        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusDays(7);
+        List<Ebook> unboundEbooks = repository.findUnscrapedAfterCutoff(cutoff);
 
         if (unboundEbooks.isEmpty()) {
             log.debug("No unbound ebooks found for auto-scrape");
@@ -82,18 +81,31 @@ public class EbookMetadataScrapeService {
         log.debug("Starting auto-scrape for {} ebooks", unboundEbooks.size());
         scrapeProgressService.start("ebook", unboundEbooks.size());
 
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        java.util.List<java.util.concurrent.Future<?>> futures = new java.util.ArrayList<>();
+
         for (Ebook ebook : unboundEbooks) {
-            try {
-                scrapeProgressService.updateItem("ebook", ebook.getTitle(), "processing", null);
-                autoScrapeEbook(ebook);
-                scrapeProgressService.updateItem("ebook", ebook.getTitle(), "completed", null);
-                Thread.sleep(500);
-            } catch (Exception e) {
-                log.warn("Failed to auto-scrape ebook '{}': {}", ebook.getTitle(), e.getMessage());
-                scrapeProgressService.updateItem("ebook", ebook.getTitle(), "failed", e.getMessage());
-            }
+            futures.add(executor.submit(() -> {
+                try {
+                    scrapeProgressService.updateItem("ebook", ebook.getTitle(), "processing", null);
+                    autoScrapeEbook(ebook);
+                    scrapeProgressService.updateItem("ebook", ebook.getTitle(), "completed", null);
+                } catch (Exception e) {
+                    log.warn("Failed to auto-scrape ebook '{}': {}", ebook.getTitle(), e.getMessage());
+                    markScrapeAttempted(ebook);
+                    scrapeProgressService.updateItem("ebook", ebook.getTitle(), "failed", e.getMessage());
+                }
+            }));
         }
 
+        for (java.util.concurrent.Future<?> future : futures) {
+            try {
+                future.get();
+            } catch (Exception e) {
+                log.warn("Wait for scrape task failed: {}", e.getMessage());
+            }
+        }
+        executor.shutdown();
         scrapeProgressService.finish("ebook");
         log.debug("Auto-scrape completed");
     }
@@ -150,15 +162,26 @@ public class EbookMetadataScrapeService {
         List<OpenLibraryService.SearchResult> olResults = openLibraryService.searchBooks(query);
         if (olResults.isEmpty()) {
             log.debug("No results for '{}' from Bangumi or Open Library", query);
+            markScrapeAttempted(ebook);
             return ebook;
         }
 
         OpenLibraryService.SearchResult bestOl = pickBestOpenLibraryMatch(olResults, query);
         if (bestOl == null) {
             log.debug("No confident OpenLibrary match for '{}', skipping", query);
+            markScrapeAttempted(ebook);
             return ebook;
         }
         return scrapeAndBindFromOpenLibrary(ebook.getId(), bestOl);
+    }
+
+    private void markScrapeAttempted(Ebook ebook) {
+        try {
+            ebook.setScrapeAttemptedAt(java.time.LocalDateTime.now());
+            repository.save(ebook);
+        } catch (Exception e) {
+            log.debug("Failed to mark scrape attempt for ebook {}: {}", ebook.getId(), e.getMessage());
+        }
     }
 
     private BangumiService.SearchResult pickBestBangumiMatch(List<BangumiService.SearchResult> results, String query) {

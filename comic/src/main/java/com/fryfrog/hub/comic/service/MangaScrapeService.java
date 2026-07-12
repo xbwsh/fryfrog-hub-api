@@ -258,26 +258,44 @@ public class MangaScrapeService {
             log.debug("Auto-scrape is disabled by setting");
             return;
         }
-        List<Comic> unboundComics = repository.findByMetadataSourceIdIsNullOrderByVolumeAsc();
+        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusDays(7);
+        List<Comic> unboundComics = repository.findUnscrapedAfterCutoff(cutoff);
+        if (unboundComics.isEmpty()) {
+            log.debug("No unbound comics to scrape");
+            return;
+        }
         log.debug("Found {} unbound comics, starting auto-scrape", unboundComics.size());
 
         scrapeProgressService.start("comic", unboundComics.size());
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
 
         for (Comic comic : unboundComics) {
-            try {
-                Comic fresh = repository.findById(comic.getId()).orElse(null);
-                if (fresh == null || fresh.getMetadataSourceId() != null) {
-                    continue;
+            futures.add(executor.submit(() -> {
+                try {
+                    Comic fresh = repository.findById(comic.getId()).orElse(null);
+                    if (fresh == null || fresh.getMetadataSourceId() != null) {
+                        return;
+                    }
+                    scrapeProgressService.updateItem("comic", fresh.getTitle(), "processing", null);
+                    autoScrapeComic(fresh);
+                    scrapeProgressService.updateItem("comic", fresh.getTitle(), "completed", null);
+                } catch (Exception e) {
+                    log.warn("Failed to auto-scrape comic '{}': {}", comic.getTitle(), e.getMessage());
+                    markScrapeAttempted(comic);
+                    scrapeProgressService.updateItem("comic", comic.getTitle(), "failed", e.getMessage());
                 }
-                scrapeProgressService.updateItem("comic", fresh.getTitle(), "processing", null);
-                autoScrapeComic(fresh);
-                scrapeProgressService.updateItem("comic", fresh.getTitle(), "completed", null);
-                Thread.sleep(500);
+            }));
+        }
+
+        for (java.util.concurrent.Future<?> future : futures) {
+            try {
+                future.get();
             } catch (Exception e) {
-                log.warn("Failed to auto-scrape comic '{}': {}", comic.getTitle(), e.getMessage());
-                scrapeProgressService.updateItem("comic", comic.getTitle(), "failed", e.getMessage());
+                log.warn("Wait for scrape task failed: {}", e.getMessage());
             }
         }
+        executor.shutdown();
         scrapeProgressService.finish("comic");
         if (!unboundComics.isEmpty()) {
             log.debug("Auto-scrape completed");
@@ -327,7 +345,17 @@ public class MangaScrapeService {
         }
 
         log.info("No results for comic '{}' from Bangumi", query);
+        markScrapeAttempted(comic);
         return comic;
+    }
+
+    private void markScrapeAttempted(Comic comic) {
+        try {
+            comic.setScrapeAttemptedAt(java.time.LocalDateTime.now());
+            repository.save(comic);
+        } catch (Exception e) {
+            log.debug("Failed to mark scrape attempt for comic {}: {}", comic.getId(), e.getMessage());
+        }
     }
 
     private void updateComicFromBangumiDetail(Comic comic, BangumiService.SubjectDetail detail) {

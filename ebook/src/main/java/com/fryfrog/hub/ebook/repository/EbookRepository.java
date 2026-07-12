@@ -4,8 +4,10 @@ import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,6 +25,9 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
     List<Ebook> findByFavoriteTrue();
 
     List<Ebook> findAllByOrderByCreatedAtDesc();
+
+    @Query("SELECT e FROM Ebook e WHERE e.bangumiId IS NULL AND e.openLibraryId IS NULL AND (e.scrapeAttemptedAt IS NULL OR e.scrapeAttemptedAt < :cutoff)")
+    List<Ebook> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);
 
     List<Ebook> findBySeriesRef_Id(Long seriesId);
 

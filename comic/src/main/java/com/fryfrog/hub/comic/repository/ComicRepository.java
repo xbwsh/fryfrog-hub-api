@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,6 +22,9 @@ public interface ComicRepository extends JpaRepository<Comic, Long> {
     List<Comic> findByFavoriteTrue();
 
     List<Comic> findByMetadataSourceIdIsNullOrderByVolumeAsc();
+
+    @Query("SELECT c FROM Comic c WHERE c.metadataSourceId IS NULL AND (c.scrapeAttemptedAt IS NULL OR c.scrapeAttemptedAt < :cutoff) ORDER BY c.volume ASC")
+    List<Comic> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);
 
     List<Comic> findBySeriesRef_Id(Long seriesId);
 

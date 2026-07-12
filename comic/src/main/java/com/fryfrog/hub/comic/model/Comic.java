@@ -97,6 +97,9 @@ public class Comic extends BaseEntity {
     @Schema(description = "元数据最后更新时间")
     private LocalDateTime metadataUpdatedAt;
 
+    @Schema(description = "刮削尝试时间（用于跳过近期已尝试的视频）")
+    private LocalDateTime scrapeAttemptedAt;
+
     @Schema(description = "原始标题", example = "進撃の巨人")
     private String originalTitle;
 
