@@ -360,6 +360,7 @@ public class VideoScrapeService {
             VideoSeries series = seriesService.getOrCreateAndBindSeries(tvDetail.getName(), tmdbId);
             seriesService.assignVideoToSeries(video, series);
             if (isAdult) series.setIsAdult(true);
+            seriesService.saveSeries(series);
 
             video.setTmdbId(tmdbId);
             video.setMediaType(mediaType);
