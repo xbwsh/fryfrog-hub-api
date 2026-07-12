@@ -661,13 +661,24 @@ public class VideoScrapeService {
     }
 
     /**
-     * 按系列分组视频
+     * 按系列分组视频，组内按集数排序
      */
     private List<List<Video>> groupVideosBySeries(List<Video> videos) {
         Map<String, List<Video>> grouped = new LinkedHashMap<>();
         for (Video video : videos) {
             String key = getSeriesKey(video);
             grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(video);
+        }
+        // 组内按季数+集数排序
+        for (List<Video> group : grouped.values()) {
+            group.sort((a, b) -> {
+                int sa = a.getSeasonNumber() != null ? a.getSeasonNumber() : 1;
+                int sb = b.getSeasonNumber() != null ? b.getSeasonNumber() : 1;
+                if (sa != sb) return Integer.compare(sa, sb);
+                int ea = a.getEpisodeNumber() != null ? a.getEpisodeNumber() : 1;
+                int eb = b.getEpisodeNumber() != null ? b.getEpisodeNumber() : 1;
+                return Integer.compare(ea, eb);
+            });
         }
         List<List<Video>> result = new ArrayList<>(grouped.values());
         result.sort((a, b) -> Integer.compare(b.size(), a.size()));
