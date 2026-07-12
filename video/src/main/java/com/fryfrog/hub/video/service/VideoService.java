@@ -828,9 +828,10 @@ public class VideoService {
 
         Video saved = repository.save(video);
 
-        generateNfoAndCovers(saved);
-        moveVideoToMetadataDir(saved);
+        // 先重命名文件（使用新标题），再移动到新目录
         renameVideoFile(saved);
+        moveVideoToMetadataDir(saved);
+        generateNfoAndCovers(saved);
         saveActors(saved, mediaType, tmdbId, detail);
 
         return saved;
@@ -919,13 +920,7 @@ public class VideoService {
                 return;
             }
 
-            if (Files.exists(targetPath)) {
-                log.debug("Target video already exists, updating path: {}", targetPath);
-                video.setFilePath(targetPath.toString());
-                repository.save(video);
-                return;
-            }
-
+            // 移动视频文件（覆盖已存在的目标文件）
             Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
             log.debug("Successfully moved video: {} -> {}", videoPath, targetPath);
 
@@ -963,13 +958,10 @@ public class VideoService {
             }
 
             Path newPath = videoPath.getParent().resolve(newFileName);
-            if (Files.exists(newPath)) {
-                log.debug("Target file already exists, skipping rename: {}", newFileName);
-                return;
-            }
 
             String oldBaseName = nfoService.getBaseName(video.getFileName());
-            Files.move(videoPath, newPath);
+            // 覆盖已存在的目标文件
+            Files.move(videoPath, newPath, StandardCopyOption.REPLACE_EXISTING);
 
             Path parentDir = videoPath.getParent();
             renameAssociatedFile(parentDir, oldBaseName + ".nfo", newFileName);

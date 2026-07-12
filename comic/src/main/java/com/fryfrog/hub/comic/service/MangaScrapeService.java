@@ -588,11 +588,7 @@ public class MangaScrapeService {
                 return;
             }
 
-            if (Files.exists(targetPath)) {
-                log.warn("Target file already exists, skipping: {}", targetPath);
-                return;
-            }
-
+            // 覆盖已存在的目标文件
             Files.move(currentPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
             comic.setFilePath(targetPath.toAbsolutePath().toString());
 
