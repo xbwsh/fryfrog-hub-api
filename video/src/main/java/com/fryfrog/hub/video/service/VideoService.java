@@ -535,8 +535,10 @@ public class VideoService {
                 throw new IllegalArgumentException("Not a directory: " + directoryPath);
             }
 
-            cleanupInvalidRecords();
-            seriesService.cleanupDuplicateSeries();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.runInWriteLock(() -> {
+                cleanupInvalidRecords();
+                seriesService.cleanupDuplicateSeries();
+            });
 
             long[] count = {0};
             try (Stream<Path> paths = Files.walk(dir)) {
@@ -549,7 +551,8 @@ public class VideoService {
                         .forEach(path -> {
                             try {
                                 count[0]++;
-                                extractAndSaveMetadata(path.toString(), libraryId);
+                                com.fryfrog.hub.common.util.DatabaseWriteLock.runInWriteLock(() ->
+                                        extractAndSaveMetadata(path.toString(), libraryId));
                                 log.debug("Indexed video: {} (libraryId={})", path.getFileName(), libraryId);
                             } catch (Exception e) {
                                 log.warn("Failed to index video: {}", path.getFileName(), e);
@@ -558,7 +561,7 @@ public class VideoService {
             }
             log.debug("Scan complete: {} video files found in {}", count[0], directoryPath);
 
-            autoGroupSeries();
+            com.fryfrog.hub.common.util.DatabaseWriteLock.runInWriteLock(this::autoGroupSeries);
         } catch (Exception e) {
             log.error("Failed to scan directory: {}", directoryPath, e);
             throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
@@ -1291,7 +1294,7 @@ public class VideoService {
         scanDirectory(library.getPath(), libraryId);
         log.debug("Finished scanning directory for libraryId={}", libraryId);
 
-        autoScrapeAll();
+        autoScrapeAll(true);
     }
 
     private void cleanupNfoFiles(Video video) {
@@ -1319,6 +1322,13 @@ public class VideoService {
     }
 
     public List<Video> autoScrapeAll() {
+        return autoScrapeAll(false);
+    }
+
+    /**
+     * @param async true 时异步执行（从 API 调用），false 时同步执行（从 periodicScan 调用，在写锁内）
+     */
+    public List<Video> autoScrapeAll(boolean async) {
         if (!settingService.getBoolean("scrape.auto-scrape", true)) {
             log.debug("Auto-scrape is disabled by setting");
             return repository.findAll();
@@ -1330,7 +1340,7 @@ public class VideoService {
             return repository.findAll();
         }
 
-        scrapeExecutor.submit(() -> {
+        Runnable scrapeTask = () -> {
             java.util.concurrent.atomic.AtomicInteger scraped = new java.util.concurrent.atomic.AtomicInteger(0);
             java.util.concurrent.atomic.AtomicInteger skipped = new java.util.concurrent.atomic.AtomicInteger(0);
             scrapeProgressService.start("video", videos.size());
@@ -1408,7 +1418,13 @@ public class VideoService {
             if (scraped.get() > 0) {
                 log.info("Auto-scrape completed: {}/{} scraped, {} skipped", scraped.get(), videos.size(), skipped.get());
             }
-        });
+        };
+
+        if (async) {
+            scrapeExecutor.submit(scrapeTask);
+        } else {
+            scrapeTask.run();
+        }
 
         return repository.findAll();
     }

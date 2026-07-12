@@ -53,7 +53,7 @@ public class VideoWatcherService {
                 videoService.scanDirectory(rootPath);
             }
             videoService.organizeVideos(null);
-            videoService.autoScrapeAll();
+            videoService.autoScrapeAll(false);
         } catch (Exception e) {
             log.warn("Periodic video scan failed: {}", e.getMessage());
         }
