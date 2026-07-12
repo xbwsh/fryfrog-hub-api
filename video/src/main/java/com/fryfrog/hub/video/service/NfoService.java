@@ -255,6 +255,10 @@ public class NfoService {
                     .append("</uniqueid>\n");
         }
 
+        if (Boolean.TRUE.equals(video.getIsAdult())) {
+            sb.append("  <adult>true</adult>\n");
+        }
+
         appendField(sb, "thumb", getPosterFileName(video));
         appendField(sb, "fanart", getFanartFileName(video));
     }
@@ -433,6 +437,10 @@ public class NfoService {
             data.thumb = getTagText(root, "thumb");
             data.fanart = getTagText(root, "fanart");
 
+            // 读取成人内容标记
+            String adultText = getTagText(root, "adult");
+            data.isAdult = "true".equalsIgnoreCase(adultText);
+
             return data;
         } catch (Exception e) {
             log.warn("Failed to parse NFO file {}: {}", nfoPath, e.getMessage());
@@ -473,6 +481,9 @@ public class NfoService {
 
         video.setMediaType(data.isTvShow ? "tv" : "movie");
         video.setMetadataSource("nfo");
+        if (data.isAdult) {
+            video.setIsAdult(true);
+        }
 
         if (data.season != null) {
             try { video.setSeasonNumber(Integer.parseInt(data.season)); } catch (NumberFormatException ignored) {}
@@ -525,5 +536,6 @@ public class NfoService {
         public String seriesTitle;
         public String thumb;  // 封面文件名
         public String fanart; // 背景图文件名
+        public boolean isAdult; // 是否为成人内容
     }
 }
