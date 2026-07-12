@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,8 @@ import java.util.stream.Stream;
 public class VideoScanService {
 
     private final VideoRepository repository;
+    private final VideoActorRepository actorRepository;
+    private final SeriesService seriesService;
     private final MediaInfoService mediaInfoService;
     private final NfoService nfoService;
     private final MediaLibraryService mediaLibraryService;
@@ -336,6 +339,8 @@ public class VideoScanService {
                 log.info("[Cleanup] Found {} invalid records on page {}, removing...", invalidVideos.size(), pageNum);
                 for (Video video : invalidVideos) {
                     cleanupVideoFiles(video);
+                    // 清理关联的演员记录
+                    actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
                 }
                 repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
                 removed += invalidVideos.size();
@@ -343,6 +348,8 @@ public class VideoScanService {
         } while (page.hasNext());
 
         if (removed > 0) {
+            // 清理空系列
+            cleanupEmptySeries();
             log.info("[Cleanup] Removed {} invalid records", removed);
         }
     }
@@ -378,6 +385,10 @@ public class VideoScanService {
     private void cleanupDuplicateSeries() {
         // Delegate to SeriesService if needed
         log.debug("[Cleanup] Checking for duplicate series...");
+    }
+
+    private void cleanupEmptySeries() {
+        seriesService.cleanupEmptySeries();
     }
 
     /**
