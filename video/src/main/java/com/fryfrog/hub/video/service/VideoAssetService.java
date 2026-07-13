@@ -50,7 +50,7 @@ public class VideoAssetService {
     /**
      * 批量生成资产（NFO + 封面 + 演员图片）
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public void batchGenerateAssets(List<Video> videos) {
         log.debug("[Asset] Starting batch asset generation for {} videos", videos.size());
 
