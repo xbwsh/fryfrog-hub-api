@@ -14,17 +14,13 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -225,11 +221,6 @@ public class MediaInfoService {
             ".srt", ".ass", ".ssa", ".vtt", ".sub", ".sup"
     );
 
-    // ASS 矢量绘图命令：以 m x y 开头（move to），后跟 l/b/c/s 曲线/直线命令
-    private static final Pattern ASS_DRAW_PATTERN = Pattern.compile(
-            "^m\\s+-?\\d+\\s+-?\\d+"
-    );
-
     public List<Map<String, Object>> getSubtitleTracks(String filePath) throws Exception {
         MediaInfo info = extractMediaInfo(filePath);
         List<Map<String, Object>> result = new ArrayList<>();
@@ -243,214 +234,6 @@ public class MediaInfoService {
             result.add(map);
         }
         return result;
-    }
-
-    public String extractSubtitleAsVtt(String filePath, int streamIndex) throws Exception {
-        List<String> command = List.of(
-                ffmpegPath, "-y", "-i", filePath,
-                "-map", "0:" + streamIndex,
-                "-c:s", "webvtt",
-                "-f", "webvtt",
-                "pipe:1"
-        );
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        Process process = pb.start();
-
-        byte[] stdout;
-        try (var is = process.getInputStream()) {
-            stdout = is.readAllBytes();
-        }
-        try (var es = process.getErrorStream()) {
-            es.readAllBytes();
-        }
-
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            throw new RuntimeException("ffmpeg subtitle conversion timed out");
-        }
-        if (process.exitValue() != 0) {
-            throw new RuntimeException("ffmpeg subtitle conversion failed with exit code: " + process.exitValue());
-        }
-        return cleanVttContent(new String(stdout, StandardCharsets.UTF_8));
-    }
-
-    public List<Map<String, Object>> getExternalSubtitles(String videoPath) {
-        Path dir = Path.of(videoPath).getParent();
-        String baseName = getBaseName(Path.of(videoPath).getFileName().toString());
-        List<Map<String, Object>> result = new ArrayList<>();
-        if (dir == null || !Files.isDirectory(dir)) return result;
-
-        try (var stream = Files.list(dir)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(f -> {
-                        String name = f.getFileName().toString();
-                        return name.startsWith(baseName) && SUBTITLE_EXTENSIONS.stream()
-                                .anyMatch(ext -> name.toLowerCase().endsWith(ext));
-                    })
-                    .sorted()
-                    .forEach(f -> {
-                        String name = f.getFileName().toString();
-                        String ext = name.substring(name.lastIndexOf('.')).toLowerCase();
-                        result.add(Map.of(
-                                "fileName", name,
-                                "ext", ext,
-                                "path", f.toString(),
-                                "language", extractLanguageFromName(name, baseName)
-                        ));
-                    });
-        } catch (IOException ignored) {
-        }
-        return result;
-    }
-
-    public String convertExternalSubtitleToVtt(String subtitlePath) throws Exception {
-        List<String> command = List.of(
-                ffmpegPath, "-y", "-i", subtitlePath,
-                "-c:s", "webvtt",
-                "-f", "webvtt",
-                "pipe:1"
-        );
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        Process process = pb.start();
-
-        byte[] stdout;
-        try (var is = process.getInputStream()) {
-            stdout = is.readAllBytes();
-        }
-        try (var es = process.getErrorStream()) {
-            es.readAllBytes();
-        }
-
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            throw new RuntimeException("ffmpeg subtitle conversion timed out");
-        }
-        if (process.exitValue() != 0) {
-            throw new RuntimeException("ffmpeg subtitle conversion failed with exit code: " + process.exitValue());
-        }
-        return cleanVttContent(new String(stdout, StandardCharsets.UTF_8));
-    }
-
-    /** 过滤绘图命令 + 合并重叠的卡拉OK逐字cue */
-    static String cleanVttContent(String vtt) {
-        vtt = vtt.replaceAll("\\r\\n", "\n").replaceAll("\\r", "\n");
-        List<Cue> cues = parseCues(vtt);
-        // 过滤绘图命令
-        cues.removeIf(c -> ASS_DRAW_PATTERN.matcher(c.text.trim()).find());
-        // 按开始时间排序
-        cues.sort(Comparator.comparingLong(c -> c.startMs));
-        // 合并重叠 cue
-        List<Cue> merged = new ArrayList<>();
-        for (Cue cue : cues) {
-            if (!merged.isEmpty() && cue.startMs < merged.getLast().endMs) {
-                Cue last = merged.getLast();
-                last.endMs = Math.max(last.endMs, cue.endMs);
-                String trimmed = cue.text.trim();
-                if (!trimmed.isEmpty() && !last.text.contains(trimmed)) {
-                    last.text = (last.text.trim() + trimmed).strip();
-                }
-            } else {
-                merged.add(new Cue(cue.startMs, cue.endMs, cue.text.trim()));
-            }
-        }
-        // 输出
-        StringBuilder out = new StringBuilder("WEBVTT\n\n");
-        for (Cue c : merged) {
-            out.append(formatMs(c.startMs)).append(" --> ").append(formatMs(c.endMs)).append("\n");
-            out.append(c.text).append("\n\n");
-        }
-        return out.toString().stripTrailing() + "\n";
-    }
-
-    private static List<Cue> parseCues(String vtt) {
-        List<Cue> cues = new ArrayList<>();
-        String[] blocks = vtt.split("\n\n");
-        for (String block : blocks) {
-            if (block.isBlank()) continue;
-            String[] lines = block.split("\n");
-            for (int i = 0; i < lines.length; i++) {
-                if (lines[i].contains("-->")) {
-                    String[] parts = lines[i].split("-->");
-                    if (parts.length == 2) {
-                        long start = parseMs(parts[0].trim());
-                        long end = parseMs(parts[1].trim().split("\\s")[0]);
-                        StringBuilder text = new StringBuilder();
-                        for (int j = i + 1; j < lines.length; j++) {
-                            if (!lines[j].isBlank()) {
-                                if (!text.isEmpty()) text.append("\n");
-                                text.append(lines[j]);
-                            }
-                        }
-                        if (!text.isEmpty() && start < end) {
-                            cues.add(new Cue(start, end, text.toString()));
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-        return cues;
-    }
-
-    private static long parseMs(String ts) {
-        String[] hms = ts.split(":");
-        long ms = 0;
-        if (hms.length == 3) {
-            ms += Long.parseLong(hms[0]) * 3600000;
-            ms += Long.parseLong(hms[1]) * 60000;
-            ms += parseSeconds(hms[2]);
-        } else if (hms.length == 2) {
-            ms += Long.parseLong(hms[0]) * 60000;
-            ms += parseSeconds(hms[1]);
-        } else if (hms.length == 1) {
-            ms += parseSeconds(hms[0]);
-        }
-        return ms;
-    }
-
-    private static long parseSeconds(String s) {
-        String[] parts = s.split("\\.");
-        long ms = Long.parseLong(parts[0]) * 1000;
-        if (parts.length > 1) {
-            ms += Long.parseLong(parts[1].substring(0, Math.min(3, parts[1].length())));
-        }
-        return ms;
-    }
-
-    private static String formatMs(long ms) {
-        long h = ms / 3600000; ms %= 3600000;
-        long m = ms / 60000; ms %= 60000;
-        long s = ms / 1000; ms %= 1000;
-        return String.format("%02d:%02d:%02d.%03d", h, m, s, ms);
-    }
-
-    private static class Cue {
-        long startMs, endMs;
-        String text;
-        Cue(long start, long end, String text) {
-            this.startMs = start; this.endMs = end; this.text = text;
-        }
-    }
-
-    private String getBaseName(String fileName) {
-        int lastDot = fileName.lastIndexOf('.');
-        return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
-    }
-
-    private String extractLanguageFromName(String fileName, String baseName) {
-        String withoutBase = fileName.substring(baseName.length());
-        if (withoutBase.startsWith(".")) {
-            String langPart = withoutBase.substring(1);
-            int dotIndex = langPart.indexOf('.');
-            if (dotIndex > 0) {
-                return langPart.substring(0, dotIndex).toLowerCase();
-            }
-        }
-        return "unknown";
     }
 
     public static class MediaInfo {
