@@ -349,7 +349,7 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/stream")
-    @Operation(summary = "视频流播放", description = "支持 Range 请求，音频不兼容时管道转码输出")
+    @Operation(summary = "视频流播放", description = "支持 Range 请求")
     public void streamVideo(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader,
@@ -521,30 +521,6 @@ public class VideoController {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/vtt; charset=utf-8"))
                 .body(vttContent);
-    }
-
-    @PostMapping("/{id:\\d+}/audio/transcode")
-    @Operation(summary = "音频转码", description = "将不兼容的音频编码（eac3/dts/truehd等）转为AAC")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> transcodeAudio(
-            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
-        Video video = service.getVideoById(id);
-        String filePath = video.getFilePath();
-
-        if (!mediaInfoService.isAudioIncompatible(filePath)) {
-            return ResponseEntity.ok(ApiResponse.success(Map.of(
-                    "alreadyCompatible", true,
-                    "message", "音频编码已兼容，无需转码"
-            )));
-        }
-
-        String incompatibleCodec = mediaInfoService.getIncompatibleCodec(filePath);
-        String outputPath = mediaInfoService.transcodeAudio(filePath);
-
-        return ResponseEntity.ok(ApiResponse.success(Map.of(
-                "originalCodec", incompatibleCodec,
-                "transcodedPath", outputPath,
-                "message", "转码完成"
-        )));
     }
 
     @GetMapping("/{id:\\d+}/playlist.m3u")
