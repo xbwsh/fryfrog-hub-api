@@ -17,6 +17,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -25,6 +26,8 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -101,18 +104,38 @@ public class SeriesController {
     public ResponseEntity<Resource> getSeriesCover(
             @Parameter(description = "系列ID或独立视频ID") @PathVariable Long id) {
         var series = seriesService.getSeriesById(id).orElse(null);
-        String posterUrl = null;
         String title = "Unknown";
+        String posterUrl = null;
+
         if (series != null) {
-            posterUrl = series.getPosterUrl();
             title = series.getTitle();
+            // 优先使用本地封面文件
+            if (series.getPosterLocalPath() != null) {
+                Path localPath = Paths.get(series.getPosterLocalPath());
+                if (Files.exists(localPath)) {
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new FileSystemResource(localPath.toFile()));
+                }
+            }
+            posterUrl = series.getPosterUrl();
         } else {
             var video = videoService.getVideoById(id);
             if (video != null) {
-                posterUrl = video.getPosterUrl();
                 title = video.getTitle();
+                // 优先使用本地封面文件
+                Path videoDir = Paths.get(video.getFilePath()).getParent();
+                String baseName = nfoService.getBaseName(video.getFileName());
+                Path posterPath = videoDir.resolve(baseName + "-poster.jpg");
+                if (Files.exists(posterPath)) {
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new FileSystemResource(posterPath.toFile()));
+                }
+                posterUrl = video.getPosterUrl();
             }
         }
+        // fallback: 从远程 URL 下载
         if (posterUrl == null) {
             return generatePlaceholder(title, 300, 450);
         }
@@ -132,18 +155,41 @@ public class SeriesController {
     public ResponseEntity<Resource> getSeriesFanart(
             @Parameter(description = "系列ID或独立视频ID") @PathVariable Long id) {
         var series = seriesService.getSeriesById(id).orElse(null);
-        String backdropUrl = null;
         String title = "Unknown";
+        String backdropUrl = null;
+
         if (series != null) {
-            backdropUrl = series.getBackdropUrl();
             title = series.getTitle();
+            // 优先使用本地背景图文件
+            if (series.getBackdropLocalPath() != null) {
+                Path localPath = Paths.get(series.getBackdropLocalPath());
+                if (Files.exists(localPath)) {
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new FileSystemResource(localPath.toFile()));
+                }
+            }
+            backdropUrl = series.getBackdropUrl();
         } else {
             var video = videoService.getVideoById(id);
             if (video != null) {
-                backdropUrl = video.getBackdropUrl();
                 title = video.getTitle();
+                // 优先使用本地背景图文件
+                Path videoDir = Paths.get(video.getFilePath()).getParent();
+                String baseName = nfoService.getBaseName(video.getFileName());
+                Path fanartPath = videoDir.resolve(baseName + "-fanart.jpg");
+                if (!Files.exists(fanartPath)) {
+                    fanartPath = nfoService.getFanartPath(video);
+                }
+                if (Files.exists(fanartPath)) {
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new FileSystemResource(fanartPath.toFile()));
+                }
+                backdropUrl = video.getBackdropUrl();
             }
         }
+        // fallback: 从远程 URL 下载
         if (backdropUrl == null) {
             return generatePlaceholder(title, 1920, 1080);
         }
