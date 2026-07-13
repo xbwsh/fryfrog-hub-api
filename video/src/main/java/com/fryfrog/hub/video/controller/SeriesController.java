@@ -8,6 +8,7 @@ import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.model.WatchProgress;
+import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.VideoService;
@@ -42,6 +43,7 @@ public class SeriesController {
 
     private final SeriesService seriesService;
     private final VideoService videoService;
+    private final VideoRepository videoRepository;
     private final NfoService nfoService;
     private final WatchProgressService watchProgressService;
 
@@ -50,31 +52,45 @@ public class SeriesController {
     public ResponseEntity<ApiResponse<PageResponse<SeriesDTO>>> getAllSeries(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<VideoSeries> seriesPage = seriesService.getSeriesPage(
-                PageRequest.of(page, size, Sort.by("title")));
+        // 合并系列和独立视频，按标题排序
+        List<SeriesDTO> allItems = new ArrayList<>();
 
+        // 查询所有系列
+        List<VideoSeries> allSeries = seriesService.getAllSeries();
         List<Long> allVideoIds = new ArrayList<>();
-        for (VideoSeries series : seriesPage.getContent()) {
+        for (VideoSeries series : allSeries) {
             series.getVideos().forEach(v -> allVideoIds.add(v.getId()));
         }
         Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(allVideoIds);
 
-        List<SeriesDTO> dtos = seriesPage.getContent().stream()
-                .map(series -> {
-                    List<VideoDTO> episodes = series.getVideos().stream()
-                            .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
-                            .collect(Collectors.toList());
-                    return SeriesDTO.fromEntity(series, episodes);
-                })
-                .collect(Collectors.toList());
+        for (VideoSeries series : allSeries) {
+            List<VideoDTO> episodes = series.getVideos().stream()
+                    .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
+                    .collect(Collectors.toList());
+            allItems.add(SeriesDTO.fromEntity(series, episodes));
+        }
 
-        // Count standalone videos for total
-        long totalSeries = seriesPage.getTotalElements();
-        long totalStandalone = videoService.getAllVideos().stream()
-                .filter(v -> v.getSeries() == null).count();
+        // 查询独立视频（无系列关联）
+        List<Video> standaloneVideos = videoRepository.findBySeriesIsNullOrderByTitleAsc();
+        List<Long> standaloneIds = standaloneVideos.stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> standaloneProgressMap = watchProgressService.getProgressByVideoIds(standaloneIds);
+
+        for (Video video : standaloneVideos) {
+            VideoDTO episode = toVideoDTO(video, standaloneProgressMap.get(video.getId()));
+            allItems.add(SeriesDTO.fromStandaloneVideo(video, episode));
+        }
+
+        // 按标题排序
+        allItems.sort(Comparator.comparing(SeriesDTO::getTitle, Comparator.nullsLast(Comparator.naturalOrder())));
+
+        // 手动分页
+        int total = allItems.size();
+        int start = page * size;
+        int end = Math.min(start + size, total);
+        List<SeriesDTO> paged = start < total ? allItems.subList(start, end) : List.of();
 
         return ResponseEntity.ok(ApiResponse.success(
-                PageResponse.of(dtos, page, size, totalSeries + totalStandalone)));
+                PageResponse.of(paged, page, size, total)));
     }
 
     @GetMapping("/{id}")

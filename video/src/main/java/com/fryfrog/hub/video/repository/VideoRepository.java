@@ -50,4 +50,6 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     List<Video> findBySeries(com.fryfrog.hub.video.model.VideoSeries series);
 
     List<Video> findByFilePathContaining(String path);
+
+    List<Video> findBySeriesIsNullOrderByTitleAsc();
 }
