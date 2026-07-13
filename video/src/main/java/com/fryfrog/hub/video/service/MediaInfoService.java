@@ -236,6 +236,47 @@ public class MediaInfoService {
         return result;
     }
 
+    public List<Map<String, Object>> getExternalSubtitles(String videoPath) {
+        Path dir = Path.of(videoPath).getParent();
+        String baseName = getBaseName(Path.of(videoPath).getFileName().toString());
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (dir == null || !Files.isDirectory(dir)) return result;
+
+        try (var stream = Files.list(dir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(f -> {
+                        String name = f.getFileName().toString();
+                        return name.startsWith(baseName) && SUBTITLE_EXTENSIONS.stream()
+                                .anyMatch(ext -> name.toLowerCase().endsWith(ext));
+                    })
+                    .sorted()
+                    .forEach(f -> {
+                        String name = f.getFileName().toString();
+                        String ext = name.substring(name.lastIndexOf('.')).toLowerCase();
+                        String langPart = name.substring(baseName.length());
+                        String language = "unknown";
+                        if (langPart.startsWith(".")) {
+                            String lang = langPart.substring(1);
+                            int dotIdx = lang.indexOf('.');
+                            if (dotIdx > 0) language = lang.substring(0, dotIdx).toLowerCase();
+                        }
+                        result.add(Map.of(
+                                "fileName", name,
+                                "ext", ext,
+                                "path", f.toString(),
+                                "language", language
+                        ));
+                    });
+        } catch (IOException ignored) {
+        }
+        return result;
+    }
+
+    private String getBaseName(String fileName) {
+        int lastDot = fileName.lastIndexOf('.');
+        return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
+    }
+
     public static class MediaInfo {
         public double durationSeconds;
         public int durationMinutes;

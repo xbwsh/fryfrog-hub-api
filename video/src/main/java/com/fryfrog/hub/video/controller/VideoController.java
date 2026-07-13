@@ -448,6 +448,15 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
+    @GetMapping("/{id:\\d+}/subtitle/external")
+    @Operation(summary = "获取外挂字幕列表", description = "列出视频同目录下的外挂字幕文件（.srt/.ass/.ssa等）")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getExternalSubtitles(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        List<Map<String, Object>> subs = mediaInfoService.getExternalSubtitles(video.getFilePath());
+        return ResponseEntity.ok(ApiResponse.success(subs));
+    }
+
     @GetMapping("/{id:\\d+}/playlist.m3u")
     @Operation(summary = "生成系列播放列表", description = "返回同系列所有集数的 M3U 播放列表，可用 PotPlayer/IINA 等播放器打开")
     public ResponseEntity<Resource> getSeriesPlaylist(
