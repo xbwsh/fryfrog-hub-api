@@ -72,6 +72,7 @@ public class SeriesDTO {
     private Integer episodeCount;
 
     @Schema(description = "元数据目录路径")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String metadataDir;
 
     @Schema(description = "包含的视频列表")
