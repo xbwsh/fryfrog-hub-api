@@ -19,9 +19,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -36,10 +33,7 @@ public class MusicMetadataService {
     private final MusicTrackRepository repository;
     private final PlaylistRepository playlistRepository;
     private final PlaylistTrackRepository playlistTrackRepository;
-    private final MusicScrapeService scrapeService;
     private final SystemSettingService settingService;
-    private final QQMusicService qqMusicService;
-    private final NetEaseLyricsService netEaseLyricsService;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final MediaLibraryService mediaLibraryService;
 
@@ -69,10 +63,6 @@ public class MusicMetadataService {
 
     public String getDefaultArtist() {
         return "";
-    }
-
-    public boolean isAutoScrape() {
-        return true;
     }
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
@@ -158,72 +148,6 @@ public class MusicMetadataService {
         }
 
         return recommendations;
-    }
-
-    public String scrapeArtistImage(Long trackId) {
-        MusicTrack track = getTrackById(trackId);
-        String artist = track.getArtist();
-        if (artist == null || artist.isBlank()) {
-            return null;
-        }
-
-        String rootPath = getFirstRootPath();
-        if (rootPath == null) return null;
-
-        String safeArtist = artist.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-        Path artistDir = Paths.get(rootPath, safeArtist);
-        Path artistImagePath = artistDir.resolve("artist.jpg");
-
-        if (Files.exists(artistImagePath)) {
-            return artistImagePath.toAbsolutePath().toString();
-        }
-
-        String imageUrl = null;
-        try {
-            imageUrl = qqMusicService.searchArtistImage(artist);
-        } catch (Exception e) {
-            log.debug("QQ Music artist image failed: {}", e.getMessage());
-        }
-
-        if (imageUrl == null) {
-            try {
-                imageUrl = netEaseLyricsService.searchArtistImage(artist);
-            } catch (Exception e) {
-                log.debug("NetEase artist image failed: {}", e.getMessage());
-            }
-        }
-
-        if (imageUrl == null) {
-            log.info("No artist image found for: {}", artist);
-            return null;
-        }
-
-        try {
-            if (!Files.exists(artistDir)) {
-                Files.createDirectories(artistDir);
-            }
-            try (InputStream in = new URL(imageUrl).openStream()) {
-                Files.copy(in, artistImagePath);
-                log.info("Artist image saved: {} -> {}", artist, artistImagePath);
-                return artistImagePath.toAbsolutePath().toString();
-            }
-        } catch (Exception e) {
-            log.warn("Failed to download artist image for {}: {}", artist, e.getMessage());
-            return null;
-        }
-    }
-
-    public String getArtistImagePath(Long trackId) {
-        MusicTrack track = getTrackById(trackId);
-        String artist = track.getArtist();
-        if (artist == null || artist.isBlank()) {
-            return null;
-        }
-        String rootPath = getFirstRootPath();
-        if (rootPath == null) return null;
-        String safeArtist = artist.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-        Path artistImagePath = Paths.get(rootPath, safeArtist, "artist.jpg");
-        return Files.exists(artistImagePath) ? artistImagePath.toAbsolutePath().toString() : null;
     }
 
     @Transactional
@@ -473,27 +397,6 @@ public class MusicMetadataService {
             inferFromFolderStructure(track, file);
 
             Path targetDir = organizeTrackFolder(track);
-
-            if (track.getArtist() != null && !track.getArtist().isBlank() && getFirstRootPath() != null) {
-                String safeArtist = track.getArtist().replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-                Path artistImagePath = Paths.get(getFirstRootPath(), safeArtist, "artist.jpg");
-                if (!Files.exists(artistImagePath)) {
-                    try {
-                        String imageUrl = qqMusicService.searchArtistImage(track.getArtist());
-                        if (imageUrl == null) {
-                            imageUrl = netEaseLyricsService.searchArtistImage(track.getArtist());
-                        }
-                        if (imageUrl != null) {
-                            try (InputStream in = new URL(imageUrl).openStream()) {
-                                Files.copy(in, artistImagePath);
-                                log.debug("Artist image saved: {}", track.getArtist());
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.debug("Failed to get artist image for {}: {}", track.getArtist(), e.getMessage());
-                    }
-                }
-            }
 
             return repository.save(track);
         } catch (Exception e) {

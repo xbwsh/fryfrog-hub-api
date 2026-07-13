@@ -5,7 +5,6 @@ import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.model.Playlist;
 import com.fryfrog.hub.music.model.PlaylistTrack;
 import com.fryfrog.hub.music.service.MusicMetadataService;
-import com.fryfrog.hub.music.service.MusicScrapeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -37,7 +36,6 @@ import java.util.stream.Collectors;
 public class MusicController {
 
     private final MusicMetadataService service;
-    private final MusicScrapeService scrapeService;
 
     @Value("${hub.music.root-paths:}")
     private String rootPathsConfig;
@@ -315,47 +313,6 @@ public class MusicController {
         }
 
         return null;
-    }
-
-    @GetMapping("/{id:\\d+}/artist/image")
-    @Operation(summary = "获取歌手图片", description = "返回歌手的图片（歌手文件夹下的artist.jpg）")
-    @ApiResponses(value = {
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "返回图片文件"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "曲目不存在或无歌手图片")
-    })
-    public ResponseEntity<Resource> getArtistImage(
-            @Parameter(description = "曲目ID") @PathVariable Long id) {
-        String imagePath = service.getArtistImagePath(id);
-        if (imagePath == null) {
-            return ResponseEntity.notFound().build();
-        }
-        File imageFile = new File(imagePath);
-        if (!imageFile.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-        MediaType mediaType = resolveImageMediaType(imageFile.getName());
-        return ResponseEntity.ok()
-                .contentType(mediaType)
-                .body(new FileSystemResource(imageFile));
-    }
-
-    @PostMapping("/{id:\\d+}/artist/image/scrape")
-    @Operation(summary = "刮削歌手图片", description = "从在线源获取歌手图片并保存到歌手文件夹")
-    public ResponseEntity<ApiResponse<String>> scrapeArtistImage(
-            @Parameter(description = "曲目ID") @PathVariable Long id) {
-        String imagePath = service.scrapeArtistImage(id);
-        if (imagePath == null) {
-            return ResponseEntity.ok(ApiResponse.error("未找到歌手图片"));
-        }
-        return ResponseEntity.ok(ApiResponse.success(imagePath));
-    }
-
-    @PostMapping("/{id:\\d+}/cover/scrape")
-    @Operation(summary = "刮削封面", description = "从在线源获取专辑封面并保存到本地")
-    public ResponseEntity<ApiResponse<MusicTrack>> scrapeCover(
-            @Parameter(description = "曲目ID") @PathVariable Long id) {
-        MusicTrack track = scrapeService.scrapeTrack(id);
-        return ResponseEntity.ok(ApiResponse.success(track));
     }
 
     private File findCoverFile(MusicTrack track) {

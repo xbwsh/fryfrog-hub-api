@@ -99,18 +99,6 @@ public class MusicTrack extends BaseEntity {
     @Schema(description = "MusicBrainz Recording ID")
     private String musicBrainzId;
 
-    @Schema(description = "艺术家图片URL")
-    @com.fasterxml.jackson.annotation.JsonIgnore
-    private String artistImage;
-
-    @Schema(description = "艺术家简介")
-    @Column(columnDefinition = "TEXT")
-    private String artistBio;
-
-    @Schema(description = "刮削状态", example = "scraped")
-    @Column(name = "scrape_status")
-    private String scrapeStatus;
-
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
 
@@ -123,11 +111,6 @@ public class MusicTrack extends BaseEntity {
     @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
     public String getCoverUrl() {
         return "/api/v1/music/" + getId() + "/cover";
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("imageUrl")
-    public String getArtistImageUrl() {
-        return "/api/v1/music/" + getId() + "/artist/image";
     }
 
     @com.fasterxml.jackson.annotation.JsonGetter("streamUrl")
