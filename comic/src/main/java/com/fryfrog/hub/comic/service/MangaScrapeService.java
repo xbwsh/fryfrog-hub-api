@@ -258,8 +258,7 @@ public class MangaScrapeService {
             log.debug("Auto-scrape is disabled by setting");
             return;
         }
-        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusDays(7);
-        List<Comic> unboundComics = repository.findUnscrapedAfterCutoff(cutoff);
+        List<Comic> unboundComics = repository.findUnscrapedComics();
         if (unboundComics.isEmpty()) {
             log.debug("No unbound comics to scrape");
             return;

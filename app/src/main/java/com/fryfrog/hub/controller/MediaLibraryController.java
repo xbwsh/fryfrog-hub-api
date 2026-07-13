@@ -87,48 +87,55 @@ public class MediaLibraryController {
     // ── 扫描 ──
 
     @PostMapping("/scan")
-    @Operation(summary = "扫描所有启用的资源库", description = "按类型分发到对应模块扫描，完成后整理视频文件")
+    @Operation(summary = "扫描所有启用的资源库", description = "按类型分发到对应模块扫描（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scanAll() {
         log.info("Starting full library scan...");
-        long startTime = System.currentTimeMillis();
 
         Map<String, Object> result = new LinkedHashMap<>();
-        Map<String, String> scanResult = new LinkedHashMap<>();
+        result.put("status", "started");
+        result.put("libraryCount", service.getEnabledLibraries().size());
 
-        for (MediaLibrary library : service.getEnabledLibraries()) {
-            scanLibrary(library, scanResult);
-        }
-        result.put("scan", scanResult);
+        // 异步执行扫描，避免前端超时
+        Thread.startVirtualThread(() -> {
+            try {
+                Map<String, String> scanResult = new LinkedHashMap<>();
+                for (MediaLibrary library : service.getEnabledLibraries()) {
+                    scanLibrary(library, scanResult);
+                }
+                log.info("Full library scan completed: {}", scanResult);
+            } catch (Exception e) {
+                log.error("Full library scan failed: {}", e.getMessage(), e);
+            }
+        });
 
-        try {
-            result.put("organize", videoService.organizeVideos(null));
-        } catch (Exception e) {
-            result.put("organize", Map.of("error", e.getMessage()));
-        }
-
-        long elapsed = System.currentTimeMillis() - startTime;
-        result.put("elapsedMs", elapsed);
-
-        log.info("Full library scan completed in {}ms", elapsed);
-        return ResponseEntity.ok(ApiResponse.success("资源库扫描完成", result));
+        return ResponseEntity.ok(ApiResponse.success("扫描任务已启动", result));
     }
 
     @PostMapping("/{id}/scan")
-    @Operation(summary = "扫描指定资源库", description = "根据资源库类型分发到对应模块扫描")
+    @Operation(summary = "扫描指定资源库", description = "根据资源库类型分发到对应模块扫描（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scanById(
             @Parameter(description = "资源库ID") @PathVariable Long id) {
         MediaLibrary library = service.getLibraryById(id);
-        long startTime = System.currentTimeMillis();
 
-        Map<String, String> scanResult = new LinkedHashMap<>();
-        scanLibrary(library, scanResult);
-
-        long elapsed = System.currentTimeMillis() - startTime;
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("scan", scanResult);
-        result.put("elapsedMs", elapsed);
+        result.put("libraryId", id);
+        result.put("libraryName", library.getName());
+        result.put("status", "started");
 
-        return ResponseEntity.ok(ApiResponse.success("资源库扫描完成", result));
+        // 异步执行扫描，避免前端超时
+        log.info("[Scan] Starting async scan for library '{}' (type={}, path={})", library.getName(), library.getType(), library.getPath());
+        Thread.startVirtualThread(() -> {
+            log.info("[Scan] Virtual thread started for library '{}'", library.getName());
+            try {
+                Map<String, String> scanResult = new LinkedHashMap<>();
+                scanLibrary(library, scanResult);
+                log.info("[Scan] Async scan completed for library '{}': {}", library.getName(), scanResult);
+            } catch (Exception e) {
+                log.error("[Scan] Async scan failed for library '{}': {}", library.getName(), e.getMessage(), e);
+            }
+        });
+
+        return ResponseEntity.ok(ApiResponse.success("扫描任务已启动", result));
     }
 
     private void scanLibrary(MediaLibrary library, Map<String, String> scanResult) {

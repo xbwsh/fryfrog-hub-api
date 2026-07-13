@@ -31,8 +31,8 @@ public interface ComicRepository extends JpaRepository<Comic, Long> {
 
     List<Comic> findByMetadataSourceIdIsNullOrderByVolumeAsc();
 
-    @Query("SELECT c FROM Comic c WHERE c.metadataSourceId IS NULL AND (c.scrapeAttemptedAt IS NULL OR c.scrapeAttemptedAt < :cutoff) ORDER BY c.volume ASC")
-    List<Comic> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);
+    @Query("SELECT c FROM Comic c WHERE c.metadataSourceId IS NULL ORDER BY c.volume ASC")
+    List<Comic> findUnscrapedComics();
 
     List<Comic> findBySeriesRef_Id(Long seriesId);
 

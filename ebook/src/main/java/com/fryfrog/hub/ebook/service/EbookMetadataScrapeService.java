@@ -70,8 +70,7 @@ public class EbookMetadataScrapeService {
             log.debug("Auto-scrape is disabled by setting");
             return;
         }
-        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusDays(7);
-        List<Ebook> unboundEbooks = repository.findUnscrapedAfterCutoff(cutoff);
+        List<Ebook> unboundEbooks = repository.findUnscrapedEbooks();
 
         if (unboundEbooks.isEmpty()) {
             log.debug("No unbound ebooks found for auto-scrape");

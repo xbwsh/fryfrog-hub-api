@@ -36,8 +36,8 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
 
     Page<Ebook> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
-    @Query("SELECT e FROM Ebook e WHERE e.bangumiId IS NULL AND e.openLibraryId IS NULL AND (e.scrapeAttemptedAt IS NULL OR e.scrapeAttemptedAt < :cutoff)")
-    List<Ebook> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);
+    @Query("SELECT e FROM Ebook e WHERE e.bangumiId IS NULL AND e.openLibraryId IS NULL")
+    List<Ebook> findUnscrapedEbooks();
 
     List<Ebook> findBySeriesRef_Id(Long seriesId);
 
