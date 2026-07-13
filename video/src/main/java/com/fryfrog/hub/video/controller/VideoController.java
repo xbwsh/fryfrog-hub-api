@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
@@ -62,18 +63,6 @@ public class VideoController {
     private final VideoRepository videoRepository;
     private final ScrapeProgressService scrapeProgressService;
 
-    @GetMapping
-    @Operation(summary = "获取所有视频", description = "返回数据库中所有已索引的视频列表")
-    public ResponseEntity<ApiResponse<List<VideoDTO>>> getAllVideos() {
-        List<Video> videos = service.getAllVideos();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
-                videos.stream().map(Video::getId).toList());
-        List<VideoDTO> dtos = videos.stream()
-                .map(v -> toDTO(v, progressMap.get(v.getId())))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(dtos));
-    }
-
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
     public ResponseEntity<ApiResponse<VideoDTO>> getVideoById(
@@ -84,40 +73,49 @@ public class VideoController {
 
     @GetMapping("/search/title")
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索视频")
-    public ResponseEntity<ApiResponse<List<VideoDTO>>> searchByTitle(
-            @Parameter(description = "搜索关键词") @RequestParam String q) {
-        List<Video> videos = service.searchByTitle(q);
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
-                videos.stream().map(Video::getId).toList());
-        List<VideoDTO> dtos = videos.stream()
+    public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> searchByTitle(
+            @Parameter(description = "搜索关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.searchByTitle(q, page, size);
+        List<Long> videoIds = result.getContent().stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        List<VideoDTO> dtos = result.getContent().stream()
                 .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(dtos));
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @GetMapping("/search/director")
     @Operation(summary = "按导演搜索", description = "根据导演名称模糊搜索视频")
-    public ResponseEntity<ApiResponse<List<VideoDTO>>> searchByDirector(
-            @Parameter(description = "导演名称关键词") @RequestParam String q) {
-        List<Video> videos = service.searchByDirector(q);
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
-                videos.stream().map(Video::getId).toList());
-        List<VideoDTO> dtos = videos.stream()
+    public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> searchByDirector(
+            @Parameter(description = "导演名称关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.searchByDirector(q, page, size);
+        List<Long> videoIds = result.getContent().stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        List<VideoDTO> dtos = result.getContent().stream()
                 .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(dtos));
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的视频")
-    public ResponseEntity<ApiResponse<List<VideoDTO>>> getFavorites() {
-        List<Video> videos = service.getFavorites();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(
-                videos.stream().map(Video::getId).toList());
-        List<VideoDTO> dtos = videos.stream()
+    @Operation(summary = "获取收藏列表", description = "返回已收藏的视频，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> getFavorites(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.getFavorites(page, size);
+        List<Long> videoIds = result.getContent().stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        List<VideoDTO> dtos = result.getContent().stream()
                 .map(v -> toDTO(v, progressMap.get(v.getId())))
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(dtos));
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @PutMapping("/{id:\\d+}/favorite")

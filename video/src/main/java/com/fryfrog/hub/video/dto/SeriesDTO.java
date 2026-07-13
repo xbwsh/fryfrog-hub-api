@@ -8,6 +8,7 @@ import lombok.Data;
 import java.util.List;
 
 @Data
+@com.fasterxml.jackson.annotation.JsonPropertyOrder({"id", "type", "title", "coverUrl", "fanartUrl", "originalTitle", "overview"})
 @Schema(description = "视频系列信息")
 public class SeriesDTO {
 
@@ -19,6 +20,12 @@ public class SeriesDTO {
 
     @Schema(description = "系列名称")
     private String title;
+
+    @Schema(description = "封面URL")
+    private String coverUrl;
+
+    @Schema(description = "背景图URL")
+    private String fanartUrl;
 
     @Schema(description = "原始标题")
     private String originalTitle;
@@ -83,6 +90,8 @@ public class SeriesDTO {
         dto.setId(series.getId());
         dto.setType("series");
         dto.setTitle(series.getTitle());
+        dto.setCoverUrl("/api/v1/video/series/" + series.getId() + "/cover");
+        dto.setFanartUrl("/api/v1/video/series/" + series.getId() + "/fanart");
         dto.setOriginalTitle(series.getOriginalTitle());
         dto.setOverview(series.getOverview());
         dto.setMediaType(series.getMediaType());
@@ -109,6 +118,8 @@ public class SeriesDTO {
         dto.setId(video.getId());
         dto.setType("standalone");
         dto.setTitle(video.getTitle());
+        dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
+        dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setOverview(video.getOverview());
         dto.setMediaType(video.getMediaType());
@@ -126,23 +137,5 @@ public class SeriesDTO {
         dto.setBackdropLocalPath(video.getBackdropLocalPath());
         dto.setEpisodes(List.of(episode));
         return dto;
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
-    public String getCoverUrl() {
-        if (id == null) return null;
-        if ("standalone".equals(type)) {
-            return "/api/v1/video/" + id + "/cover";
-        }
-        return "/api/v1/video/series/" + id + "/cover";
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("fanartUrl")
-    public String getFanartUrl() {
-        if (id == null) return null;
-        if ("standalone".equals(type)) {
-            return "/api/v1/video/" + id + "/fanart";
-        }
-        return "/api/v1/video/series/" + id + "/fanart";
     }
 }

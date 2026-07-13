@@ -24,7 +24,7 @@ public class CoverArtService {
     private final RestTemplate restTemplate;
     private final NfoService nfoService;
 
-    @Value("${hub.tmdb.image-size:original}")
+    @Value("${tmdb.image-size:original}")
     private String imageSize;
 
     private static final String IMAGE_BASE_URL = "https://image.tmdb.org/t/p";

@@ -1,6 +1,5 @@
 package com.fryfrog.hub.video.service;
 
-import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
@@ -8,6 +7,7 @@ import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.stereotype.Service;
@@ -25,7 +25,19 @@ public class TmdbService {
     private static final String IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
 
     private final RestTemplate restTemplate;
-    private final SystemSettingService settingService;
+
+    @Value("${tmdb.api-key:}")
+    private String apiKey;
+
+    @Value("${tmdb.language:zh-CN}")
+    private String language;
+
+    @Value("${tmdb.image-size:original}")
+    private String imageSize;
+
+    @Value("${tmdb.include-adult:true}")
+    private boolean includeAdult;
+
     private final Cache<String, TmdbSearchResult> searchCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
     private final Cache<Long, TmdbMovieDetail> movieDetailCache = Caffeine.newBuilder()
@@ -33,25 +45,24 @@ public class TmdbService {
     private final Cache<Long, TmdbTvDetail> tvDetailCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
 
-    public TmdbService(RestTemplate restTemplate, SystemSettingService settingService) {
+    public TmdbService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
-        this.settingService = settingService;
     }
 
     private String getApiKey() {
-        return settingService.getValue("tmdb.api-key", "");
+        return apiKey;
     }
 
     private String getLanguage() {
-        return settingService.getValue("tmdb.language", "zh-CN");
+        return language;
     }
 
     private String getImageSize() {
-        return settingService.getValue("tmdb.image-size", "original");
+        return imageSize;
     }
 
     private boolean isIncludeAdult() {
-        return settingService.getBoolean("tmdb.include-adult", true);
+        return includeAdult;
     }
 
     public boolean isConfigured() {

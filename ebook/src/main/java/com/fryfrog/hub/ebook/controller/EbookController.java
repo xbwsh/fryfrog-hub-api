@@ -1,6 +1,7 @@
 package com.fryfrog.hub.ebook.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaSeriesCharacter;
 import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
@@ -58,7 +59,7 @@ public class EbookController {
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
 
-    @Value("${hub.ebook.root-paths:}")
+    @Value("${ebook.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {
@@ -68,18 +69,17 @@ public class EbookController {
                 .collect(Collectors.toList());
     }
 
-    @GetMapping
-    @Operation(summary = "获取所有电子书", description = "返回数据库中所有已索引的电子书列表")
-    public ResponseEntity<ApiResponse<List<EbookDTO>>> getAllEbooks() {
-        List<EbookDTO> ebooks = service.getAllEbooks();
-
-        return ResponseEntity.ok(ApiResponse.success(ebooks));
-    }
-
     @GetMapping("/series")
-    @Operation(summary = "按系列分组获取电子书", description = "返回按系列分组的电子书列表，同一系列的电子书归为一组")
-    public ResponseEntity<ApiResponse<List<EbookSeries>>> getEbooksBySeries() {
-        return ResponseEntity.ok(ApiResponse.success(service.getEbooksBySeries()));
+    @Operation(summary = "按系列分组获取电子书", description = "返回按系列分组的电子书列表，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<EbookSeries>>> getEbooksBySeries(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        List<EbookSeries> allSeries = service.getEbooksBySeries();
+        long total = allSeries.size();
+        int start = page * size;
+        int end = Math.min(start + size, allSeries.size());
+        List<EbookSeries> paged = start < allSeries.size() ? allSeries.subList(start, end) : List.of();
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.of(paged, page, size, total)));
     }
 
     @GetMapping("/series/cover")
@@ -113,33 +113,36 @@ public class EbookController {
 
     @GetMapping("/search/title")
     @Operation(summary = "按书名搜索", description = "根据书名关键词模糊搜索电子书")
-    public ResponseEntity<ApiResponse<List<EbookDTO>>> searchByTitle(
-            @Parameter(description = "搜索关键词") @RequestParam String q) {
-        List<EbookDTO> ebooks = service.searchByTitle(q);
-
-        return ResponseEntity.ok(ApiResponse.success(ebooks));
+    public ResponseEntity<ApiResponse<PageResponse<EbookDTO>>> searchByTitle(
+            @Parameter(description = "搜索关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.searchByTitle(q, page, size)));
     }
 
     @GetMapping("/search/author")
     @Operation(summary = "按作者搜索", description = "根据作者名称模糊搜索电子书")
-    public ResponseEntity<ApiResponse<List<EbookDTO>>> searchByAuthor(
-            @Parameter(description = "作者名称关键词") @RequestParam String q) {
-        List<EbookDTO> ebooks = service.searchByAuthor(q);
-
-        return ResponseEntity.ok(ApiResponse.success(ebooks));
+    public ResponseEntity<ApiResponse<PageResponse<EbookDTO>>> searchByAuthor(
+            @Parameter(description = "作者名称关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.searchByAuthor(q, page, size)));
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的电子书")
-    public ResponseEntity<ApiResponse<List<EbookDTO>>> getFavorites() {
-        List<EbookDTO> ebooks = service.getFavorites();
-        return ResponseEntity.ok(ApiResponse.success(ebooks));
+    @Operation(summary = "获取收藏列表", description = "返回已收藏的电子书，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<EbookDTO>>> getFavorites(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.getFavorites(page, size)));
     }
 
     @GetMapping("/recently-added")
-    @Operation(summary = "最近添加", description = "返回最近添加的电子书")
-    public ResponseEntity<ApiResponse<List<EbookDTO>>> getRecentlyAdded() {
-        return ResponseEntity.ok(ApiResponse.success(service.getRecentlyAdded()));
+    @Operation(summary = "最近添加", description = "返回最近添加的电子书，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<EbookDTO>>> getRecentlyAdded(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.getRecentlyAdded(page, size)));
     }
 
     @GetMapping("/recently-read")

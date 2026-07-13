@@ -1,6 +1,8 @@
 package com.fryfrog.hub.comic.repository;
 
 import com.fryfrog.hub.comic.model.Comic;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,11 +17,17 @@ public interface ComicRepository extends JpaRepository<Comic, Long> {
 
     List<Comic> findByTitleContainingIgnoreCase(String title);
 
+    Page<Comic> findByTitleContainingIgnoreCase(String title, Pageable pageable);
+
     List<Comic> findByAuthorContainingIgnoreCase(String author);
+
+    Page<Comic> findByAuthorContainingIgnoreCase(String author, Pageable pageable);
 
     Optional<Comic> findByFilePath(String filePath);
 
     List<Comic> findByFavoriteTrue();
+
+    Page<Comic> findByFavoriteTrue(Pageable pageable);
 
     List<Comic> findByMetadataSourceIdIsNullOrderByVolumeAsc();
 

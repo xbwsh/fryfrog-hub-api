@@ -10,10 +10,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class AuthManager {
 
-    @Value("${hub.auth.enabled:false}")
+    @Value("${auth.enabled:false}")
     private boolean enabled;
 
-    @Value("${hub.auth.password:}")
+    @Value("${auth.password:}")
     private String password;
 
     // token → 过期时间戳

@@ -109,7 +109,7 @@ public class VideoScrapeService {
 
         // 按系列分组，优先处理同一系列的内容
         List<List<Video>> seriesGroups = groupVideosBySeries(videos);
-        log.info("[Scrape] Starting batch scrape: {} videos in {} groups", videos.size(), seriesGroups.size());
+        log.debug("[Scrape] Starting batch scrape: {} videos in {} groups", videos.size(), seriesGroups.size());
 
         for (List<Video> seriesGroup : seriesGroups) {
             if (seriesGroup.isEmpty()) continue;
@@ -128,7 +128,7 @@ public class VideoScrapeService {
 
                     // 检查是否需要重新刮削
                     if (video.getTmdbId() != null && !isMetadataComplete(video)) {
-                        log.info("[Scrape] Metadata incomplete for '{}', re-scraping", video.getTitle());
+                        log.debug("[Scrape] Metadata incomplete for '{}', re-scraping", video.getTitle());
                         unbindTmdb(video.getId());
                         video.setTmdbId(null);
                     }
@@ -140,34 +140,34 @@ public class VideoScrapeService {
                     }
 
                     String mediaTypeFilter = resolveMediaTypeFilter(video);
-                    log.info("[Scrape] Scraping '{}' (filter={})", video.getTitle(), mediaTypeFilter);
+                    log.debug("[Scrape] Scraping '{}' (filter={})", video.getTitle(), mediaTypeFilter);
 
                     scrapeProgressService.updateItem("video", video.getFileName(), "processing", null);
 
                     // Phase 1: TMDB 搜索（无锁）
                     List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                     if (results.isEmpty()) {
-                        log.info("[Scrape] No TMDB results for: '{}'", video.getTitle());
+                        log.debug("[Scrape] No TMDB results for: '{}'", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                         continue;
                     }
 
-                    log.info("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
+                    log.debug("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
                     for (var r : results) {
-                        log.info("[Scrape] Result: id={}, title='{}', originalTitle='{}', name='{}', originalName='{}'",
+                        log.debug("[Scrape] Result: id={}, title='{}', originalTitle='{}', name='{}', originalName='{}'",
                                 r.getId(), r.getTitle(), r.getOriginalTitle(), r.getName(), r.getOriginalName());
                     }
 
                     TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
                     if (bestMatch == null) {
-                        log.info("[Scrape] No confident TMDB match for: '{}' (best score < 0.6)", video.getTitle());
+                        log.debug("[Scrape] No confident TMDB match for: '{}' (best score < 0.6)", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
                         continue;
                     }
 
-                    log.info("[Scrape] Matched '{}' -> TMDB {} '{}' ({})", video.getTitle(), bestMatch.getId(), bestMatch.getTitle(), bestMatch.getMediaType());
+                    log.debug("[Scrape] Matched '{}' -> TMDB {} '{}' ({})", video.getTitle(), bestMatch.getId(), bestMatch.getTitle(), bestMatch.getMediaType());
 
                     boolean isAdult = Boolean.TRUE.equals(bestMatch.getAdult());
 
@@ -283,11 +283,11 @@ public class VideoScrapeService {
             String name = r.getTitle();
             String originalName = r.getOriginalTitle();
             if (name != null && (name.equals(cleanedQuery) || name.equals(query))) {
-                log.info("[Scrape] Exact match: '{}' == '{}'", query, name);
+                log.debug("[Scrape] Exact match: '{}' == '{}'", query, name);
                 return r;
             }
             if (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query))) {
-                log.info("[Scrape] Exact match: '{}' == '{}'", query, originalName);
+                log.debug("[Scrape] Exact match: '{}' == '{}'", query, originalName);
                 return r;
             }
         }
@@ -305,14 +305,14 @@ public class VideoScrapeService {
             if (originalName != null) {
                 score = Math.max(score, TitleCleaner.calculateSimilarity(cleanedQuery, originalName));
             }
-            log.info("[Scrape] Similarity: '{}' vs '{}'/'{}' = {}", cleanedQuery, name, originalName, score);
+            log.debug("[Scrape] Similarity: '{}' vs '{}'/'{}' = {}", cleanedQuery, name, originalName, score);
             if (score > bestScore) {
                 bestScore = score;
                 best = r;
             }
         }
 
-        log.info("[Scrape] Best similarity score: {} (threshold: 0.6)", bestScore);
+        log.debug("[Scrape] Best similarity score: {} (threshold: 0.6)", bestScore);
         if (best != null && bestScore >= 0.6) {
             return best;
         }
@@ -437,7 +437,7 @@ public class VideoScrapeService {
             throw new IllegalStateException("Video is not bound to TMDB");
         }
 
-        log.info("[Scrape] Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), video.getTmdbId());
+        log.debug("[Scrape] Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), video.getTmdbId());
 
         // 清理关联文件
         cleanupUnboundFiles(video);
@@ -502,7 +502,7 @@ public class VideoScrapeService {
 
                     repository.save(video);
                     count++;
-                    log.info("[Scrape] Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), tmdbId);
+                    log.debug("[Scrape] Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), tmdbId);
                 }
                 return count;
             });
@@ -532,7 +532,7 @@ public class VideoScrapeService {
             throw new IllegalArgumentException("No videos found with tmdbId: " + tmdbId);
         }
 
-        log.info("[Scrape] Rescraping {} videos with tmdbId={}", siblings.size(), tmdbId);
+        log.debug("[Scrape] Rescraping {} videos with tmdbId={}", siblings.size(), tmdbId);
 
         // 先解绑所有
         for (Video s : siblings) {
@@ -561,7 +561,7 @@ public class VideoScrapeService {
      * 重新刮削指定库的所有视频
      */
     public void rescrapeByLibrary(Long libraryId) {
-        log.info("[Scrape] rescrapeByLibrary called with libraryId={}", libraryId);
+        log.debug("[Scrape] rescrapeByLibrary called with libraryId={}", libraryId);
 
         // Step 1: 解绑库中所有已绑定的视频
         List<Video> allVideos = repository.findAll();
@@ -580,7 +580,7 @@ public class VideoScrapeService {
             }
         }
         if (bound > 0) {
-            log.info("[Scrape] Unbound {} videos from library {}, starting re-scrape", bound, libraryId);
+            log.debug("[Scrape] Unbound {} videos from library {}, starting re-scrape", bound, libraryId);
         }
 
         // Step 2: 重新扫描库

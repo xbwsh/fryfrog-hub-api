@@ -1,6 +1,8 @@
 package com.fryfrog.hub.music.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PageResponse;
+import com.fryfrog.hub.music.dto.AlbumGroup;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.model.Playlist;
 import com.fryfrog.hub.music.model.PlaylistTrack;
@@ -37,7 +39,7 @@ public class MusicController {
 
     private final MusicMetadataService service;
 
-    @Value("${hub.music.root-paths:}")
+    @Value("${music.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {
@@ -48,11 +50,21 @@ public class MusicController {
     }
 
     @GetMapping
-    @Operation(summary = "获取所有曲目", description = "返回数据库中所有已索引的音乐曲目列表")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> getAllTracks() {
-        List<MusicTrack> tracks = service.getAllTracks();
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    @Operation(summary = "按专辑分组获取曲目", description = "返回按专辑分组的曲目列表，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<AlbumGroup>>> getAllTracksByAlbum(
+            @Parameter(description = "页码（0-based）") @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "每页大小") @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.getAlbumGroups(page, size)));
+    }
+
+    @GetMapping("/list")
+    @Operation(summary = "获取所有曲目（扁平）", description = "返回所有曲目的扁平列表，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> getAllTracks(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.getAllTracks(page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/{id:\\d+}")
@@ -66,28 +78,34 @@ public class MusicController {
 
     @GetMapping("/search/title")
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByTitle(
-            @Parameter(description = "搜索关键词") @RequestParam String q) {
-        List<MusicTrack> tracks = service.searchByTitle(q);
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> searchByTitle(
+            @Parameter(description = "搜索关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.searchByTitle(q, page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/search/artist")
     @Operation(summary = "按艺术家搜索", description = "根据艺术家名称模糊搜索音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> searchByArtist(
-            @Parameter(description = "艺术家名称关键词") @RequestParam String q) {
-        List<MusicTrack> tracks = service.searchByArtist(q);
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> searchByArtist(
+            @Parameter(description = "艺术家名称关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.searchByArtist(q, page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> getFavorites() {
-        List<MusicTrack> tracks = service.getFavorites();
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    @Operation(summary = "获取收藏列表", description = "返回已收藏的音乐曲目，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> getFavorites(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.getFavorites(page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PutMapping("/{id:\\d+}/favorite")
@@ -106,27 +124,33 @@ public class MusicController {
     }
 
     @GetMapping("/recently-played")
-    @Operation(summary = "最近播放", description = "返回最近播放过的音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> getRecentlyPlayed() {
-        List<MusicTrack> tracks = service.getRecentlyPlayed();
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    @Operation(summary = "最近播放", description = "返回最近播放过的音乐曲目，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> getRecentlyPlayed(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.getRecentlyPlayed(page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/most-played")
-    @Operation(summary = "最常播放", description = "返回播放次数最多的音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> getMostPlayed() {
-        List<MusicTrack> tracks = service.getMostPlayed();
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    @Operation(summary = "最常播放", description = "返回播放次数最多的音乐曲目，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> getMostPlayed(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.getMostPlayed(page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/recently-added")
-    @Operation(summary = "最近添加", description = "返回最近添加的音乐曲目")
-    public ResponseEntity<ApiResponse<List<MusicTrack>>> getRecentlyAdded() {
-        List<MusicTrack> tracks = service.getRecentlyAdded();
-        tracks.forEach(this::checkExternalLyrics);
-        return ResponseEntity.ok(ApiResponse.success(tracks));
+    @Operation(summary = "最近添加", description = "返回最近添加的音乐曲目，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicTrack>>> getRecentlyAdded(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        var result = service.getRecentlyAdded(page, size);
+        result.getContent().forEach(this::checkExternalLyrics);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/{id:\\d+}/play")

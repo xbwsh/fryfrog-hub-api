@@ -2,6 +2,8 @@ package com.fryfrog.hub.ebook.repository;
 
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,7 +18,11 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
 
     List<Ebook> findByTitleContainingIgnoreCase(String title);
 
+    Page<Ebook> findByTitleContainingIgnoreCase(String title, Pageable pageable);
+
     List<Ebook> findByAuthorContainingIgnoreCase(String author);
+
+    Page<Ebook> findByAuthorContainingIgnoreCase(String author, Pageable pageable);
 
     List<Ebook> findByGenreContainingIgnoreCase(String genre);
 
@@ -24,7 +30,11 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
 
     List<Ebook> findByFavoriteTrue();
 
+    Page<Ebook> findByFavoriteTrue(Pageable pageable);
+
     List<Ebook> findAllByOrderByCreatedAtDesc();
+
+    Page<Ebook> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     @Query("SELECT e FROM Ebook e WHERE e.bangumiId IS NULL AND e.openLibraryId IS NULL AND (e.scrapeAttemptedAt IS NULL OR e.scrapeAttemptedAt < :cutoff)")
     List<Ebook> findUnscrapedAfterCutoff(@Param("cutoff") LocalDateTime cutoff);

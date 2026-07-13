@@ -10,22 +10,15 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/settings")
-@Tag(name = "系统设置", description = "运行时配置管理（TMDB、代理、刮削等）")
+@Tag(name = "系统设置", description = "运行时配置管理")
 public class SettingController {
 
     private final SystemSettingService settingService;
     private final PeriodicScanScheduler scanScheduler;
-
-    private static final Set<String> SENSITIVE_KEYS = Set.of(
-            "tmdb.api-key"
-    );
 
     public SettingController(SystemSettingService settingService, PeriodicScanScheduler scanScheduler) {
         this.settingService = settingService;
@@ -33,46 +26,16 @@ public class SettingController {
     }
 
     @GetMapping
-    @Operation(summary = "获取所有设置", description = "返回所有设置，敏感字段（如api-key）只返回是否配置")
+    @Operation(summary = "获取所有设置", description = "返回所有设置")
     public ResponseEntity<ApiResponse<List<SystemSetting>>> getAllSettings() {
-        List<SystemSetting> settings = settingService.getAll().stream()
-                .map(s -> {
-                    SystemSetting dto = new SystemSetting();
-                    dto.setId(s.getId());
-                    String displayKey = s.getKey().startsWith("hub.") ? s.getKey().substring(4) : s.getKey();
-                    dto.setKey(displayKey);
-
-                    if (SENSITIVE_KEYS.contains(displayKey) || SENSITIVE_KEYS.contains(s.getKey())) {
-                        dto.setValue(s.getValue().isBlank() ? "" : "***已配置***");
-                    } else {
-                        dto.setValue(s.getValue());
-                    }
-
-                    dto.setDescription(s.getDescription());
-                    return dto;
-                })
-                .toList();
-        return ResponseEntity.ok(ApiResponse.success(settings));
+        return ResponseEntity.ok(ApiResponse.success(settingService.getAll()));
     }
 
     @GetMapping("/{key}")
-    @Operation(summary = "获取单个设置", description = "获取设置值，敏感字段只返回是否配置")
+    @Operation(summary = "获取单个设置")
     public ResponseEntity<ApiResponse<SystemSetting>> getSetting(@PathVariable String key) {
         return settingService.getByKey(key)
-                .map(s -> {
-                    SystemSetting dto = new SystemSetting();
-                    dto.setId(s.getId());
-                    dto.setKey(key);
-
-                    if (SENSITIVE_KEYS.contains(key) || SENSITIVE_KEYS.contains(s.getKey())) {
-                        dto.setValue(s.getValue().isBlank() ? "" : "***已配置***");
-                    } else {
-                        dto.setValue(s.getValue());
-                    }
-
-                    dto.setDescription(s.getDescription());
-                    return ResponseEntity.ok(ApiResponse.success(dto));
-                })
+                .map(s -> ResponseEntity.ok(ApiResponse.success(s)))
                 .orElse(ResponseEntity.ok(ApiResponse.error("Setting not found: " + key)));
     }
 
@@ -90,20 +53,7 @@ public class SettingController {
             } catch (NumberFormatException ignored) {}
         }
 
-        if (SENSITIVE_KEYS.contains(key)) {
-            setting.setValue("***已配置***");
-        }
-
         return ResponseEntity.ok(ApiResponse.success("设置已更新", setting));
-    }
-
-    @GetMapping("/tmdb/status")
-    @Operation(summary = "检查 TMDB 配置状态")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getTmdbStatus() {
-        Map<String, Object> status = new LinkedHashMap<>();
-        String apiKey = settingService.getValue("tmdb.api-key", "");
-        status.put("configured", !apiKey.isBlank());
-        return ResponseEntity.ok(ApiResponse.success(status));
     }
 
 }

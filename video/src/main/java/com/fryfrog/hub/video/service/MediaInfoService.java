@@ -34,10 +34,10 @@ public class MediaInfoService {
     private final VideoRepository videoRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${hub.video.ffprobe-path:ffprobe}")
+    @Value("${video.ffprobe-path:ffprobe}")
     private String ffprobePath;
 
-    @Value("${hub.video.ffmpeg-path:ffmpeg}")
+    @Value("${video.ffmpeg-path:ffmpeg}")
     private String ffmpegPath;
 
     @PostConstruct

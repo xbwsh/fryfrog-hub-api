@@ -1,5 +1,6 @@
 package com.fryfrog.hub.ebook.service;
 
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
@@ -15,6 +16,7 @@ import com.fryfrog.hub.ebook.repository.EbookRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import com.fryfrog.hub.ebook.util.EpubParser;
@@ -50,7 +52,7 @@ public class EbookService {
 
     private final TransactionTemplate transactionTemplate;
 
-    @Value("${hub.ebook.root-paths:}")
+    @Value("${ebook.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
@@ -99,10 +101,26 @@ public class EbookService {
                 .toList();
     }
 
+    public PageResponse<EbookDTO> searchByTitle(String title, int page, int size) {
+        var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
+    }
+
     public List<EbookDTO> searchByAuthor(String author) {
         return repository.findByAuthorContainingIgnoreCase(author).stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
+    }
+
+    public PageResponse<EbookDTO> searchByAuthor(String author, int page, int size) {
+        var result = repository.findByAuthorContainingIgnoreCase(author, PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<EbookDTO> getFavorites() {
@@ -111,10 +129,26 @@ public class EbookService {
                 .toList();
     }
 
+    public PageResponse<EbookDTO> getFavorites(int page, int size) {
+        var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
+    }
+
     public List<EbookDTO> getRecentlyAdded() {
         return repository.findAllByOrderByCreatedAtDesc().stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
+    }
+
+    public PageResponse<EbookDTO> getRecentlyAdded(int page, int size) {
+        var result = repository.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<EbookReadingProgressDTO> getRecentlyRead() {
@@ -199,6 +233,11 @@ public class EbookService {
                     .findFirst());
             series.setHasCover(withCover.isPresent());
             series.setCoverArtPath(withCover.map(Ebook::getCoverArtPath).orElse(null));
+            if (Boolean.TRUE.equals(series.getHasCover())) {
+                try {
+                    series.setCoverUrl("/api/v1/ebook/series/cover?series=" + java.net.URLEncoder.encode(entry.getKey(), "UTF-8"));
+                } catch (Exception ignored) {}
+            }
 
             seriesList.add(series);
         }

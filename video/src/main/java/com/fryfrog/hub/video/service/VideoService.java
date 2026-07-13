@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
@@ -12,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -44,7 +46,7 @@ public class VideoService {
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
 
-    @Value("${hub.video.root-paths:}")
+    @Value("${video.root-paths:}")
     private String rootPathsConfig;
 
     // ==================== 路径查询 ====================
@@ -91,6 +93,21 @@ public class VideoService {
 
     public List<Video> getFavorites() {
         return repository.findByFavoriteTrue();
+    }
+
+    public PageResponse<Video> searchByTitle(String title, int page, int size) {
+        var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+    }
+
+    public PageResponse<Video> searchByDirector(String director, int page, int size) {
+        var result = repository.findByDirectorContainingIgnoreCase(director, PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+    }
+
+    public PageResponse<Video> getFavorites(int page, int size) {
+        var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     // ==================== 用户状态 ====================

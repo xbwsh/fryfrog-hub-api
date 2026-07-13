@@ -18,7 +18,7 @@ public class MediaLibraryService {
 
     private final MediaLibraryRepository repository;
 
-    @Value("${hub.video.root-paths:}")
+    @Value("${video.root-paths:}")
     private String legacyRootPaths;
 
     public MediaLibraryService(MediaLibraryRepository repository) {

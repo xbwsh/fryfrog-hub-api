@@ -13,6 +13,15 @@ public class EbookDTO {
     @Schema(description = "电子书ID")
     private Long id;
 
+    @Schema(description = "封面URL")
+    private String coverUrl;
+
+    @Schema(description = "下载URL")
+    private String downloadUrl;
+
+    @Schema(description = "阅读URL")
+    private String readUrl;
+
     @Schema(description = "系列ID（关联 MediaSeries）")
     private Long seriesId;
 
@@ -85,25 +94,12 @@ public class EbookDTO {
     @Schema(description = "是否有本地封面文件")
     private Boolean hasCover;
 
-    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
-    public String getCoverUrl() {
-        return id != null && Boolean.TRUE.equals(hasCover)
-                ? "/api/v1/ebook/" + id + "/cover" : null;
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("downloadUrl")
-    public String getDownloadUrl() {
-        return "/api/v1/ebook/" + id + "/download";
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("readUrl")
-    public String getReadUrl() {
-        return "/api/v1/ebook/" + id + "/read";
-    }
-
     public static EbookDTO fromEntity(Ebook ebook, boolean hasCover) {
         EbookDTO dto = new EbookDTO();
         dto.setId(ebook.getId());
+        dto.setCoverUrl(hasCover ? "/api/v1/ebook/" + ebook.getId() + "/cover" : null);
+        dto.setDownloadUrl("/api/v1/ebook/" + ebook.getId() + "/download");
+        dto.setReadUrl("/api/v1/ebook/" + ebook.getId() + "/read");
         dto.setSeriesId(ebook.getSeriesRef() != null ? ebook.getSeriesRef().getId() : null);
         dto.setTitle(ebook.getTitle());
         dto.setAuthor(ebook.getAuthor());

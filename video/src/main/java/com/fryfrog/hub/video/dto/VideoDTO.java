@@ -20,6 +20,15 @@ public class VideoDTO {
     @Schema(description = "视频标题", example = "流浪地球2")
     private String title;
 
+    @Schema(description = "封面URL")
+    private String coverUrl;
+
+    @Schema(description = "背景图URL")
+    private String fanartUrl;
+
+    @Schema(description = "流播放URL")
+    private String streamUrl;
+
     @Schema(description = "原始标题", example = "The Wandering Earth II")
     private String originalTitle;
 
@@ -172,6 +181,9 @@ public class VideoDTO {
         VideoDTO dto = new VideoDTO();
         dto.setId(video.getId());
         dto.setTitle(video.getTitle());
+        dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
+        dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
+        dto.setStreamUrl("/api/v1/video/" + video.getId() + "/stream");
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setDirector(video.getDirector());
         dto.setActors(video.getActors());
@@ -221,20 +233,5 @@ public class VideoDTO {
             dto.setSeriesTitle(video.getSeries().getTitle());
         }
         return dto;
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
-    public String getCoverUrl() {
-        return id != null ? "/api/v1/video/" + id + "/cover" : null;
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("fanartUrl")
-    public String getFanartUrl() {
-        return id != null ? "/api/v1/video/" + id + "/fanart" : null;
-    }
-
-    @com.fasterxml.jackson.annotation.JsonGetter("streamUrl")
-    public String getStreamUrl() {
-        return id != null ? "/api/v1/video/" + id + "/stream" : null;
     }
 }

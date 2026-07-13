@@ -1,10 +1,12 @@
 package com.fryfrog.hub.music.service;
 
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.common.util.TitleCleaner;
+import com.fryfrog.hub.music.dto.AlbumGroup;
 import com.fryfrog.hub.music.model.MusicTrack;
 import com.fryfrog.hub.music.model.Playlist;
 import com.fryfrog.hub.music.model.PlaylistTrack;
@@ -14,6 +16,9 @@ import com.fryfrog.hub.music.repository.PlaylistTrackRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import org.springframework.transaction.annotation.Transactional;
@@ -37,7 +42,7 @@ public class MusicMetadataService {
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final MediaLibraryService mediaLibraryService;
 
-    @Value("${hub.music.root-paths:}")
+    @Value("${music.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
@@ -71,6 +76,11 @@ public class MusicMetadataService {
         return repository.findAll();
     }
 
+    public PageResponse<MusicTrack> getAllTracks(int page, int size) {
+        var result = repository.findAll(PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+    }
+
     public MusicTrack getTrackById(Long id) {
         return repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("MusicTrack", "id", id));
@@ -80,8 +90,18 @@ public class MusicMetadataService {
         return repository.findByTitleContainingIgnoreCase(title);
     }
 
+    public PageResponse<MusicTrack> searchByTitle(String title, int page, int size) {
+        var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+    }
+
     public List<MusicTrack> searchByArtist(String artist) {
         return repository.findByArtistContainingIgnoreCase(artist);
+    }
+
+    public PageResponse<MusicTrack> searchByArtist(String artist, int page, int size) {
+        var result = repository.findByArtistContainingIgnoreCase(artist, PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     public MusicTrack setFavorite(Long id, boolean status) {
@@ -92,6 +112,11 @@ public class MusicMetadataService {
 
     public List<MusicTrack> getFavorites() {
         return repository.findByFavoriteTrue();
+    }
+
+    public PageResponse<MusicTrack> getFavorites(int page, int size) {
+        var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional
@@ -106,12 +131,27 @@ public class MusicMetadataService {
         return repository.findByLastPlayedAtIsNotNullOrderByLastPlayedAtDesc();
     }
 
+    public PageResponse<MusicTrack> getRecentlyPlayed(int page, int size) {
+        var result = repository.findByLastPlayedAtIsNotNullOrderByLastPlayedAtDesc(PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+    }
+
     public List<MusicTrack> getMostPlayed() {
         return repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0);
     }
 
+    public PageResponse<MusicTrack> getMostPlayed(int page, int size) {
+        var result = repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0, PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+    }
+
     public List<MusicTrack> getRecentlyAdded() {
         return repository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+    }
+
+    public PageResponse<MusicTrack> getRecentlyAdded(int page, int size) {
+        var result = repository.findAll(PageRequest.of(page, size, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt")));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     public Map<String, List<MusicTrack>> getRecommendations() {
@@ -148,6 +188,28 @@ public class MusicMetadataService {
         }
 
         return recommendations;
+    }
+
+    public PageResponse<AlbumGroup> getAlbumGroups(int page, int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Object[]> albumPage = repository.findDistinctAlbumGroups(pageable);
+
+        List<AlbumGroup> groups = albumPage.getContent().stream()
+                .map(row -> {
+                    String artist = row[0] != null ? row[0].toString() : "";
+                    String album = row[1] != null ? row[1].toString() : "";
+                    List<MusicTrack> tracks = repository.findByArtistAndAlbum(artist, album);
+                    Integer year = tracks.isEmpty() ? null : tracks.get(0).getYear();
+                    String coverUrl = tracks.stream()
+                            .filter(t -> t.getCoverArtPath() != null)
+                            .findFirst()
+                            .map(t -> "/api/v1/music/" + t.getId() + "/cover")
+                            .orElse(null);
+                    return new AlbumGroup(artist, album, coverUrl, year, tracks);
+                })
+                .toList();
+
+        return PageResponse.of(groups, page, size, albumPage.getTotalElements());
     }
 
     @Transactional

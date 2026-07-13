@@ -1,6 +1,8 @@
 package com.fryfrog.hub.video.repository;
 
 import com.fryfrog.hub.video.model.Video;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,13 +17,19 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     List<Video> findByTitleContainingIgnoreCase(String title);
 
+    Page<Video> findByTitleContainingIgnoreCase(String title, Pageable pageable);
+
     List<Video> findByDirectorContainingIgnoreCase(String director);
+
+    Page<Video> findByDirectorContainingIgnoreCase(String director, Pageable pageable);
 
     List<Video> findByGenreContainingIgnoreCase(String genre);
 
     Optional<Video> findByFilePath(String filePath);
 
     List<Video> findByFavoriteTrue();
+
+    Page<Video> findByFavoriteTrue(Pageable pageable);
 
     List<Video> findByTmdbIdIsNull();
 

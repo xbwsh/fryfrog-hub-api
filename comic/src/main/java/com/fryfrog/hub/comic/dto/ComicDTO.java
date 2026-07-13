@@ -13,6 +13,9 @@ public class ComicDTO {
     @Schema(description = "漫画ID")
     private Long id;
 
+    @Schema(description = "封面URL")
+    private String coverUrl;
+
     @Schema(description = "系列ID（关联 MediaSeries）")
     private Long seriesId;
 
@@ -94,6 +97,7 @@ public class ComicDTO {
     public static ComicDTO fromEntity(Comic comic, boolean hasCover) {
         ComicDTO dto = new ComicDTO();
         dto.setId(comic.getId());
+        dto.setCoverUrl(hasCover ? "/api/v1/comic/" + comic.getId() + "/cover" : null);
         dto.setSeriesId(comic.getSeriesRef() != null ? comic.getSeriesRef().getId() : null);
         dto.setTitle(comic.getTitle());
         dto.setAuthor(comic.getAuthor());

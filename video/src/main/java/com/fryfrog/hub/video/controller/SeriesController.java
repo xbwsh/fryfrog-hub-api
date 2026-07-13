@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.SeriesDTO;
 import com.fryfrog.hub.video.dto.VideoDTO;
@@ -17,6 +18,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
@@ -39,45 +43,41 @@ public class SeriesController {
     private final WatchProgressService watchProgressService;
 
     @GetMapping
-    @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影）")
-    public ResponseEntity<ApiResponse<List<SeriesDTO>>> getAllSeries() {
-        List<SeriesDTO> dtos = new ArrayList<>();
+    @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<SeriesDTO>>> getAllSeries(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<VideoSeries> seriesPage = seriesService.getSeriesPage(
+                PageRequest.of(page, size, Sort.by("title")));
 
-        // 收集所有视频 ID
         List<Long> allVideoIds = new ArrayList<>();
-        for (VideoSeries series : seriesService.getAllSeries()) {
+        for (VideoSeries series : seriesPage.getContent()) {
             series.getVideos().forEach(v -> allVideoIds.add(v.getId()));
         }
-        videoService.getAllVideos().stream()
-                .filter(v -> v.getSeries() == null)
-                .forEach(v -> allVideoIds.add(v.getId()));
         Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(allVideoIds);
 
-        // 系列剧集
-        for (VideoSeries series : seriesService.getAllSeries()) {
-            List<VideoDTO> episodes = series.getVideos().stream()
-                    .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
-                    .collect(Collectors.toList());
-            dtos.add(SeriesDTO.fromEntity(series, episodes));
-        }
+        List<SeriesDTO> dtos = seriesPage.getContent().stream()
+                .map(series -> {
+                    List<VideoDTO> episodes = series.getVideos().stream()
+                            .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
+                            .collect(Collectors.toList());
+                    return SeriesDTO.fromEntity(series, episodes);
+                })
+                .collect(Collectors.toList());
 
-        // 独立视频（不属于任何系列的，如电影）
-        List<Video> standaloneVideos = videoService.getAllVideos().stream()
-                .filter(v -> v.getSeries() == null)
-                .sorted(Comparator.comparing(Video::getTitle))
-                .toList();
-        for (Video video : standaloneVideos) {
-            dtos.add(SeriesDTO.fromStandaloneVideo(video, toVideoDTO(video, progressMap.get(video.getId()))));
-        }
+        // Count standalone videos for total
+        long totalSeries = seriesPage.getTotalElements();
+        long totalStandalone = videoService.getAllVideos().stream()
+                .filter(v -> v.getSeries() == null).count();
 
-        return ResponseEntity.ok(ApiResponse.success(dtos));
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, totalSeries + totalStandalone)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "获取系列详情", description = "根据ID获取系列详情，包含所有剧集。也支持独立视频ID")
     public ResponseEntity<ApiResponse<SeriesDTO>> getSeriesById(
             @Parameter(description = "系列ID或独立视频ID") @PathVariable Long id) {
-        // 先尝试查系列
         var series = seriesService.getSeriesById(id);
         if (series.isPresent()) {
             VideoSeries s = series.get();
@@ -88,7 +88,6 @@ public class SeriesController {
                     .collect(Collectors.toList());
             return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(s, episodes)));
         }
-        // fallback：查是否为独立视频（getAllSeries 返回时用 videoId 作为 DTO id）
         var video = videoService.getVideoById(id);
         if (video != null && video.getSeries() == null) {
             WatchProgress progress = watchProgressService.getProgress(id);

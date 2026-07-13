@@ -1,6 +1,7 @@
 package com.fryfrog.hub.comic.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaSeriesCharacter;
 import com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository;
@@ -48,7 +49,7 @@ public class ComicController {
     private final MediaSeriesCharacterRepository mediaCharacterRepository;
     private final ScrapeProgressService scrapeProgressService;
 
-    @Value("${hub.comic.root-paths:}")
+    @Value("${comic.root-paths:}")
     private String rootPathsConfig;
 
     private List<String> getRootPaths() {
@@ -58,19 +59,17 @@ public class ComicController {
                 .collect(Collectors.toList());
     }
 
-    @GetMapping
-    @Operation(summary = "获取所有漫画", description = "返回数据库中所有已索引的漫画列表")
-    public ResponseEntity<ApiResponse<List<ComicDTO>>> getAllComics() {
-        return ResponseEntity.ok(ApiResponse.success(
-                service.getAllComics().stream()
-                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
-                        .toList()));
-    }
-
     @GetMapping("/series")
-    @Operation(summary = "按系列分组获取漫画", description = "返回按系列分组的漫画列表，同一系列的漫画归为一组")
-    public ResponseEntity<ApiResponse<List<ComicSeries>>> getComicsBySeries() {
-        return ResponseEntity.ok(ApiResponse.success(service.getComicsBySeries()));
+    @Operation(summary = "按系列分组获取漫画", description = "返回按系列分组的漫画列表，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<ComicSeries>>> getComicsBySeries(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        List<ComicSeries> allSeries = service.getComicsBySeries();
+        long total = allSeries.size();
+        int start = page * size;
+        int end = Math.min(start + size, allSeries.size());
+        List<ComicSeries> paged = start < allSeries.size() ? allSeries.subList(start, end) : List.of();
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.of(paged, page, size, total)));
     }
 
     @GetMapping("/{id:\\d+}")
@@ -83,31 +82,28 @@ public class ComicController {
 
     @GetMapping("/search/title")
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索漫画")
-    public ResponseEntity<ApiResponse<List<ComicDTO>>> searchByTitle(
-            @Parameter(description = "搜索关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(
-                service.searchByTitle(q).stream()
-                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
-                        .toList()));
+    public ResponseEntity<ApiResponse<PageResponse<ComicDTO>>> searchByTitle(
+            @Parameter(description = "搜索关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.searchByTitle(q, page, size)));
     }
 
     @GetMapping("/search/author")
     @Operation(summary = "按作者搜索", description = "根据作者名称模糊搜索漫画")
-    public ResponseEntity<ApiResponse<List<ComicDTO>>> searchByAuthor(
-            @Parameter(description = "作者名称关键词") @RequestParam String q) {
-        return ResponseEntity.ok(ApiResponse.success(
-                service.searchByAuthor(q).stream()
-                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
-                        .toList()));
+    public ResponseEntity<ApiResponse<PageResponse<ComicDTO>>> searchByAuthor(
+            @Parameter(description = "作者名称关键词") @RequestParam String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.searchByAuthor(q, page, size)));
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏列表", description = "返回所有已收藏的漫画")
-    public ResponseEntity<ApiResponse<List<ComicDTO>>> getFavorites() {
-        return ResponseEntity.ok(ApiResponse.success(
-                service.getFavorites().stream()
-                        .map(c -> ComicDTO.fromEntity(c, hasCover(c)))
-                        .toList()));
+    @Operation(summary = "获取收藏列表", description = "返回已收藏的漫画，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<ComicDTO>>> getFavorites(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.success(service.getFavorites(page, size)));
     }
 
     @PutMapping("/{id:\\d+}/favorite")

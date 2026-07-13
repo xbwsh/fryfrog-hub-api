@@ -1,5 +1,6 @@
 package com.fryfrog.hub.comic.service;
 
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
@@ -12,6 +13,7 @@ import com.fryfrog.hub.comic.repository.ComicRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import org.springframework.transaction.annotation.Transactional;
@@ -40,7 +42,7 @@ public class ComicMetadataService {
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final MediaLibraryService mediaLibraryService;
 
-    @Value("${hub.comic.root-paths:}")
+    @Value("${comic.root-paths:}")
     private String rootPathsConfig;
 
     public List<String> getRootPaths() {
@@ -75,12 +77,36 @@ public class ComicMetadataService {
         return repository.findByTitleContainingIgnoreCase(title);
     }
 
+    public PageResponse<ComicDTO> searchByTitle(String title, int page, int size) {
+        var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
+    }
+
     public List<Comic> searchByAuthor(String author) {
         return repository.findByAuthorContainingIgnoreCase(author);
     }
 
+    public PageResponse<ComicDTO> searchByAuthor(String author, int page, int size) {
+        var result = repository.findByAuthorContainingIgnoreCase(author, PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
+    }
+
     public List<Comic> getFavorites() {
         return repository.findByFavoriteTrue();
+    }
+
+    public PageResponse<ComicDTO> getFavorites(int page, int size) {
+        var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
+        var dtos = result.getContent().stream()
+                .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
+                .toList();
+        return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public Comic setFavorite(Long id, boolean status) {
@@ -163,6 +189,11 @@ public class ComicMetadataService {
             }
             series.setCoverArtPath(coverPath);
             series.setHasCover(coverPath != null);
+            if (Boolean.TRUE.equals(series.getHasCover())) {
+                try {
+                    series.setCoverUrl("/api/v1/comic/series/cover?series=" + java.net.URLEncoder.encode(entry.getKey(), "UTF-8"));
+                } catch (Exception ignored) {}
+            }
 
             Optional<Comic> withSerialization = entry.getValue().stream()
                     .filter(c -> c.getSerializationStart() != null && !c.getSerializationStart().isBlank())

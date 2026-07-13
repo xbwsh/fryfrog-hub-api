@@ -32,8 +32,6 @@ public class SystemSettingService {
     }
 
     private static final Map<String, String> DEFAULT_SETTINGS = Map.ofEntries(
-            // TMDB
-            entry("tmdb.api-key", ""),
             // Scrape (全局开关)
             entry("scrape.auto-scrape", "true"),
             // Watcher
