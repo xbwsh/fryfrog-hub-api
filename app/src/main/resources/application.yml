@@ -38,8 +38,7 @@ comic:
 
 video:
   root-paths: ${VIDEO_ROOT_PATHS:}
-  ffprobe-path: ${FFMPEG_FFPROBE_PATH:ffprobe}
-  ffmpeg-path: ${FFMPEG_FFMPEG_PATH:ffmpeg}
+  ffmpeg-path: ${FFMPEG_PATH:}
 
 ebook:
   root-paths: ${EBOOK_ROOT_PATHS:}

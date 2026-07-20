@@ -17,8 +17,8 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
-import com.fryfrog.hub.video.service.MediaInfoService;
 import com.fryfrog.hub.video.service.NfoService;
+import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -58,7 +58,7 @@ public class VideoController {
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
     private final WatchProgressService watchProgressService;
-    private final MediaInfoService mediaInfoService;
+    private final TranscodingService transcodingService;
     private final VideoActorRepository actorRepository;
     private final VideoRepository videoRepository;
     private final ScrapeProgressService scrapeProgressService;
@@ -415,46 +415,67 @@ public class VideoController {
         }
     }
 
-    @GetMapping("/{id:\\d+}/media-info")
-    @Operation(summary = "获取媒体技术信息", description = "使用 ffprobe 分析视频的编码、分辨率、帧率等技术信息")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getMediaInfo(
-            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
+    @GetMapping("/{id:\\d+}/stream/transcode")
+    @Operation(summary = "视频转码流播放", description = "实时转码播放，支持 1080p/720p/480p 质量选择")
+    public void streamVideoTranscoded(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "转码质量", example = "1080p") @RequestParam(defaultValue = "1080p") String quality,
+            @Parameter(description = "最大码率", example = "8M") @RequestParam(required = false) String maxBitrate,
+            jakarta.servlet.http.HttpServletResponse response) throws Exception {
+
+        log.debug("[Transcode] Request: id={}, quality={}, maxBitrate={}", id, quality, maxBitrate);
+
+        if (!transcodingService.isAvailable()) {
+            log.warn("[Transcode] FFmpeg not available");
+            response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Transcoding not available");
+            return;
+        }
+
         Video video = service.getVideoById(id);
-        MediaInfoService.MediaInfo info = mediaInfoService.extractMediaInfo(video.getFilePath());
+        File videoFile = new File(video.getFilePath());
 
-        Map<String, Object> result = new java.util.HashMap<>();
-        result.put("videoCodec", info.videoCodec != null ? info.videoCodec : "unknown");
-        result.put("videoCodecLong", info.videoCodecLong != null ? info.videoCodecLong : "");
-        result.put("audioCodec", info.audioCodec != null ? info.audioCodec : "unknown");
-        result.put("audioCodecLong", info.audioCodecLong != null ? info.audioCodecLong : "");
-        result.put("audioChannels", info.audioChannels);
-        result.put("audioSampleRate", info.audioSampleRate != null ? info.audioSampleRate : "");
-        result.put("resolution", info.resolution != null ? info.resolution : "unknown");
-        result.put("frameRate", info.frameRate);
-        result.put("bitrateKbps", info.bitrateKbps);
-        result.put("durationSeconds", info.durationSeconds);
-        result.put("durationMinutes", info.durationMinutes);
-        result.put("format", info.formatName != null ? info.formatName : "unknown");
+        if (!videoFile.exists()) {
+            log.warn("[Transcode] File not found: {}", video.getFilePath());
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
 
-        return ResponseEntity.ok(ApiResponse.success(result));
-    }
+        log.debug("[Transcode] Starting transcode: {} -> {} @ {}", videoFile.getAbsolutePath(), quality, maxBitrate);
 
-    @GetMapping("/{id:\\d+}/subtitles")
-    @Operation(summary = "获取内嵌字幕列表", description = "列出视频中所有内嵌字幕轨道（语言、编码等）")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSubtitles(
-            @Parameter(description = "视频ID") @PathVariable Long id) throws Exception {
-        Video video = service.getVideoById(id);
-        List<Map<String, Object>> tracks = mediaInfoService.getSubtitleTracks(video.getFilePath());
-        return ResponseEntity.ok(ApiResponse.success(tracks));
-    }
+        response.setContentType("video/mp4");
+        response.setHeader("Accept-Ranges", "none");
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("Connection", "keep-alive");
+        response.setHeader("X-Accel-Buffering", "no");
 
-    @GetMapping("/{id:\\d+}/subtitle/external")
-    @Operation(summary = "获取外挂字幕列表", description = "列出视频同目录下的外挂字幕文件（.srt/.ass/.ssa等）")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getExternalSubtitles(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        Video video = service.getVideoById(id);
-        List<Map<String, Object>> subs = mediaInfoService.getExternalSubtitles(video.getFilePath());
-        return ResponseEntity.ok(ApiResponse.success(subs));
+        try {
+            TranscodingService.TranscodeResult result = transcodingService.transcode(videoFile.getAbsolutePath(), quality, maxBitrate);
+            log.debug("[Transcode] FFmpeg process started, streaming...");
+            try {
+                var os = response.getOutputStream();
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytes = 0;
+                while ((bytesRead = result.inputStream().read(buffer)) != -1) {
+                    os.write(buffer, 0, bytesRead);
+                    os.flush();
+                    totalBytes += bytesRead;
+                }
+                log.debug("[Transcode] Streaming complete, total bytes: {}", totalBytes);
+            } finally {
+                result.close();
+            }
+        } catch (IOException e) {
+            // 客户端断开连接（如切换画质）是正常行为
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("Connection reset") || msg.contains("Broken pipe") || msg.contains("flush"))) {
+                log.debug("[Transcode] Client disconnected (likely quality switch)");
+            } else {
+                log.error("[Transcode] IO error: {}", msg);
+            }
+        } catch (Exception e) {
+            log.error("[Transcode] Error during transcoding: {}", e.getMessage(), e);
+        }
     }
 
     @GetMapping("/{id:\\d+}/playlist.m3u")

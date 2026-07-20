@@ -59,6 +59,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.matches(".*/actor/.*/image")
                 || path.matches(".*/image")
                 || path.matches(".*/stream")
+                || path.matches(".*/stream/transcode")
                 || path.matches(".*/subtitle/vtt");
     }
 }

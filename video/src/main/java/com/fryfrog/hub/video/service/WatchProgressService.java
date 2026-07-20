@@ -38,13 +38,6 @@ public class WatchProgressService {
     public WatchProgress saveProgress(Long videoId, Double positionSeconds, Double durationSeconds) {
         Video video = videoService.getVideoById(videoId);
 
-        // 用 ffprobe 的精确时长覆盖前端传来的可能不准确的值
-        Double realDuration = video.getDurationSeconds();
-        if (realDuration != null && realDuration > 0
-                && (durationSeconds == null || durationSeconds <= 0 || durationSeconds < realDuration * 0.5)) {
-            durationSeconds = realDuration;
-        }
-
         WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
         progress.setVideo(video);
         progress.setPositionSeconds(positionSeconds);

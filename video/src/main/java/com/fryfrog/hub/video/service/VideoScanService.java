@@ -19,7 +19,7 @@ import java.util.stream.Stream;
 
 /**
  * 视频扫描服务：负责发现视频文件、提取基础元数据、批量入库。
- * 所有 I/O 操作（文件扫描、ffprobe）在写锁外执行，只在 DB 批量写入时短暂持有写锁。
+ * 所有 I/O 操作在写锁外执行，只在 DB 批量写入时短暂持有写锁。
  */
 @Service
 @RequiredArgsConstructor
@@ -29,7 +29,6 @@ public class VideoScanService {
     private final VideoRepository repository;
     private final VideoActorRepository actorRepository;
     private final SeriesService seriesService;
-    private final MediaInfoService mediaInfoService;
     private final NfoService nfoService;
     private final MediaLibraryService mediaLibraryService;
 
@@ -87,16 +86,7 @@ public class VideoScanService {
         });
         log.debug("[Scan] Saved {} videos to database", videos.size());
 
-        // Phase 5: ffprobe 分析技术元数据（无锁，可并发）
-        for (Video video : videos) {
-            try {
-                mediaInfoService.updateVideoMediaInfo(video);
-            } catch (Exception e) {
-                log.debug("[Scan] Failed to analyze media info for {}: {}", video.getFileName(), e.getMessage());
-            }
-        }
-
-        // Phase 6: 自动分组系列（需要写锁）
+        // Phase 5: 自动分组系列（需要写锁）
         DatabaseWriteLock.runInWriteLock(this::autoGroupSeries);
 
         long elapsed = System.currentTimeMillis() - startTime;
