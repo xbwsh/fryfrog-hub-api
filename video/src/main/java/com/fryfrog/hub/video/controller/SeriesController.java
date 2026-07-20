@@ -94,23 +94,29 @@ public class SeriesController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "获取系列详情", description = "根据ID获取系列详情，包含所有剧集。也支持独立视频ID")
+    @Operation(summary = "获取系列详情", description = "根据ID获取系列详情，包含所有剧集。也支持独立视频ID。可通过type参数指定查询类型（series/standalone），避免ID冲突时查错。")
     public ResponseEntity<ApiResponse<SeriesDTO>> getSeriesById(
-            @Parameter(description = "系列ID或独立视频ID") @PathVariable Long id) {
-        var series = seriesService.getSeriesById(id);
-        if (series.isPresent()) {
-            VideoSeries s = series.get();
-            List<Long> videoIds = s.getVideos().stream().map(Video::getId).toList();
-            Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
-            List<VideoDTO> episodes = s.getVideos().stream()
-                    .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
-                    .collect(Collectors.toList());
-            return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(s, episodes)));
+            @Parameter(description = "系列ID或独立视频ID") @PathVariable Long id,
+            @Parameter(description = "条目类型: series=系列, standalone=独立视频，不传时自动判断")
+            @RequestParam(required = false) String type) {
+        if (!"standalone".equals(type)) {
+            var series = seriesService.getSeriesById(id);
+            if (series.isPresent()) {
+                VideoSeries s = series.get();
+                List<Long> videoIds = s.getVideos().stream().map(Video::getId).toList();
+                Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+                List<VideoDTO> episodes = s.getVideos().stream()
+                        .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
+                        .collect(Collectors.toList());
+                return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(s, episodes)));
+            }
         }
-        var video = videoService.getVideoById(id);
-        if (video != null && video.getSeries() == null) {
-            WatchProgress progress = watchProgressService.getProgress(id);
-            return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromStandaloneVideo(video, toVideoDTO(video, progress))));
+        if (!"series".equals(type)) {
+            var video = videoService.getVideoById(id);
+            if (video != null && video.getSeries() == null) {
+                WatchProgress progress = watchProgressService.getProgress(id);
+                return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromStandaloneVideo(video, toVideoDTO(video, progress))));
+            }
         }
         throw new RuntimeException("Series not found: " + id);
     }
