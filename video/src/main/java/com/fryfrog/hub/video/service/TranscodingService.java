@@ -20,6 +20,7 @@ public class TranscodingService {
 
     private String ffmpegPath;
     private String ffprobePath;
+    private String libraryDir;
     private boolean ffmpegAvailable = false;
 
     @PostConstruct
@@ -33,6 +34,7 @@ public class TranscodingService {
             if (paths != null) {
                 ffmpegPath = paths.ffmpeg();
                 ffprobePath = paths.ffprobe();
+                libraryDir = paths.libraryDir();
                 log.info("Using bundled FFmpeg: {}, ffprobe: {}", ffmpegPath, ffprobePath);
             } else {
                 ffmpegPath = "ffmpeg";
@@ -54,9 +56,11 @@ public class TranscodingService {
             String[] cmd = isWindows()
                     ? new String[]{"cmd", "/c", ffmpegPath, "-version"}
                     : new String[]{ffmpegPath, "-version"};
-            Process p = new ProcessBuilder(cmd)
-                    .redirectErrorStream(true)
-                    .start();
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            if (libraryDir != null) {
+                pb.environment().put(getLibraryPathEnv(), libraryDir);
+            }
+            Process p = pb.redirectErrorStream(true).start();
             boolean finished = p.waitFor(5, TimeUnit.SECONDS);
             if (!finished) p.destroyForcibly();
             return finished && p.exitValue() == 0;
@@ -64,6 +68,13 @@ public class TranscodingService {
             log.debug("FFmpeg check failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    private String getLibraryPathEnv() {
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("mac")) return "DYLD_LIBRARY_PATH";
+        if (os.contains("win")) return "PATH";
+        return "LD_LIBRARY_PATH";
     }
 
     public boolean isAvailable() {
@@ -86,6 +97,9 @@ public class TranscodingService {
         log.debug("FFmpeg command: {}", String.join(" ", command));
 
         ProcessBuilder pb = new ProcessBuilder(command);
+        if (libraryDir != null) {
+            pb.environment().put(getLibraryPathEnv(), libraryDir);
+        }
         pb.redirectErrorStream(false);
         Process process;
 
@@ -127,9 +141,11 @@ public class TranscodingService {
                     "-of", "default=noprint_wrappers=1:nokey=1",
                     inputPath};
 
-            Process p = new ProcessBuilder(cmd)
-                    .redirectErrorStream(true)
-                    .start();
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            if (libraryDir != null) {
+                pb.environment().put(getLibraryPathEnv(), libraryDir);
+            }
+            Process p = pb.redirectErrorStream(true).start();
 
             String output;
             try (var is = p.getInputStream()) {

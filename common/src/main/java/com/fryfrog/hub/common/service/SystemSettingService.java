@@ -54,7 +54,6 @@ public class SystemSettingService {
         for (SystemSetting setting : settings) {
             cache.put(setting.getKey(), setting.getValue());
         }
-        log.info("Loaded {} system settings from database", settings.size());
     }
 
     private void seedDefaults() {
