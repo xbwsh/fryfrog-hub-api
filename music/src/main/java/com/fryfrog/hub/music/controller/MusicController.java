@@ -236,6 +236,9 @@ public class MusicController {
     public ResponseEntity<ApiResponse<String>> getLyrics(
             @Parameter(description = "曲目ID") @PathVariable Long id) {
         MusicTrack track = service.getTrackById(id);
+        if (track.getFilePath() == null) {
+            return ResponseEntity.ok(ApiResponse.success(null));
+        }
         Path audioPath = Paths.get(track.getFilePath());
         Path lyricsPath = audioPath.getParent().resolve(
                 audioPath.getFileName().toString().replaceAll("\\.[^.]+$", ".lrc"));
