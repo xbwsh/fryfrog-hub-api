@@ -6,6 +6,19 @@ A unified media backend API service supporting metadata management and streaming
 
 ## Features
 
+### Authentication
+
+- **Password Login** - Password verification with Token generation
+- **Token Management** - Logout and status query support
+- **Configurable** - Enable/disable authentication via environment variables
+
+### Media Library Management
+
+- **Library CRUD** - Dynamically add, edit, delete media directories
+- **Enable/Disable** - Enable or pause library scanning as needed
+- **Unified Scanning** - One-click scan of all enabled libraries
+- **Directory Browsing** - Browse server directories for frontend directory selector
+
 ### Music Module
 
 - **Streaming Playback** - Supports HTTP Range requests for resume playback
@@ -22,6 +35,7 @@ A unified media backend API service supporting metadata management and streaming
 - **NFO Generation** - Generates Kodi-compatible NFO metadata files
 - **Cover Download** - Automatically downloads poster and fanart images
 - **Episode Management** - Auto-detects season/episode numbers, groups by series
+- **Series Management** - Dedicated video series API with cover and fanart
 - **Watch Progress** - Records playback position for resume
 - **File Watching** - Auto-detects new video files and indexes them
 
@@ -43,17 +57,29 @@ A unified media backend API service supporting metadata management and streaming
 - **Cover Display** - Auto-generates title placeholder when no cover available
 - **Reading Progress** - Records current reading position for resume
 
+### Media Series Management
+
+- **Series Grouping** - Auto-groups comics/ebooks by series
+- **Character Management** - Series character info and image management
+- **Favorites** - Support series favorites
+- **Re-scrape** - Re-fetch series synopsis, cover, and other metadata
+
 ### Common Features
 
 - **Swagger Docs** - Auto-generated API documentation with online testing
 - **CORS Support** - Pre-configured for frontend integration
 - **Docker Deployment** - Dockerfile and docker-compose.yml included
 - **SQLite Storage** - Lightweight database, no external setup required
+- **Virtual Threads** - Java 21 virtual threads enabled for improved concurrency
+- **Periodic Scanning** - Configurable periodic scan interval for media library updates
+- **System Settings** - Runtime dynamic configuration management
+- **Log Export** - Export log files for developer troubleshooting
 
 ## Tech Stack
 
 - Java 21 + Spring Boot 3.2.x
 - Spring Data JPA + SQLite
+- Java 21 Virtual Threads
 - jaudiotagger (music metadata extraction)
 - Thumbnails4j (comic thumbnails)
 - Apache Tika (comic/ebook metadata extraction)
@@ -66,10 +92,10 @@ A unified media backend API service supporting metadata management and streaming
 
 ```
 fryfrog-hub-api/
-├── app/             # Spring Boot entry point
+├── app/             # Spring Boot entry point + global config/controllers
 ├── common/          # Shared entities, DTOs, utilities
 ├── music/           # Music module (jaudiotagger)
-├── video/           # Video module (TMDB scraping + NFO generation)
+├── video/           # Video module (TMDB scraping + NFO generation + series management)
 ├── comic/           # Comic module (CBZ/CBR + thumbnails)
 ├── ebook/           # Ebook module (EPUB/PDF + chapter detection)
 └── pom.xml          # Parent POM
@@ -119,17 +145,17 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 | Container Path | Purpose | Example Host Path |
 |---|---|---|
-| `/data` | Database | `/vol1/docker/fryfrog-hub/data` |
-| `/data/media/music` | Music | `/vol1/1000/music` |
-| `/data/media/video` | Videos | `/vol2/1000/Media` |
-| `/data/media/comic` | Comics | `/vol1/1000/comic` |
-| `/data/media/ebook` | Ebooks | `/vol1/1000/ebook` |
+| `/app/data` | Database | `/vol1/docker/fryfrog-hub/data` |
+| `/app/data/media/music` | Music | `/vol1/1000/music` |
+| `/app/data/media/video` | Videos | `/vol2/1000/Media` |
+| `/app/data/media/comic` | Comics | `/vol1/1000/comic` |
+| `/app/data/media/ebook` | Ebooks | `/vol1/1000/ebook` |
 
-5. Optional environment variables (set in UI):
+4. Optional environment variables (set in UI):
    - `TMDB_API_KEY` — TMDB API Key for video scraping
-   - `PROXY_HOST` — Proxy address (e.g., `127.0.0.1`)
-   - `PROXY_PORT` — Proxy port (e.g., `7890`)
-6. Access `http://NAS_IP:20058/swagger-ui.html` after startup
+   - `AUTH_PASSWORD` — Login password (default `1234`)
+   - `AUTH_ENABLED` — Enable/disable authentication (default `true`)
+5. Access `http://NAS_IP:20058/swagger-ui.html` after startup
 
 **docker-compose Deployment**
 
@@ -141,11 +167,12 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - DB_PATH=/data/fryfrog.db
+      - AUTH_PASSWORD=your_password
+      - TMDB_API_KEY=your_tmdb_api_key
     volumes:
-      - ./db:/data
-      # - /your/music/path:/data/media/music
-      # - /your/video/path:/data/media/video
+      - ./data:/app/data
+      # - /your/music/path:/app/data/media/music
+      # - /your/video/path:/app/data/media/video
 ```
 
 ```bash
@@ -163,8 +190,7 @@ export VIDEO_ROOT_PATHS=/path/to/your/video
 export COMIC_ROOT_PATHS=/path/to/your/comic
 export EBOOK_ROOT_PATHS=/path/to/your/ebook
 export TMDB_API_KEY=your_tmdb_api_key  # Optional, for video scraping
-export PROXY_HOST=127.0.0.1            # Optional, proxy address
-export PROXY_PORT=7890                 # Optional, proxy port
+export AUTH_PASSWORD=your_password      # Optional, login password
 
 # Start the application
 java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
@@ -175,6 +201,28 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 Access Swagger UI after starting the application:
 
 http://localhost:20058/swagger-ui.html
+
+### Authentication Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| POST | `/api/v1/auth/login` | Login (returns Token) |
+| POST | `/api/v1/auth/logout` | Logout (invalidate Token) |
+| GET | `/api/v1/auth/status` | Auth status (check if login required) |
+
+### Media Library Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/media-libraries` | Get all libraries |
+| GET | `/api/v1/media-libraries/{id}` | Get library details |
+| POST | `/api/v1/media-libraries` | Create library |
+| PUT | `/api/v1/media-libraries/{id}` | Update library |
+| DELETE | `/api/v1/media-libraries/{id}` | Delete library |
+| PUT | `/api/v1/media-libraries/{id}/toggle` | Enable/disable library |
+| POST | `/api/v1/media-libraries/scan` | Scan all enabled libraries |
+| POST | `/api/v1/media-libraries/{id}/scan` | Scan specific library |
+| GET | `/api/v1/media-libraries/browse` | Browse server directories |
 
 ### Music Endpoints
 
@@ -206,6 +254,15 @@ http://localhost:20058/swagger-ui.html
 | POST | `/api/v1/video/tmdb/auto-scrape` | Auto-scrape all videos |
 | POST | `/api/v1/video/scan?path=xxx` | Scan video directory |
 
+### Video Series Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/video/series` | Get all series (including standalone) |
+| GET | `/api/v1/video/series/{id}` | Get series details |
+| GET | `/api/v1/video/series/{id}/cover` | Get series cover |
+| GET | `/api/v1/video/series/{id}/fanart` | Get series fanart |
+
 ### Comic Endpoints
 
 | Method | Path | Description |
@@ -236,6 +293,33 @@ http://localhost:20058/swagger-ui.html
 | PUT | `/api/v1/ebook/{id}/progress` | Save reading progress |
 | POST | `/api/v1/ebook/scan?path=xxx` | Scan ebook directory |
 
+### Media Series Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/media/series` | Get series list (filterable by type) |
+| GET | `/api/v1/media/series/{id}` | Get series details |
+| GET | `/api/v1/media/series/{id}/cover` | Get series cover |
+| GET | `/api/v1/media/series/{id}/characters` | Get series characters |
+| GET | `/api/v1/media/series/character/{id}/image` | Get character image |
+| PUT | `/api/v1/media/series/{id}/favorite` | Toggle series favorite |
+| POST | `/api/v1/media/series/{id}/rescrape` | Re-scrape series |
+
+### Settings Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/settings` | Get all settings |
+| GET | `/api/v1/settings/{key}` | Get single setting |
+| PUT | `/api/v1/settings/{key}` | Update setting |
+
+### Log Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/logs` | List available log files |
+| GET | `/api/v1/logs/{fileName}` | Export log file |
+
 ### Response Format
 
 ```json
@@ -252,14 +336,22 @@ http://localhost:20058/swagger-ui.html
 
 | Variable | Default | Description |
 |------|--------|------|
-| `MUSIC_ROOT_PATHS` | `./media-library/music` | Music files directory |
-| `VIDEO_ROOT_PATHS` | `./media-library/video` | Video files directory |
-| `COMIC_ROOT_PATHS` | `./media-library/comic` | Comic files directory |
-| `EBOOK_ROOT_PATHS` | `./media-library/ebook` | Ebook files directory |
+| `SERVER_PORT` | `20058` | Server port |
+| `DB_PATH` | `./fryfrog.db` | SQLite database path |
+| `AUTH_ENABLED` | `true` | Enable/disable authentication |
+| `AUTH_PASSWORD` | `1234` | Login password |
+| `MUSIC_ROOT_PATHS` | - | Music files directory |
+| `VIDEO_ROOT_PATHS` | - | Video files directory |
+| `COMIC_ROOT_PATHS` | - | Comic files directory |
+| `EBOOK_ROOT_PATHS` | - | Ebook files directory |
 | `TMDB_API_KEY` | - | TMDB API Key (for video scraping) |
-| `TMDB_AUTO_SCRAPE` | `false` | Auto-scrape videos on scan |
-| `PROXY_HOST` | - | Proxy address |
-| `PROXY_PORT` | - | Proxy port |
+| `TMDB_LANGUAGE` | `zh-CN` | TMDB language |
+| `TMDB_IMAGE_SIZE` | `original` | TMDB image size |
+| `TMDB_INCLUDE_ADULT` | `true` | TMDB include adult content |
+| `WATCHER_PERIODIC_SCAN` | `true` | Enable periodic scanning |
+| `PERIODIC_SCAN_INTERVAL` | `30` | Periodic scan interval (minutes) |
+| `FFMPEG_PATH` | - | FFmpeg path (optional, uses system PATH if not set) |
+| `LOG_LEVEL` | `INFO` | Log level |
 
 ## Supported Formats
 
@@ -271,6 +363,27 @@ http://localhost:20058/swagger-ui.html
 | Ebook | EPUB, PDF, MOBI, AZW, AZW3, FB2, TXT |
 
 ## Development Guide
+
+### Prerequisites
+
+- JDK 21+
+- Maven 3.9+
+- Docker (optional, for docker-compose deployment)
+
+### Local Development
+
+```bash
+# Clone the project
+git clone https://github.com/xbwsh/fryfrog-hub-api.git
+cd fryfrog-hub-api
+
+# Start the application (dev mode)
+mvn spring-boot:run -pl app
+
+# Or build and run
+mvn clean package -DskipTests
+java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
+```
 
 ### Running Tests
 
@@ -294,6 +407,8 @@ mvn test -pl music -Dtest=MusicControllerStreamingTest
 - REST endpoints: `/api/v1/{resource}`
 - Response format: Unified `ApiResponse<T>`
 - Entities extend `BaseEntity` (includes id, createdAt, updatedAt)
+- Authentication: Custom Bearer Token auth (not Spring Security)
+- Exception handling: `@RestControllerAdvice` global exception handler
 
 ## License
 

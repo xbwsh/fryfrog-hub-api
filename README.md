@@ -6,6 +6,19 @@
 
 ## 功能特性 / Features
 
+### 认证系统 / Authentication
+
+-   **密码登录** - 支持密码验证，返回 Token
+-   **Token 管理** - 支持登出、状态查询
+-   **可配置** - 通过环境变量启用/禁用认证
+
+### 媒体资源库管理 / Media Library Management
+
+-   **资源库 CRUD** - 动态添加、编辑、删除媒体目录
+-   **启用/禁用** - 按需启用或暂停扫描资源库
+-   **统一扫描** - 一键扫描所有启用的资源库
+-   **目录浏览** - 浏览服务器目录，用于前端目录选择器
+
 ### 音乐模块 / Music Module
 
 -   **流媒体播放** - 支持 Range 请求，实现断点续播
@@ -22,6 +35,7 @@
 -   **NFO 生成** - 生成 Kodi 兼容的 NFO 元数据文件
 -   **封面下载** - 自动下载竖屏海报和横屏背景图
 -   **剧集管理** - 自动识别季数/集数，按系列分组
+-   **系列管理** - 独立的视频系列 API，支持系列封面和背景图
 -   **观看进度** - 记录播放位置，支持续播
 -   **文件监控** - 自动检测新视频文件并索引
 
@@ -43,17 +57,29 @@
 -   **封面显示** - 无封面时自动生成标题占位图
 -   **阅读进度** - 记录当前阅读位置，支持续读
 
+### 媒体系列管理 / Media Series Management
+
+-   **系列分组** - 漫画/电子书按系列自动分组
+-   **角色管理** - 系列角色信息和图片管理
+-   **收藏功能** - 支持收藏系列
+-   **重新刮削** - 重新获取系列简介、封面等元数据
+
 ### 通用功能 / Common Features
 
 -   **Swagger 文档** - 自动生成 API 文档，支持在线测试
 -   **CORS 支持** - 已配置跨域，可直接对接前端
 -   **Docker 部署** - 提供 Dockerfile 和 docker-compose.yml，支持飞牛 NAS 一键部署
 -   **SQLite 存储** - 轻量级数据库，无需额外安装
+-   **虚拟线程** - 启用 Java 21 虚拟线程，提升并发性能
+-   **定时扫描** - 支持配置定时扫描间隔，自动更新媒体库
+-   **系统设置** - 运行时动态配置管理
+-   **日志导出** - 导出日志文件，方便反馈开发者排查问题
 
 ## 技术栈 / Tech Stack
 
 - Java 21 + Spring Boot 3.2.x
 - Spring Data JPA + SQLite
+- Java 21 虚拟线程（Virtual Threads）
 - jaudiotagger（音乐元数据提取）
 - Thumbnails4j（漫画缩略图）
 - Apache Tika（漫画/电子书元数据提取）
@@ -66,10 +92,10 @@
 
 ```
 fryfrog-hub-api/
-├── app/             # Spring Boot 启动模块
+├── app/             # Spring Boot 启动模块 + 全局配置/控制器
 ├── common/          # 共享实体、DTO、工具类
 ├── music/           # 音乐模块（jaudiotagger）
-├── video/           # 视频模块（TMDB 刮削 + NFO 生成）
+├── video/           # 视频模块（TMDB 刮削 + NFO 生成 + 系列管理）
 ├── comic/           # 漫画模块（CBZ/CBR + 缩略图）
 ├── ebook/           # 电子书模块（EPUB/PDF + 章节识别）
 └── pom.xml          # Parent POM
@@ -120,17 +146,17 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 
 | 容器路径 | 用途 | 示例宿主机路径 |
 |---|---|---|
-| `/data` | 数据库 | `/vol1/docker/fryfrog-hub/data` |
-| `/data/media/music` | 音乐 | `/vol1/1000/music` |
-| `/data/media/video` | 视频 | `/vol2/1000/Media` |
-| `/data/media/comic` | 漫画 | `/vol1/1000/comic` |
-| `/data/media/ebook` | 电子书 | `/vol1/1000/ebook` |
+| `/app/data` | 数据库 | `/vol1/docker/fryfrog-hub/data` |
+| `/app/data/media/music` | 音乐 | `/vol1/1000/music` |
+| `/app/data/media/video` | 视频 | `/vol2/1000/Media` |
+| `/app/data/media/comic` | 漫画 | `/vol1/1000/comic` |
+| `/app/data/media/ebook` | 电子书 | `/vol1/1000/ebook` |
 
-5. 可选环境变量（在 UI 中设置）：
+4. 可选环境变量（在 UI 中设置）：
    - `TMDB_API_KEY` — TMDB API Key，用于视频刮削
-   - `PROXY_HOST` — 代理地址（如 `127.0.0.1`）
-   - `PROXY_PORT` — 代理端口（如 `7890`）
-6. 启动后访问 `http://NAS_IP:20058/swagger-ui.html` 验证
+   - `AUTH_PASSWORD` — 登录密码（默认 `1234`）
+   - `AUTH_ENABLED` — 是否启用认证（默认 `true`）
+5. 启动后访问 `http://NAS_IP:20058/swagger-ui.html` 验证
 
 **docker-compose 部署**
 
@@ -142,11 +168,12 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - DB_PATH=/data/fryfrog.db
+      - AUTH_PASSWORD=your_password
+      - TMDB_API_KEY=your_tmdb_api_key
     volumes:
-      - ./db:/data
-      # - /your/music/path:/data/media/music
-      # - /your/video/path:/data/media/video
+      - ./data:/app/data
+      # - /your/music/path:/app/data/media/music
+      # - /your/video/path:/app/data/media/video
 ```
 
 ```bash
@@ -164,8 +191,7 @@ export VIDEO_ROOT_PATHS=/path/to/your/video
 export COMIC_ROOT_PATHS=/path/to/your/comic
 export EBOOK_ROOT_PATHS=/path/to/your/ebook
 export TMDB_API_KEY=your_tmdb_api_key  # 可选，用于视频刮削
-export PROXY_HOST=127.0.0.1            # 可选，代理地址
-export PROXY_PORT=7890                 # 可选，代理端口
+export AUTH_PASSWORD=your_password      # 可选，登录密码
 
 # 启动应用
 java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
@@ -176,6 +202,28 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 启动应用后访问 Swagger UI：
 
 http://localhost:20058/swagger-ui.html
+
+### 认证接口 / Authentication Endpoints
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/auth/login` | 登录（输入密码，返回 Token） |
+| POST | `/api/v1/auth/logout` | 登出（注销当前 Token） |
+| GET | `/api/v1/auth/status` | 认证状态（前端判断是否需要登录） |
+
+### 媒体资源库接口 / Media Library Endpoints
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/media-libraries` | 获取所有资源库 |
+| GET | `/api/v1/media-libraries/{id}` | 获取资源库详情 |
+| POST | `/api/v1/media-libraries` | 创建资源库 |
+| PUT | `/api/v1/media-libraries/{id}` | 更新资源库 |
+| DELETE | `/api/v1/media-libraries/{id}` | 删除资源库 |
+| PUT | `/api/v1/media-libraries/{id}/toggle` | 启用/禁用资源库 |
+| POST | `/api/v1/media-libraries/scan` | 扫描所有启用的资源库 |
+| POST | `/api/v1/media-libraries/{id}/scan` | 扫描指定资源库 |
+| GET | `/api/v1/media-libraries/browse` | 浏览服务器目录 |
 
 ### 音乐接口 / Music Endpoints
 
@@ -207,6 +255,15 @@ http://localhost:20058/swagger-ui.html
 | POST | `/api/v1/video/tmdb/auto-scrape` | 自动刮削所有视频 |
 | POST | `/api/v1/video/scan?path=xxx` | 扫描视频目录 |
 
+### 视频系列接口 / Video Series Endpoints
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/video/series` | 获取所有系列（含独立电影） |
+| GET | `/api/v1/video/series/{id}` | 获取系列详情 |
+| GET | `/api/v1/video/series/{id}/cover` | 获取系列封面 |
+| GET | `/api/v1/video/series/{id}/fanart` | 获取系列背景图 |
+
 ### 漫画接口 / Comic Endpoints
 
 | 方法 | 路径 | 说明 |
@@ -237,6 +294,33 @@ http://localhost:20058/swagger-ui.html
 | PUT | `/api/v1/ebook/{id}/progress` | 保存阅读进度 |
 | POST | `/api/v1/ebook/scan?path=xxx` | 扫描电子书目录 |
 
+### 媒体系列接口 / Media Series Endpoints
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/media/series` | 获取系列列表（可按类型筛选） |
+| GET | `/api/v1/media/series/{id}` | 获取系列详情 |
+| GET | `/api/v1/media/series/{id}/cover` | 获取系列封面 |
+| GET | `/api/v1/media/series/{id}/characters` | 获取系列角色 |
+| GET | `/api/v1/media/series/character/{id}/image` | 获取角色图片 |
+| PUT | `/api/v1/media/series/{id}/favorite` | 切换系列收藏 |
+| POST | `/api/v1/media/series/{id}/rescrape` | 重新刮削系列 |
+
+### 系统设置接口 / Settings Endpoints
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/settings` | 获取所有设置 |
+| GET | `/api/v1/settings/{key}` | 获取单个设置 |
+| PUT | `/api/v1/settings/{key}` | 更新设置 |
+
+### 日志接口 / Log Endpoints
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/logs` | 列出可用的日志文件 |
+| GET | `/api/v1/logs/{fileName}` | 导出日志文件 |
+
 ### 响应格式 / Response Format
 
 ```json
@@ -253,35 +337,57 @@ http://localhost:20058/swagger-ui.html
 
 ```yaml
 server:
-  port: 20058
+  port: ${SERVER_PORT:20058}
+
+spring:
+  threads:
+    virtual:
+      enabled: true  # 启用虚拟线程
+
+auth:
+  enabled: ${AUTH_ENABLED:true}
+  password: ${AUTH_PASSWORD:1234}
+
+watcher:
+  periodic-scan: ${WATCHER_PERIODIC_SCAN:true}
+  periodic-scan-interval: ${PERIODIC_SCAN_INTERVAL:30}
 
 hub:
   music:
-    root-paths: ${MUSIC_ROOT_PATHS:./media-library/music}
-    supported-formats: mp3,flac,ogg,wav,aac,m4a
+    root-paths: ${MUSIC_ROOT_PATHS:}
   video:
-    root-paths: ${VIDEO_ROOT_PATHS:./media-library/video}
-    supported-formats: mp4,mkv,avi,mov,flv,wmv,webm,m4v
+    root-paths: ${VIDEO_ROOT_PATHS:}
   comic:
-    root-paths: ${COMIC_ROOT_PATHS:./media-library/comic}
-    supported-formats: cbz,cbr,zip,rar
+    root-paths: ${COMIC_ROOT_PATHS:}
   ebook:
-    root-paths: ${EBOOK_ROOT_PATHS:./media-library/ebook}
-    supported-formats: epub,pdf,mobi,azw,azw3,fb2,txt
+    root-paths: ${EBOOK_ROOT_PATHS:}
+
+tmdb:
+  api-key: ${TMDB_API_KEY:}
+  language: ${TMDB_LANGUAGE:zh-CN}
+  image-size: ${TMDB_IMAGE_SIZE:original}
 ```
 
 ### 环境变量 / Environment Variables
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MUSIC_ROOT_PATHS` | `./media-library/music` | 音乐文件目录 |
-| `VIDEO_ROOT_PATHS` | `./media-library/video` | 视频文件目录 |
-| `COMIC_ROOT_PATHS` | `./media-library/comic` | 漫画文件目录 |
-| `EBOOK_ROOT_PATHS` | `./media-library/ebook` | 电子书文件目录 |
+| `SERVER_PORT` | `20058` | 服务端口 |
+| `DB_PATH` | `./fryfrog.db` | SQLite 数据库路径 |
+| `AUTH_ENABLED` | `true` | 启用/禁用认证 |
+| `AUTH_PASSWORD` | `1234` | 登录密码 |
+| `MUSIC_ROOT_PATHS` | - | 音乐文件目录 |
+| `VIDEO_ROOT_PATHS` | - | 视频文件目录 |
+| `COMIC_ROOT_PATHS` | - | 漫画文件目录 |
+| `EBOOK_ROOT_PATHS` | - | 电子书文件目录 |
 | `TMDB_API_KEY` | - | TMDB API Key（视频刮削用） |
-| `TMDB_AUTO_SCRAPE` | `false` | 扫描时自动刮削视频 |
-| `PROXY_HOST` | - | 代理地址 |
-| `PROXY_PORT` | - | 代理端口 |
+| `TMDB_LANGUAGE` | `zh-CN` | TMDB 语言 |
+| `TMDB_IMAGE_SIZE` | `original` | TMDB 图片尺寸 |
+| `TMDB_INCLUDE_ADULT` | `true` | TMDB 是否包含成人内容 |
+| `WATCHER_PERIODIC_SCAN` | `true` | 启用定时扫描 |
+| `PERIODIC_SCAN_INTERVAL` | `30` | 定时扫描间隔（分钟） |
+| `FFMPEG_PATH` | - | FFmpeg 路径（可选，不配置则使用系统 PATH） |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
 
 ## 支持的格式 / Supported Formats
 
@@ -293,6 +399,27 @@ hub:
 | 电子书 | EPUB, PDF, MOBI, AZW, AZW3, FB2, TXT |
 
 ## 开发指南 / Development Guide
+
+### 环境要求 / Prerequisites
+
+- JDK 21+
+- Maven 3.9+
+- Docker（可选，用于 docker-compose 部署）
+
+### 本地开发 / Local Development
+
+```bash
+# 克隆项目
+git clone https://github.com/xbwsh/fryfrog-hub-api.git
+cd fryfrog-hub-api
+
+# 启动应用（开发环境）
+mvn spring-boot:run -pl app
+
+# 或者打包后运行
+mvn clean package -DskipTests
+java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
+```
 
 ### 运行测试 / Running Tests
 
@@ -316,6 +443,8 @@ mvn test -pl music -Dtest=MusicControllerStreamingTest
 - REST 端点：`/api/v1/{resource}`
 - 响应格式：统一使用 `ApiResponse<T>`
 - 实体继承 `BaseEntity`（包含 id、createdAt、updatedAt）
+- 认证：自定义 Bearer Token 认证（非 Spring Security）
+- 异常处理：`@RestControllerAdvice` 全局异常处理器
 
 ## License
 
