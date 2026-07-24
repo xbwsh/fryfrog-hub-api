@@ -141,21 +141,22 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 **飞牛 NAS / Docker UI 部署（推荐）**
 
 1. 拉取镜像：`ghcr.io/xbwsh/fryfrog-hub-api:latest`
-2. 创建容器，**网络模式选择 host**
+2. 创建容器，**网络模式选择 host** 或 **映射端口 20058**
 3. 添加挂载路径（在 UI 中配置你的实际路径）：
 
 | 容器路径 | 用途 | 示例宿主机路径 |
 |---|---|---|
-| `/app/data` | 数据库 | `/vol1/docker/fryfrog-hub/data` |
-| `/app/data/media/music` | 音乐 | `/vol1/1000/music` |
-| `/app/data/media/video` | 视频 | `/vol2/1000/Media` |
-| `/app/data/media/comic` | 漫画 | `/vol1/1000/comic` |
-| `/app/data/media/ebook` | 电子书 | `/vol1/1000/ebook` |
+| `/data` | 数据库 | `/vol1/docker/fryfrog-hub/db` |
+| `/data/media/music` | 音乐 | `/vol1/1000/music` |
+| `/data/media/video` | 视频 | `/vol2/1000/Media` |
+| `/data/media/comic` | 漫画 | `/vol1/1000/comic` |
+| `/data/media/ebook` | 电子书 | `/vol1/1000/ebook` |
 
-4. 可选环境变量（在 UI 中设置）：
-   - `TMDB_API_KEY` — TMDB API Key，用于视频刮削
-   - `AUTH_PASSWORD` — 登录密码（默认 `1234`）
-   - `AUTH_ENABLED` — 是否启用认证（默认 `true`）
+4. 设置环境变量：
+   - `DB_PATH=/data/fryfrog.db` — 数据库路径（必须）
+   - `TMDB_API_KEY` — TMDB API Key（可选，用于视频刮削）
+   - `AUTH_PASSWORD` — 登录密码（可选，默认 `1234`）
+   - `AUTH_ENABLED` — 是否启用认证（可选，默认 `true`）
 5. 启动后访问 `http://NAS_IP:20058/swagger-ui.html` 验证
 
 **docker-compose 部署**
@@ -166,14 +167,16 @@ services:
     image: ghcr.io/xbwsh/fryfrog-hub-api:latest
     container_name: fryfrog-hub-api
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "20058:20058"
     environment:
-      - AUTH_PASSWORD=your_password
-      - TMDB_API_KEY=your_tmdb_api_key
+      - DB_PATH=/data/fryfrog.db
     volumes:
-      - ./data:/app/data
-      # - /your/music/path:/app/data/media/music
-      # - /your/video/path:/app/data/media/video
+      - ./db:/data
+      # - /your/music/path:/data/media/music
+      # - /your/video/path:/data/media/video
+      # - /your/comic/path:/data/media/comic
+      # - /your/ebook/path:/data/media/ebook
 ```
 
 ```bash

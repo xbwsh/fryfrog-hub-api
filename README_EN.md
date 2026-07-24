@@ -140,21 +140,22 @@ java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
 **NAS / Docker UI Deployment (Recommended)**
 
 1. Pull the image: `ghcr.io/xbwsh/fryfrog-hub-api:latest`
-2. Create a container, **set network mode to host**
+2. Create a container, **set network mode to host** or **map port 20058**
 3. Add volume mounts (configure your actual paths in the UI):
 
 | Container Path | Purpose | Example Host Path |
 |---|---|---|
-| `/app/data` | Database | `/vol1/docker/fryfrog-hub/data` |
-| `/app/data/media/music` | Music | `/vol1/1000/music` |
-| `/app/data/media/video` | Videos | `/vol2/1000/Media` |
-| `/app/data/media/comic` | Comics | `/vol1/1000/comic` |
-| `/app/data/media/ebook` | Ebooks | `/vol1/1000/ebook` |
+| `/data` | Database | `/vol1/docker/fryfrog-hub/db` |
+| `/data/media/music` | Music | `/vol1/1000/music` |
+| `/data/media/video` | Videos | `/vol2/1000/Media` |
+| `/data/media/comic` | Comics | `/vol1/1000/comic` |
+| `/data/media/ebook` | Ebooks | `/vol1/1000/ebook` |
 
-4. Optional environment variables (set in UI):
-   - `TMDB_API_KEY` — TMDB API Key for video scraping
-   - `AUTH_PASSWORD` — Login password (default `1234`)
-   - `AUTH_ENABLED` — Enable/disable authentication (default `true`)
+4. Set environment variables:
+   - `DB_PATH=/data/fryfrog.db` — Database path (required)
+   - `TMDB_API_KEY` — TMDB API Key (optional, for video scraping)
+   - `AUTH_PASSWORD` — Login password (optional, default `1234`)
+   - `AUTH_ENABLED` — Enable/disable authentication (optional, default `true`)
 5. Access `http://NAS_IP:20058/swagger-ui.html` after startup
 
 **docker-compose Deployment**
@@ -165,14 +166,16 @@ services:
     image: ghcr.io/xbwsh/fryfrog-hub-api:latest
     container_name: fryfrog-hub-api
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "20058:20058"
     environment:
-      - AUTH_PASSWORD=your_password
-      - TMDB_API_KEY=your_tmdb_api_key
+      - DB_PATH=/data/fryfrog.db
     volumes:
-      - ./data:/app/data
-      # - /your/music/path:/app/data/media/music
-      # - /your/video/path:/app/data/media/video
+      - ./db:/data
+      # - /your/music/path:/data/media/music
+      # - /your/video/path:/data/media/video
+      # - /your/comic/path:/data/media/comic
+      # - /your/ebook/path:/data/media/ebook
 ```
 
 ```bash
