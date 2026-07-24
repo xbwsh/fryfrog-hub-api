@@ -50,10 +50,10 @@ A unified media backend API service supporting metadata management and streaming
 
 ### Ebook Module
 
-- **Online Reading** - Supports EPUB/PDF/TXT/MOBI/AZW/FB2 formats
+- **Online Reading** - Supports chapter reading for EPUB/TXT formats
 - **Chapter Detection** - Auto-detects Chinese chapter titles
 - **Chapter Navigation** - Browse by chapter, returns chapter list and content
-- **File Download** - Direct ebook file download
+- **File Download** - Supports downloading all ebook formats (PDF/MOBI/AZW/FB2 download only)
 - **Cover Display** - Auto-generates title placeholder when no cover available
 - **Reading Progress** - Records current reading position for resume
 
@@ -361,12 +361,21 @@ http://localhost:20058/swagger-ui.html
 
 ## Supported Formats
 
-| Type | Formats |
-|------|----------|
-| Audio | MP3, FLAC, OGG, WAV, AAC, M4A |
-| Video | MP4, MKV, AVI, MOV, FLV, WMV, WebM, M4V |
-| Comic | CBZ, CBR, ZIP, RAR |
-| Ebook | EPUB, PDF, MOBI, AZW, AZW3, FB2, TXT |
+| Type | Format | Scan & Index | Online Reading | Notes |
+|------|--------|-------------|----------------|-------|
+| **Audio** | MP3, FLAC, OGG, WAV, AAC, M4A | ✅ | ✅ Streaming | Supports Range requests, resume playback |
+| **Video** | MP4, MKV, AVI, MOV, FLV, WMV, WebM, M4V | ✅ | ✅ Streaming | Supports Range requests, resume playback |
+| **Comic** | CBZ | ✅ | ✅ Page browsing | ZIP-based archive |
+| | CBR | ✅ | ✅ Page browsing | RAR-based archive |
+| | ZIP | ✅ | ✅ Page browsing | Same as CBZ |
+| | RAR | ✅ | ⚠️ Partial | Via Tika, some RAR5 may have issues |
+| | EPUB | ✅ | ✅ Page browsing | Can be read as comic format |
+| **Ebook** | EPUB | ✅ | ✅ Chapter reading | Full support with embedded images |
+| | TXT | ✅ | ✅ Chapter reading | Auto-detects Chinese chapter titles |
+| | PDF | ✅ | ❌ Download only | Download only, no online reading |
+| | MOBI | ✅ | ❌ Download only | Download only, no online reading |
+| | AZW/AZW3 | ✅ | ❌ Download only | Download only, no online reading |
+| | FB2 | ✅ | ❌ Download only | Download only, no online reading |
 
 ## Development Guide
 
