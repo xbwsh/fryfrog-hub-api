@@ -88,10 +88,10 @@ public class Comic extends BaseEntity {
     @Schema(description = "是否收藏", example = "false")
     private Boolean favorite = false;
 
-    @Schema(description = "元数据来源（anilist）", example = "anilist")
+    @Schema(description = "元数据来源（bangumi）", example = "bangumi")
     private String metadataSource;
 
-    @Schema(description = "外部元数据 ID（AniList manga ID）", example = "104712")
+    @Schema(description = "外部元数据 ID（Bangumi subject ID）", example = "12345")
     private Integer metadataSourceId;
 
     @Schema(description = "元数据最后更新时间")
