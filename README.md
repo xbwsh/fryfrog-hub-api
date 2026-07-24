@@ -171,6 +171,9 @@ services:
       - "20058:20058"
     environment:
       - DB_PATH=/data/fryfrog.db
+      - TMDB_API_KEY=your_tmdb_api_key
+      - PROXY_HOST=127.0.0.1
+      - PROXY_PORT=7890
     volumes:
       - ./db:/data
       # - /your/music/path:/data/media/music
