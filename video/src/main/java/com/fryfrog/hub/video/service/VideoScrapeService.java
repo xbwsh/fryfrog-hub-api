@@ -546,8 +546,11 @@ public class VideoScrapeService {
         try {
             return transactionTemplate.execute(status -> {
                 List<Video> videos = repository.findAllByTmdbId(tmdbId);
+                log.info("[Unbind] Found {} videos with tmdbId={}", videos.size(), tmdbId);
                 int count = 0;
                 for (Video video : videos) {
+                    log.info("[Unbind] Unbinding video id={}, title='{}', filePath='{}'",
+                            video.getId(), video.getTitle(), video.getFilePath());
                     cleanupUnboundFiles(video);
                     cleanupUnboundActors(video);
 
@@ -573,7 +576,6 @@ public class VideoScrapeService {
 
                     repository.save(video);
                     count++;
-                    log.debug("[Scrape] Unbinding TMDB from video: {} (tmdbId={})", video.getTitle(), tmdbId);
                 }
                 return count;
             });
