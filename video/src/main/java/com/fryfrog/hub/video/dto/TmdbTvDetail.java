@@ -55,6 +55,9 @@ public class TmdbTvDetail {
     @JsonProperty("tagline")
     private String tagline;
 
+    @JsonProperty("adult")
+    private Boolean adult;
+
     @JsonProperty("credits")
     private Credits credits;
 

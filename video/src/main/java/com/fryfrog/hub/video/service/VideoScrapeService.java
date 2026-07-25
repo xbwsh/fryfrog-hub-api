@@ -457,7 +457,7 @@ public class VideoScrapeService {
             video.setMediaType(mediaType);
             video.setMetadataSource("tmdb");
             video.setMetadataUpdatedAt(LocalDateTime.now());
-            video.setIsAdult(isAdult);
+            video.setIsAdult(isAdult || Boolean.TRUE.equals(movieDetail.getAdult()));
 
             Video saved = repository.save(video);
             log.debug("[Scrape] Saved movie video {} with posterUrl={}, backdropUrl={}", saved.getId(), saved.getPosterUrl(), saved.getBackdropUrl());
@@ -498,14 +498,15 @@ public class VideoScrapeService {
             // 创建/绑定系列
             VideoSeries series = seriesService.getOrCreateAndBindSeries(tvDetail.getName(), tmdbId);
             seriesService.assignVideoToSeries(video, series);
-            if (isAdult) series.setIsAdult(true);
+            boolean resolvedAdult = isAdult || Boolean.TRUE.equals(tvDetail.getAdult());
+            if (resolvedAdult) series.setIsAdult(true);
             seriesService.saveSeries(series);
 
             video.setTmdbId(tmdbId);
             video.setMediaType(mediaType);
             video.setMetadataSource("tmdb");
             video.setMetadataUpdatedAt(LocalDateTime.now());
-            video.setIsAdult(isAdult);
+            video.setIsAdult(resolvedAdult);
 
             Video saved = repository.save(video);
             log.debug("[Scrape] Saved TV video {} with posterUrl={}, backdropUrl={}", saved.getId(), saved.getPosterUrl(), saved.getBackdropUrl());

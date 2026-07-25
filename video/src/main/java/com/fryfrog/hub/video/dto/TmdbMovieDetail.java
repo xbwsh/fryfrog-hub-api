@@ -55,6 +55,9 @@ public class TmdbMovieDetail {
     @JsonProperty("tagline")
     private String tagline;
 
+    @JsonProperty("adult")
+    private Boolean adult;
+
     public Integer getYear() {
         if (releaseDate != null && releaseDate.length() >= 4) {
             try {
