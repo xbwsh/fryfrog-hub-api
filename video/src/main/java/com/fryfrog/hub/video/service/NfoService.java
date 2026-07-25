@@ -213,99 +213,41 @@ public class NfoService {
 
     /**
      * 计算视频的元数据目录（NFO、封面等存放位置）
-     * 电视剧：{剧名}/第 X 季/第 Y 集/
-     * 电影：{电影名}/
      *
-     * 当标题变更（如绑定新 TMDB 条目）时，会找到旧的剧名目录并替换为新标题。
+     * 优先以库根路径为基准，确保目录在库路径下:
+     *   电视剧：{库根路径}/{剧名}/第 X 季/第 Y 集/
+     *   电影：{库根路径}/{电影名}/
+     *
+     * 如果无法获取库根路径，回退到以视频当前目录为基准。
      */
     public Path getMetadataDir(Video video) {
-        Path videoPath = Paths.get(video.getFilePath());
-        Path videoDir = videoPath.getParent();
-        String showName = cleanTitle(selectShowName(video));
-
         int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
         int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
         String seasonDirName = "第 " + season + " 季";
         String episodeDirName = "第 " + episode + " 集";
+        String showName = cleanTitle(selectShowName(video));
+        boolean isTv = "tv".equalsIgnoreCase(video.getMediaType());
 
-        // 确定库根路径，作为基准目录（防止文件路径丢失了中间目录）
-        Path libraryRoot = null;
+        // 1. 以库根路径为基准
         if (video.getLibraryId() != null) {
             try {
                 MediaLibrary lib = mediaLibraryService.getLibraryById(video.getLibraryId());
                 if (lib != null && lib.getPath() != null) {
-                    libraryRoot = Paths.get(lib.getPath()).normalize();
+                    Path base = Paths.get(lib.getPath()).normalize();
+                    Path dir = base.resolve(showName);
+                    if (isTv) dir = dir.resolve(seasonDirName).resolve(episodeDirName);
+                    return dir;
                 }
             } catch (Exception e) {
                 log.debug("[NfoService] Failed to get library path: {}", e.getMessage());
             }
         }
 
-        // 1. 向上查找 showName 目录（新标题）
-        Path checkDir = videoDir;
-        while (checkDir != null) {
-            if (checkDir.getFileName() != null && cleanTitle(checkDir.getFileName().toString()).equals(showName)) {
-                if ("tv".equalsIgnoreCase(video.getMediaType())) {
-                    Path seasonDir = checkDir.resolve(seasonDirName);
-                    Path episodeDir = seasonDir.resolve(episodeDirName);
-                    if (videoDir.equals(episodeDir)) {
-                        return videoDir;
-                    }
-                    return episodeDir;
-                }
-                return checkDir;
-            }
-            checkDir = checkDir.getParent();
-        }
-
-        // 1b. 如果有库根路径且文件路径不在库路径下，用库路径作为基准
-        if (libraryRoot != null) {
-            String dirStr = videoDir.toString();
-            String libStr = libraryRoot.toString();
-            if (!dirStr.startsWith(libStr)) {
-                log.info("[NfoService] File path '{}' outside library root '{}', using library root", dirStr, libStr);
-                if ("tv".equalsIgnoreCase(video.getMediaType())) {
-                    return libraryRoot.resolve(showName).resolve(seasonDirName).resolve(episodeDirName);
-                }
-                return libraryRoot.resolve(showName);
-            }
-        }
-
-        // 2. 向上查找旧的剧名目录（标题变更场景）
-        //    在完整路径中替换旧剧名为新标题，保留所有父级目录（如 anime）
-        checkDir = videoDir;
-        while (checkDir != null) {
-            if (checkDir.getFileName() != null) {
-                String dirName = checkDir.getFileName().toString();
-                // 跳过"第 X 季"和"第 X 集"目录
-                if (java.util.regex.Pattern.matches("第\\s*\\d+\\s*季", dirName)
-                        || java.util.regex.Pattern.matches("第\\s*\\d+\\s*集", dirName)) {
-                    checkDir = checkDir.getParent();
-                    continue;
-                }
-                // 找到了一个看起来像剧名的目录，且名称与新标题不同
-                if (!cleanTitle(dirName).equals(showName)) {
-                    // 在完整路径中替换旧剧名为新标题
-                    String oldPath = videoDir.toString();
-                    String newPath = oldPath.replace(dirName, showName);
-                    Path result;
-                    if ("tv".equalsIgnoreCase(video.getMediaType())) {
-                        result = Paths.get(newPath).resolve(seasonDirName).resolve(episodeDirName);
-                    } else {
-                        result = Paths.get(newPath);
-                    }
-                    return result;
-                }
-                break;
-            }
-            checkDir = checkDir.getParent();
-        }
-
-        // 3. 未找到任何目录结构，在当前目录创建
-        if ("tv".equalsIgnoreCase(video.getMediaType())) {
-            return videoDir.resolve(showName).resolve(seasonDirName).resolve(episodeDirName);
-        }
-        return videoDir.resolve(showName);
+        // 2. 回退：以视频当前目录为基准
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        Path dir = videoDir.resolve(showName);
+        if (isTv) dir = dir.resolve(seasonDirName).resolve(episodeDirName);
+        return dir;
     }
 
     /**
