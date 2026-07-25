@@ -338,15 +338,13 @@ public class VideoOrganizeService {
     }
 
     private Path findOldActorsDir(Path videoDir) {
+        // 只查找视频所在目录及其直接父目录中的 actors（不继续向上遍历）
         Path direct = videoDir.resolve("actors");
         if (Files.isDirectory(direct)) return direct;
-
-        Path current = videoDir.getParent();
-        while (current != null) {
-            if (current.getFileName() == null) break;
-            Path actorsPath = current.resolve("actors");
-            if (Files.isDirectory(actorsPath)) return actorsPath;
-            current = current.getParent();
+        Path parent = videoDir.getParent();
+        if (parent != null) {
+            Path parentActors = parent.resolve("actors");
+            if (Files.isDirectory(parentActors)) return parentActors;
         }
         return null;
     }
