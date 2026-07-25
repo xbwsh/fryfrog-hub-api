@@ -239,7 +239,7 @@ public class NfoService {
             checkDir = checkDir.getParent();
         }
 
-        // 2. 向上查找旧的剧名目录（标题变更场景：如 /第一次的辣妹/第 1 季/第 1 集/）
+        // 2. 向上查找旧的剧名目录（标题变更场景）
         //    找到旧的剧名目录后，替换为新标题
         checkDir = videoDir;
         while (checkDir != null) {
@@ -255,10 +255,15 @@ public class NfoService {
                 Path parentOfShow = checkDir.getParent();
                 if (parentOfShow != null) {
                     Path newShowDir = parentOfShow.resolve(showName);
+                    Path result;
                     if ("tv".equalsIgnoreCase(video.getMediaType())) {
-                        return newShowDir.resolve(seasonDirName).resolve(episodeDirName);
+                        result = newShowDir.resolve(seasonDirName).resolve(episodeDirName);
+                    } else {
+                        result = newShowDir;
                     }
-                    return newShowDir;
+                    log.info("[NfoService] getMetadataDir: oldShowDir='{}', parent='{}', result='{}'",
+                            checkDir, parentOfShow, result);
+                    return result;
                 }
             }
             checkDir = checkDir.getParent();
