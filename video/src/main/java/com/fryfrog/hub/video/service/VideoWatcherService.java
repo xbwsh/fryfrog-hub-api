@@ -88,6 +88,12 @@ public class VideoWatcherService {
                         }
                     }
                 }
+
+                // Phase 4: 文件整理
+                organizeService.batchOrganize(videos);
+
+                // Phase 5: 资产生成（NFO + 封面）
+                assetService.batchGenerateAssets(videos);
             }
 
             log.debug("[PeriodicScan] Periodic scan completed");
