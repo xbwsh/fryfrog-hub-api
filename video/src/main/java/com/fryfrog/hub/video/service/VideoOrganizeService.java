@@ -450,11 +450,13 @@ public class VideoOrganizeService {
         if (!Files.isDirectory(root)) return;
         try {
             try (var stream = Files.walk(root)) {
-                // 从最深目录开始排序，确保子目录先处理
                 stream.sorted((a, b) -> b.compareTo(a))
                         .filter(Files::isDirectory)
                         .filter(dir -> !dir.equals(root))
                         .forEach(dir -> {
+                            // 先删除已知的 orphaned 子目录（actors 等）
+                            deleteOrphanedSubdirs(dir);
+                            // 再检查目录是否为空
                             try (var files = Files.list(dir)) {
                                 if (files.findAny().isEmpty()) {
                                     Files.delete(dir);
@@ -465,6 +467,17 @@ public class VideoOrganizeService {
             }
         } catch (Exception e) {
             log.warn("[Cleanup] Failed to cleanup empty dirs in {}: {}", rootPath, e.getMessage());
+        }
+    }
+
+    private void deleteOrphanedSubdirs(Path dir) {
+        String[] orphans = {"actors"};
+        for (String name : orphans) {
+            Path sub = dir.resolve(name);
+            if (Files.isDirectory(sub)) {
+                deleteRecursively(sub);
+                log.debug("[Cleanup] Removed orphaned subdir: {}", sub);
+            }
         }
     }
 
