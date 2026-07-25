@@ -89,19 +89,23 @@ public class VideoOrganizeService {
                 // 移动外挂字幕文件
                 moveAssociatedSubtitles(oldDir, metadataDir, baseName);
 
-                // 移动 actors 目录
-                Path oldActorsDir = findOldActorsDir(oldDir);
-                Path newActorsDir = metadataDir.resolve("actors");
-                if (oldActorsDir != null && !Files.exists(newActorsDir)) {
-                    Files.createDirectories(newActorsDir.getParent());
-                    Files.move(oldActorsDir, newActorsDir);
-                    log.debug("[Organize] Moved actors dir: {} -> {}", oldActorsDir, newActorsDir);
-                }
-
                 // Phase 2: DB 更新（写锁内）
                 video.setFilePath(newVideoPath.toString());
                 DatabaseWriteLock.runInWriteLock(() -> repository.save(video));
                 moved++;
+
+                // Phase 3: 移动 actors 目录（失败不影响 video 路径保存）
+                try {
+                    Path oldActorsDir = findOldActorsDir(oldDir);
+                    Path newActorsDir = metadataDir.resolve("actors");
+                    if (oldActorsDir != null && !Files.exists(newActorsDir)) {
+                        Files.createDirectories(newActorsDir.getParent());
+                        Files.move(oldActorsDir, newActorsDir);
+                        log.debug("[Organize] Moved actors dir: {} -> {}", oldActorsDir, newActorsDir);
+                    }
+                } catch (Exception e) {
+                    log.warn("[Organize] Failed to move actors dir: {}", e.getMessage());
+                }
 
             } catch (Exception e) {
                 failed++;
