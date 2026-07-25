@@ -199,10 +199,8 @@ public class VideoController {
         // 暂停 periodic-scan，防止并发冲突
         scanScheduler.setBusy(true);
         try {
-            boolean isAdult = request.getAdult() != null && request.getAdult();
-
-            // 1. 绑定整个系列
-            List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), isAdult);
+            // 1. 绑定整个系列（isAdult 由 doScrapeAndBind 自动从 TMDB 判断）
+            List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
 
             // 2. 重命名文件 + 移动到元数据目录
             Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
