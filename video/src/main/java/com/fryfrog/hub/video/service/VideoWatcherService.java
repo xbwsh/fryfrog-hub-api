@@ -78,10 +78,7 @@ public class VideoWatcherService {
                 List<Long> videoIds = videos.stream().map(Video::getId).toList();
                 videos = videoRepository.findAllById(videoIds);
 
-                // Phase 3: 文件整理
-                organizeService.batchOrganize(videos);
-
-                // Phase 4: 保存演员（整理后再保存，确保 actors 目录在正确位置）
+                // Phase 3: 保存演员
                 for (Video video : videos) {
                     if (video.getTmdbId() != null && video.getMediaType() != null) {
                         try {
