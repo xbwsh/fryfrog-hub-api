@@ -272,7 +272,11 @@ public class VideoScrapeService {
     }
 
     /**
-     * 选择最佳 TMDB 匹配
+     * 选择最佳 TMDB 匹配。
+     * 优先级：
+     * 1. 标题精确匹配
+     * 2. 综合评分（标题相似度 + 元数据完整度）
+     * 3. 同一作品多语言条目：优先选元数据更完整的
      */
     public TmdbSearchResult.TmdbSearchItem pickBestTmdbMatch(
             List<TmdbSearchResult.TmdbSearchItem> results, String query) {
@@ -292,31 +296,85 @@ public class VideoScrapeService {
             }
         }
 
-        // 2. 相似度匹配
-        double bestScore = 0;
-        TmdbSearchResult.TmdbSearchItem best = null;
+        // 2. 计算每个结果的综合评分
+        record ScoredItem(TmdbSearchResult.TmdbSearchItem item, double titleScore, double metaScore) {
+            double total() { return titleScore + metaScore; }
+        }
+
+        List<ScoredItem> scored = new ArrayList<>();
         for (var r : results) {
             String name = r.getTitle();
             String originalName = r.getOriginalTitle();
-            double score = 0;
+            double titleScore = 0;
             if (name != null) {
-                score = Math.max(score, TitleCleaner.calculateSimilarity(cleanedQuery, name));
+                titleScore = Math.max(titleScore, TitleCleaner.calculateSimilarity(cleanedQuery, name));
             }
             if (originalName != null) {
-                score = Math.max(score, TitleCleaner.calculateSimilarity(cleanedQuery, originalName));
+                titleScore = Math.max(titleScore, TitleCleaner.calculateSimilarity(cleanedQuery, originalName));
             }
-            log.debug("[Scrape] Similarity: '{}' vs '{}'/'{}' = {}", cleanedQuery, name, originalName, score);
-            if (score > bestScore) {
-                bestScore = score;
-                best = r;
+            double metaScore = calculateMetadataCompleteness(r);
+            scored.add(new ScoredItem(r, titleScore, metaScore));
+            log.debug("[Scrape] Score: '{}' vs '{}'/'{}' title={} meta={} total={}",
+                    cleanedQuery, name, originalName, titleScore, metaScore, titleScore + metaScore);
+        }
+
+        // 3. 按综合分降序排列
+        scored.sort((a, b) -> Double.compare(b.total(), a.total()));
+
+        if (scored.isEmpty() || scored.getFirst().total() < 0.6) {
+            log.debug("[Scrape] No match above threshold 0.6");
+            return null;
+        }
+
+        ScoredItem best = scored.getFirst();
+
+        // 4. 同一作品多语言条目处理
+        // 4a. originalTitle 相同 → 选元数据更全的
+        if (scored.size() >= 2) {
+            ScoredItem second = scored.get(1);
+            String orig1 = best.item.getOriginalTitle();
+            String orig2 = second.item.getOriginalTitle();
+            if (orig1 != null && orig1.equals(orig2)) {
+                log.debug("[Scrape] Duplicate originalTitle '{}': picking metadata-richer entry (meta={} vs {})",
+                        orig1, best.metaScore(), second.metaScore());
+                return best.item;
             }
         }
 
-        log.debug("[Scrape] Best similarity score: {} (threshold: 0.6)", bestScore);
-        if (best != null && bestScore >= 0.6) {
-            return best;
+        // 4b. 最佳匹配缺少 backdrop，但有同年份的更完整条目 → 升级
+        if (best.item.getBackdropPath() == null && scored.size() >= 2) {
+            Integer bestYear = best.item.getYear();
+            for (ScoredItem candidate : scored.subList(1, scored.size())) {
+                if (candidate.item.getBackdropPath() != null
+                        && candidate.metaScore() > best.metaScore()
+                        && isSameYear(bestYear, candidate.item.getYear())) {
+                    log.debug("[Scrape] Upgrading to metadata-richer entry: '{}' (same year {}, meta={} vs {})",
+                            candidate.item.getTitle(), bestYear, candidate.metaScore(), best.metaScore());
+                    return candidate.item;
+                }
+            }
         }
-        return null;
+
+        return best.item;
+    }
+
+    private boolean isSameYear(Integer y1, Integer y2) {
+        if (y1 == null || y2 == null) return false;
+        return y1.equals(y2);
+    }
+
+    /**
+     * 计算元数据完整度评分（0.0 ~ 0.3）。
+     * 有海报、背景图、简介、评分人数等元数据的条目得分更高。
+     */
+    private double calculateMetadataCompleteness(TmdbSearchResult.TmdbSearchItem item) {
+        double score = 0;
+        if (item.getPosterPath() != null && !item.getPosterPath().isBlank()) score += 0.08;
+        if (item.getBackdropPath() != null && !item.getBackdropPath().isBlank()) score += 0.10;
+        if (item.getOverview() != null && !item.getOverview().isBlank()) score += 0.05;
+        if (item.getVoteCount() != null && item.getVoteCount() > 0) score += 0.04;
+        if (item.getGenreIds() != null && !item.getGenreIds().isEmpty()) score += 0.03;
+        return score;
     }
 
     // ==================== TMDB 绑定 ====================
