@@ -118,18 +118,19 @@ public class VideoAssetService {
     }
 
     /**
-     * 下载系列封面到季目录（tvshow-poster.jpg, tvshow-fanart.jpg）
+     * 下载系列封面到剧名目录（tvshow-poster.jpg, tvshow-fanart.jpg）
      */
     public void downloadSeriesCovers(VideoSeries series, Path episodeMetadataDir) {
         if (series.getPosterUrl() == null && series.getBackdropUrl() == null) return;
 
-        Path seasonDir = episodeMetadataDir.getParent();
-        if (seasonDir == null) return;
+        // tvshow-poster.jpg 和 tvshow-fanart.jpg 应放在剧名目录下，不是季目录
+        Path showDir = episodeMetadataDir.getParent().getParent();
+        if (showDir == null) return;
 
         try {
-            Files.createDirectories(seasonDir);
+            Files.createDirectories(showDir);
         } catch (IOException e) {
-            log.warn("[Asset] Failed to create season dir: {}", seasonDir);
+            log.warn("[Asset] Failed to create show dir: {}", showDir);
             return;
         }
 
@@ -137,7 +138,7 @@ public class VideoAssetService {
 
         // 下载系列海报
         if (series.getPosterUrl() != null) {
-            Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
+            Path posterPath = showDir.resolve("tvshow-poster.jpg");
             if (!Files.exists(posterPath)) {
                 downloadCoverImage(series.getPosterUrl(), posterPath);
             }
@@ -149,7 +150,7 @@ public class VideoAssetService {
 
         // 下载系列背景图
         if (series.getBackdropUrl() != null) {
-            Path fanartPath = seasonDir.resolve("tvshow-fanart.jpg");
+            Path fanartPath = showDir.resolve("tvshow-fanart.jpg");
             if (!Files.exists(fanartPath)) {
                 downloadCoverImage(series.getBackdropUrl(), fanartPath);
             }
