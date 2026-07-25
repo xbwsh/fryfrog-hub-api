@@ -585,47 +585,69 @@ public class VideoScrapeService {
     // ==================== 重新刮削 ====================
 
     /**
-     * 重新刮削单个视频所属系列的所有视频
+     * 重新刮削单个视频：用标题重新搜索 TMDB 并绑定最佳匹配。
+     * 无论视频是否已有 TMDB 绑定都可以使用。
      */
     public List<Video> rescrapeVideo(Long videoId) {
         Video video = repository.findById(videoId)
                 .orElseThrow(() -> new ResourceNotFoundException("Video", "id", videoId));
 
-        if (video.getTmdbId() == null || video.getMediaType() == null) {
-            throw new IllegalArgumentException("Video has no TMDB binding: " + videoId);
+        String query = video.getTitle();
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("Video has no title for rescraping: " + videoId);
         }
 
-        Long tmdbId = video.getTmdbId();
-        String mediaType = video.getMediaType();
-
-        List<Video> siblings = repository.findAllByTmdbId(tmdbId);
-        if (siblings.isEmpty()) {
-            throw new IllegalArgumentException("No videos found with tmdbId: " + tmdbId);
-        }
-
-        log.debug("[Scrape] Rescraping {} videos with tmdbId={}", siblings.size(), tmdbId);
-
-        // 先解绑所有
-        for (Video s : siblings) {
-            try {
-                unbindTmdb(s.getId());
-            } catch (Exception e) {
-                log.warn("[Scrape] Failed to unbind video {} during rescrape: {}", s.getTitle(), e.getMessage());
+        // 如果已有绑定，先解绑同系列所有视频
+        if (video.getTmdbId() != null) {
+            Long oldTmdbId = video.getTmdbId();
+            List<Video> siblings = repository.findAllByTmdbId(oldTmdbId);
+            for (Video s : siblings) {
+                try {
+                    unbindTmdb(s.getId());
+                } catch (Exception e) {
+                    log.warn("[Scrape] Failed to unbind video {} during rescrape: {}", s.getTitle(), e.getMessage());
+                }
             }
         }
 
-        // 再重新绑定
-        List<Video> results = new ArrayList<>();
-        for (Video s : siblings) {
+        // 用标题重新搜索 TMDB
+        String mediaTypeFilter = resolveMediaTypeFilter(video);
+        log.info("[Scrape] Rescraping '{}': searching TMDB", query);
+        List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
+        if (results.isEmpty()) {
+            throw new IllegalArgumentException("No TMDB results for: " + query);
+        }
+
+        TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
+        if (bestMatch == null) {
+            throw new IllegalArgumentException("No confident TMDB match for: " + query);
+        }
+
+        log.info("[Scrape] Rescraped '{}' -> TMDB {} '{}' (backdrop={})",
+                query, bestMatch.getId(), bestMatch.getTitle(),
+                bestMatch.getBackdropPath() != null ? "yes" : "no");
+
+        boolean isAdult = Boolean.TRUE.equals(bestMatch.getAdult());
+
+        // 获取同系列的所有视频（同一个文件名前缀的），批量绑定
+        String baseName = TitleCleaner.cleanForSearch(query);
+        List<Video> allVideos = repository.findAll();
+        List<Video> toBind = allVideos.stream()
+                .filter(v -> TitleCleaner.cleanForSearch(v.getTitle()).equals(baseName)
+                        || (v.getTitle() != null && v.getTitle().equals(video.getTitle())))
+                .toList();
+
+        List<Video> results2 = new ArrayList<>();
+        for (Video v : toBind) {
             try {
-                Video bound = scrapeAndBindTmdb(s.getId(), tmdbId, mediaType);
-                results.add(bound);
+                Video bound = scrapeAndBindTmdb(v.getId(), bestMatch.getId(), bestMatch.getMediaType(), isAdult);
+                results2.add(bound);
             } catch (Exception e) {
-                log.warn("[Scrape] Failed to rescrape video {}: {}", s.getTitle(), e.getMessage());
-                results.add(s);
+                log.warn("[Scrape] Failed to rescrape video {}: {}", v.getTitle(), e.getMessage());
+                results2.add(v);
             }
         }
-        return results;
+        return results2;
     }
 
     /**
