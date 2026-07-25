@@ -387,7 +387,6 @@ public class VideoOrganizeService {
         if (dir == null) return;
         Path actorsDir = dir.resolve("actors");
         if (!Files.isDirectory(actorsDir)) {
-            // 也尝试在季目录和剧名目录下找 actors
             Path parent = dir.getParent();
             if (parent != null) {
                 actorsDir = parent.resolve("actors");
@@ -399,14 +398,26 @@ public class VideoOrganizeService {
                 }
             }
         }
-        if (Files.isDirectory(actorsDir)) {
-            try (var files = Files.walk(actorsDir).sorted((a, b) -> b.compareTo(a))) {
-                files.forEach(p -> {
-                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
-                });
-                log.debug("[Organize] Removed actors dir: {}", actorsDir);
-            } catch (Exception ignored) {}
-        }
+        deleteRecursively(actorsDir);
+    }
+
+    private void deleteRecursively(Path path) {
+        if (path == null || !Files.exists(path)) return;
+        try {
+            Files.walkFileTree(path, new java.nio.file.SimpleFileVisitor<>() {
+                @Override
+                public java.nio.file.FileVisitResult visitFile(java.nio.file.Path file, java.nio.file.attribute.BasicFileAttributes attrs) throws IOException {
+                    Files.delete(file);
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+                @Override
+                public java.nio.file.FileVisitResult postVisitDirectory(java.nio.file.Path dir, IOException exc) throws IOException {
+                    Files.delete(dir);
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+            log.debug("[Organize] Removed actors dir: {}", path);
+        } catch (Exception ignored) {}
     }
 
     /**
