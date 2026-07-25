@@ -107,6 +107,13 @@ public class VideoOrganizeService {
                     log.warn("[Organize] Failed to move actors dir: {}", e.getMessage());
                 }
 
+                // Phase 4: 清理空的旧目录
+                try {
+                    cleanupEmptyOldDirs(oldDir, metadataDir);
+                } catch (Exception e) {
+                    log.debug("[Organize] Failed to cleanup old dirs: {}", e.getMessage());
+                }
+
             } catch (Exception e) {
                 failed++;
                 log.error("[Organize] Failed to organize {}: {}", video.getFileName(), e.getMessage());
@@ -347,5 +354,25 @@ public class VideoOrganizeService {
             if (Files.isDirectory(parentActors)) return parentActors;
         }
         return null;
+    }
+
+    /**
+     * 清理移动后的空目录。从 oldDir 向上逐层删除空目录，直到遇到 metadataDir 或非空目录为止。
+     */
+    private void cleanupEmptyOldDirs(Path oldDir, Path metadataDir) throws IOException {
+        Path current = oldDir;
+        while (current != null && !current.equals(metadataDir)) {
+            try (var files = Files.list(current)) {
+                if (files.findAny().isEmpty()) {
+                    Files.delete(current);
+                    log.debug("[Organize] Removed empty directory: {}", current);
+                    current = current.getParent();
+                } else {
+                    break;
+                }
+            } catch (Exception e) {
+                break;
+            }
+        }
     }
 }
