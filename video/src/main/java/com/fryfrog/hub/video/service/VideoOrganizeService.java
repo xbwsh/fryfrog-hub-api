@@ -360,6 +360,9 @@ public class VideoOrganizeService {
      * 清理移动后的空目录。从 oldDir 向上逐层删除空目录，直到遇到 metadataDir 或非空目录为止。
      */
     private void cleanupEmptyOldDirs(Path oldDir, Path metadataDir) throws IOException {
+        // 先清理旧目录中可能残留的系列级元数据文件
+        cleanupOldSeasonFiles(oldDir);
+
         Path current = oldDir;
         while (current != null && !current.equals(metadataDir)) {
             try (var files = Files.list(current)) {
@@ -374,5 +377,35 @@ public class VideoOrganizeService {
                 break;
             }
         }
+    }
+
+    /**
+     * 删除旧目录中可能残留在季/剧名级别的元数据文件
+     */
+    private void cleanupOldSeasonFiles(Path episodeDir) {
+        Path seasonDir = episodeDir.getParent();
+        if (seasonDir != null) {
+            deleteIfExists(seasonDir.resolve("tvshow.nfo"));
+            deleteIfExists(seasonDir.resolve("tvshow-poster.jpg"));
+            deleteIfExists(seasonDir.resolve("tvshow-fanart.jpg"));
+
+            // 如果季目录也空了，尝试清理剧名目录下的系列级文件
+            try (var files = Files.list(seasonDir)) {
+                if (files.findAny().isEmpty()) {
+                    Path showDir = seasonDir.getParent();
+                    if (showDir != null) {
+                        deleteIfExists(showDir.resolve("tvshow.nfo"));
+                        deleteIfExists(showDir.resolve("tvshow-poster.jpg"));
+                        deleteIfExists(showDir.resolve("tvshow-fanart.jpg"));
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void deleteIfExists(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (Exception ignored) {}
     }
 }
