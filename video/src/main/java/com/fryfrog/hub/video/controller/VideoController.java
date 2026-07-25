@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
@@ -209,7 +210,7 @@ public class VideoController {
             assetService.batchGenerateAssets(boundVideos, true);
 
             // 4. 清理空的 series 记录
-            seriesService.cleanupEmptySeries();
+            DatabaseWriteLock.runInWriteLock(seriesService::cleanupEmptySeries);
 
             Map<String, Object> result = new java.util.HashMap<>();
             result.put("total", boundVideos.size());
