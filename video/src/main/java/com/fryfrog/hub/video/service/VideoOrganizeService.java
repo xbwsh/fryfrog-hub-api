@@ -63,55 +63,56 @@ public class VideoOrganizeService {
                 Path oldDir = Paths.get(video.getFilePath()).getParent();
                 Path metadataDir = nfoService.getMetadataDir(video);
 
-                if (oldDir.equals(metadataDir)) {
-                    skipped++;
-                    continue;
-                }
+                if (!oldDir.equals(metadataDir)) {
+                    // Phase 1: 文件操作（无锁）
+                    Files.createDirectories(metadataDir);
 
-                // Phase 1: 文件操作（无锁）
-                Files.createDirectories(metadataDir);
+                    Path videoPath = Paths.get(video.getFilePath());
+                    Path newVideoPath = metadataDir.resolve(video.getFileName());
 
-                Path videoPath = Paths.get(video.getFilePath());
-                Path newVideoPath = metadataDir.resolve(video.getFileName());
-
-                // 移动视频文件
-                if (Files.exists(videoPath) && !Files.exists(newVideoPath)) {
-                    Files.move(videoPath, newVideoPath);
-                    log.debug("[Organize] Moved video: {} -> {}", videoPath, newVideoPath);
-                }
-
-                // 移动关联的元数据文件（NFO、poster、fanart）
-                String baseName = nfoService.getBaseName(video.getFileName());
-                moveAssociatedFile(oldDir, metadataDir, baseName + ".nfo");
-                moveAssociatedFile(oldDir, metadataDir, baseName + "-poster.jpg");
-                moveAssociatedFile(oldDir, metadataDir, baseName + "-fanart.jpg");
-
-                // 移动外挂字幕文件
-                moveAssociatedSubtitles(oldDir, metadataDir, baseName);
-
-                // Phase 2: DB 更新（写锁内）
-                video.setFilePath(newVideoPath.toString());
-                DatabaseWriteLock.runInWriteLock(() -> repository.save(video));
-                moved++;
-
-                // Phase 3: 移动 actors 目录（失败不影响 video 路径保存）
-                try {
-                    Path oldActorsDir = findOldActorsDir(oldDir);
-                    Path newActorsDir = metadataDir.resolve("actors");
-                    if (oldActorsDir != null && !Files.exists(newActorsDir)) {
-                        Files.createDirectories(newActorsDir.getParent());
-                        Files.move(oldActorsDir, newActorsDir);
-                        log.debug("[Organize] Moved actors dir: {} -> {}", oldActorsDir, newActorsDir);
+                    // 移动视频文件
+                    if (Files.exists(videoPath) && !Files.exists(newVideoPath)) {
+                        Files.move(videoPath, newVideoPath);
+                        log.debug("[Organize] Moved video: {} -> {}", videoPath, newVideoPath);
                     }
-                } catch (Exception e) {
-                    log.warn("[Organize] Failed to move actors dir: {}", e.getMessage());
+
+                    // 移动关联的元数据文件（NFO、poster、fanart）
+                    String baseName = nfoService.getBaseName(video.getFileName());
+                    moveAssociatedFile(oldDir, metadataDir, baseName + ".nfo");
+                    moveAssociatedFile(oldDir, metadataDir, baseName + "-poster.jpg");
+                    moveAssociatedFile(oldDir, metadataDir, baseName + "-fanart.jpg");
+
+                    // 移动外挂字幕文件
+                    moveAssociatedSubtitles(oldDir, metadataDir, baseName);
+
+                    // Phase 2: DB 更新（写锁内）
+                    video.setFilePath(newVideoPath.toString());
+                    DatabaseWriteLock.runInWriteLock(() -> repository.save(video));
+                    moved++;
+
+                    // Phase 3: 移动 actors 目录（失败不影响 video 路径保存）
+                    try {
+                        Path oldActorsDir = findOldActorsDir(oldDir);
+                        Path newActorsDir = metadataDir.resolve("actors");
+                        if (oldActorsDir != null && !Files.exists(newActorsDir)) {
+                            Files.createDirectories(newActorsDir.getParent());
+                            Files.move(oldActorsDir, newActorsDir);
+                            log.debug("[Organize] Moved actors dir: {} -> {}", oldActorsDir, newActorsDir);
+                        }
+                    } catch (Exception e) {
+                        log.warn("[Organize] Failed to move actors dir: {}", e.getMessage());
+                    }
+                } else {
+                    skipped++;
                 }
 
-                // Phase 4: 清理空的旧目录
-                try {
-                    cleanupEmptyOldDirs(oldDir, metadataDir);
-                } catch (Exception e) {
-                    log.debug("[Organize] Failed to cleanup old dirs: {}", e.getMessage());
+                // Phase 4: 清理空的旧目录（无论文件是否移动都执行）
+                if (!oldDir.equals(metadataDir)) {
+                    try {
+                        cleanupEmptyOldDirs(oldDir, metadataDir);
+                    } catch (Exception e) {
+                        log.debug("[Organize] Failed to cleanup old dirs: {}", e.getMessage());
+                    }
                 }
 
             } catch (Exception e) {
@@ -441,6 +442,29 @@ public class VideoOrganizeService {
                     }
                 }
             } catch (Exception ignored) {}
+        }
+    }
+
+    public void cleanupEmptyLibraryDir(String rootPath) {
+        Path root = Paths.get(rootPath);
+        if (!Files.isDirectory(root)) return;
+        try {
+            try (var stream = Files.walk(root)) {
+                // 从最深目录开始排序，确保子目录先处理
+                stream.sorted((a, b) -> b.compareTo(a))
+                        .filter(Files::isDirectory)
+                        .filter(dir -> !dir.equals(root))
+                        .forEach(dir -> {
+                            try (var files = Files.list(dir)) {
+                                if (files.findAny().isEmpty()) {
+                                    Files.delete(dir);
+                                    log.debug("[Cleanup] Removed empty directory: {}", dir);
+                                }
+                            } catch (Exception ignored) {}
+                        });
+            }
+        } catch (Exception e) {
+            log.warn("[Cleanup] Failed to cleanup empty dirs in {}: {}", rootPath, e.getMessage());
         }
     }
 

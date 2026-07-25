@@ -94,6 +94,13 @@ public class VideoWatcherService {
 
                 // Phase 5: 资产生成（NFO + 封面）
                 assetService.batchGenerateAssets(videos);
+
+                // Phase 6: 清理空目录（回收上次清理失败遗留的目录）
+                try {
+                    organizeService.cleanupEmptyLibraryDir(rootPath);
+                } catch (Exception e) {
+                    log.debug("[PeriodicScan] Failed to cleanup empty dirs: {}", e.getMessage());
+                }
             }
 
             log.debug("[PeriodicScan] Periodic scan completed");
