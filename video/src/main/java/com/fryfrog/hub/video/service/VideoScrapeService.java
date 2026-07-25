@@ -411,6 +411,37 @@ public class VideoScrapeService {
         }
     }
 
+    /**
+     * 绑定整个系列：找到同标题的所有视频，批量绑定新 TMDB 条目
+     */
+    public List<Video> bindSeries(Long videoId, Long tmdbId, String mediaType, boolean isAdult) {
+        Video video = repository.findById(videoId)
+                .orElseThrow(() -> new ResourceNotFoundException("Video", "id", videoId));
+
+        String title = video.getTitle();
+        log.info("[Bind] Binding series '{}': finding all videos with same title", title);
+
+        // 找到同标题的所有视频
+        List<Video> allVideos = repository.findAll();
+        List<Video> seriesVideos = allVideos.stream()
+                .filter(v -> title != null && title.equals(v.getTitle()))
+                .toList();
+
+        log.info("[Bind] Found {} videos in series '{}'", seriesVideos.size(), title);
+
+        List<Video> results = new ArrayList<>();
+        for (Video v : seriesVideos) {
+            try {
+                Video bound = scrapeAndBindTmdb(v.getId(), tmdbId, mediaType, isAdult);
+                results.add(bound);
+            } catch (Exception e) {
+                log.warn("[Bind] Failed to bind video id={}: {}", v.getId(), e.getMessage());
+                results.add(v);
+            }
+        }
+        return results;
+    }
+
     @Transactional
     Video doScrapeAndBind(Long videoId, Long tmdbId, String mediaType, boolean isAdult) {
         Video video = repository.findById(videoId)

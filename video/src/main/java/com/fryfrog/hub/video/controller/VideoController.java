@@ -19,6 +19,8 @@ import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.TranscodingService;
+import com.fryfrog.hub.video.service.VideoAssetService;
+import com.fryfrog.hub.video.service.VideoOrganizeService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -62,6 +64,8 @@ public class VideoController {
     private final VideoActorRepository actorRepository;
     private final VideoRepository videoRepository;
     private final ScrapeProgressService scrapeProgressService;
+    private final VideoOrganizeService organizeService;
+    private final VideoAssetService assetService;
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
@@ -182,12 +186,26 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/tmdb/bind")
-    @Operation(summary = "绑定TMDB元数据", description = "将TMDB上的元数据绑定到指定视频，同时生成NFO和下载封面")
-    public ResponseEntity<ApiResponse<VideoDTO>> bindTmdb(
+    @Operation(summary = "绑定TMDB元数据", description = "绑定整个系列（同标题的所有视频）到指定TMDB条目，并重命名文件")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> bindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestBody VideoBindRequest request) {
-        Video video = service.scrapeAndBindTmdb(id, request.getTmdbId(), request.getMediaType());
-        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+        log.info("[Bind] Binding video id={} to TMDB {} ({})", id, request.getTmdbId(), request.getMediaType());
+
+        // 1. 绑定整个系列
+        List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
+
+        // 2. 重命名文件 + 移动到元数据目录
+        Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
+
+        // 3. 生成 NFO + 下载封面
+        assetService.batchGenerateAssets(boundVideos);
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("total", boundVideos.size());
+        result.put("organize", organizeResult);
+        result.put("videos", boundVideos.stream().map(this::toDTO).toList());
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/{id:\\d+}/tmdb/unbind")

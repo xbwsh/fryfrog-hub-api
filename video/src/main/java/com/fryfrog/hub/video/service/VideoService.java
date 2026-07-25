@@ -138,6 +138,10 @@ public class VideoService {
         return scrapeService.scrapeAndBindTmdb(videoId, tmdbId, mediaType, isAdult);
     }
 
+    public List<Video> bindSeries(Long videoId, Long tmdbId, String mediaType, boolean isAdult) {
+        return scrapeService.bindSeries(videoId, tmdbId, mediaType, isAdult);
+    }
+
     public Video unbindTmdb(Long videoId) {
         return scrapeService.unbindTmdb(videoId);
     }
