@@ -191,7 +191,7 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/tmdb/unbind")
-    @Operation(summary = "解绑TMDB元数据", description = "解绑该视频所属系列的所有视频（同tmdbId）的TMDB元数据")
+    @Operation(summary = "解绑TMDB元数据", description = "解绑指定视频的TMDB元数据")
     public ResponseEntity<ApiResponse<Map<String, Object>>> unbindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
@@ -199,10 +199,10 @@ public class VideoController {
             return ResponseEntity.ok(ApiResponse.success(Map.of("unbound", 0)));
         }
         Long tmdbId = video.getTmdbId();
-        int count = service.unbindByTmdbId(tmdbId);
+        service.unbindTmdb(id);
         return ResponseEntity.ok(ApiResponse.success(Map.of(
                 "tmdbId", tmdbId,
-                "unbound", count
+                "unbound", 1
         )));
     }
 
