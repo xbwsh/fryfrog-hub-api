@@ -88,9 +88,6 @@ public class VideoWatcherService {
                         }
                     }
                 }
-
-                // Phase 5: 资产生成（NFO + 封面）
-                assetService.batchGenerateAssets(videos);
             }
 
             log.debug("[PeriodicScan] Periodic scan completed");
