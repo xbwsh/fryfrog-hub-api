@@ -1,30 +1,33 @@
 package com.fryfrog.hub.common.util;
 
-public class ChineseConverterTest {
-    public static void main(String[] args) throws Exception {
-        String[] tests = {
-            "刀劍神域",
-            "魔都精兵的奴隸",
-            "間諜過家家",
-            "虛構推理",
-            "進擊的巨人",
-            "鐵拳教育",
-            "電擊文庫",
-            "川原礫",
-            "輕小說",
-            "漫畫",
-            "這是一個測試",
-            "簡體中文轉繁體中文",
-            "龍與地下城",
-            "魔法少女小圓",
-            "新世紀福音戰士"
-        };
+import org.junit.jupiter.api.Test;
 
-        System.setOut(new java.io.PrintStream(System.out, true, "UTF-8"));
-        System.out.println("=== opencc4j \u7E41\u7B80\u8F6C\u6362\u6D4B\u8BD5 ===");
-        for (String text : tests) {
-            String result = ChineseConverter.toSimplified(text);
-            System.out.printf("%-15s -> %s%n", text, result);
-        }
+import static org.junit.jupiter.api.Assertions.*;
+
+class ChineseConverterTest {
+
+    @Test
+    void toSimplified_convertsCommonTraditionalCharacters() {
+        // 这些字符在旧映射表中缺失，现在由 opencc4j 正确处理
+        assertEquals("纯洁的轮舞曲", ChineseConverter.toSimplified("純潔的輪舞曲"));
+        assertEquals("催眠性指导", ChineseConverter.toSimplified("催眠性指導"));
+        assertEquals("刀剑神域", ChineseConverter.toSimplified("刀劍神域"));
+        assertEquals("间谍过家家", ChineseConverter.toSimplified("間諜過家家"));
+        assertEquals("进击的巨人", ChineseConverter.toSimplified("進擊的巨人"));
+        assertEquals("魔法少女小圆", ChineseConverter.toSimplified("魔法少女小圓"));
+        assertEquals("新世纪福音战士", ChineseConverter.toSimplified("新世紀福音戰士"));
+    }
+
+    @Test
+    void toTraditional_convertsSimplifiedToTraditional() {
+        assertEquals("魔法少女小圓", ChineseConverter.toTraditional("魔法少女小圆"));
+        assertEquals("進擊的巨人", ChineseConverter.toTraditional("进击的巨人"));
+    }
+
+    @Test
+    void handlesNullAndBlank() {
+        assertNull(ChineseConverter.toSimplified(null));
+        assertEquals("", ChineseConverter.toSimplified(""));
+        assertEquals("  ", ChineseConverter.toSimplified("  "));
     }
 }
