@@ -12,4 +12,7 @@ public class VideoBindRequest {
 
     @Schema(description = "媒体类型（movie/tv）", example = "movie", requiredMode = Schema.RequiredMode.REQUIRED)
     private String mediaType;
+
+    @Schema(description = "是否为成人内容（可选，不传自动判断）", example = "true")
+    private Boolean adult;
 }

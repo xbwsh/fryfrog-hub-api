@@ -457,7 +457,7 @@ public class VideoScrapeService {
             video.setMediaType(mediaType);
             video.setMetadataSource("tmdb");
             video.setMetadataUpdatedAt(LocalDateTime.now());
-            if (isAdult) video.setIsAdult(true);
+            video.setIsAdult(isAdult);
 
             Video saved = repository.save(video);
             log.debug("[Scrape] Saved movie video {} with posterUrl={}, backdropUrl={}", saved.getId(), saved.getPosterUrl(), saved.getBackdropUrl());
@@ -505,7 +505,7 @@ public class VideoScrapeService {
             video.setMediaType(mediaType);
             video.setMetadataSource("tmdb");
             video.setMetadataUpdatedAt(LocalDateTime.now());
-            if (isAdult) video.setIsAdult(true);
+            video.setIsAdult(isAdult);
 
             Video saved = repository.save(video);
             log.debug("[Scrape] Saved TV video {} with posterUrl={}, backdropUrl={}", saved.getId(), saved.getPosterUrl(), saved.getBackdropUrl());

@@ -19,6 +19,7 @@ import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
 import com.fryfrog.hub.video.service.NfoService;
+import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoAssetService;
 import com.fryfrog.hub.video.service.VideoOrganizeService;
@@ -67,6 +68,7 @@ public class VideoController {
     private final ScrapeProgressService scrapeProgressService;
     private final VideoOrganizeService organizeService;
     private final VideoAssetService assetService;
+    private final SeriesService seriesService;
     private final PeriodicScanScheduler scanScheduler;
 
     @GetMapping("/{id:\\d+}")
@@ -197,14 +199,19 @@ public class VideoController {
         // 暂停 periodic-scan，防止并发冲突
         scanScheduler.setBusy(true);
         try {
+            boolean isAdult = request.getAdult() != null && request.getAdult();
+
             // 1. 绑定整个系列
-            List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
+            List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), isAdult);
 
             // 2. 重命名文件 + 移动到元数据目录
             Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
 
             // 3. 生成 NFO + 下载封面（强制覆盖）
             assetService.batchGenerateAssets(boundVideos, true);
+
+            // 4. 清理空的 series 记录
+            seriesService.cleanupEmptySeries();
 
             Map<String, Object> result = new java.util.HashMap<>();
             result.put("total", boundVideos.size());
