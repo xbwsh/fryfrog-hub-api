@@ -153,9 +153,9 @@ public class VideoScrapeService {
                         continue;
                     }
 
-                    log.info("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
+                    log.debug("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
                     for (var r : results) {
-                        log.info("[Scrape] Result: id={}, title='{}', originalTitle='{}', backdrop={}",
+                        log.debug("[Scrape] Result: id={}, title='{}', originalTitle='{}', backdrop={}",
                                 r.getId(), r.getTitle(), r.getOriginalTitle(),
                                 r.getBackdropPath() != null ? "yes" : "no");
                     }
@@ -327,7 +327,7 @@ public class VideoScrapeService {
             }
             double metaScore = calculateMetadataCompleteness(r);
             scored.add(new ScoredItem(r, titleScore, metaScore));
-            log.info("[Scrape] Score: '{}' vs '{}'/'{}' title={} meta={} total={}",
+            log.debug("[Scrape] Score: '{}' vs '{}'/'{}' title={} meta={} total={}",
                     cleanedQuery, name, originalName, titleScore, metaScore, titleScore + metaScore);
         }
 
@@ -335,7 +335,7 @@ public class VideoScrapeService {
         scored.sort((a, b) -> Double.compare(b.total(), a.total()));
 
         if (scored.isEmpty() || scored.getFirst().total() < 0.6) {
-            log.info("[Scrape] No match above threshold 0.6");
+            log.debug("[Scrape] No match above threshold 0.6");
             return null;
         }
 
@@ -348,7 +348,7 @@ public class VideoScrapeService {
             String orig1 = best.item.getOriginalTitle();
             String orig2 = second.item.getOriginalTitle();
             if (orig1 != null && orig1.equals(orig2)) {
-                log.info("[Scrape] Duplicate originalTitle '{}': picking metadata-richer entry (meta={} vs {})",
+                log.debug("[Scrape] Duplicate originalTitle '{}': picking metadata-richer entry (meta={} vs {})",
                         orig1, best.metaScore(), second.metaScore());
                 return best.item;
             }
@@ -361,7 +361,7 @@ public class VideoScrapeService {
                 if (candidate.item.getBackdropPath() != null
                         && candidate.metaScore() > best.metaScore()
                         && isSameYear(bestYear, candidate.item.getYear())) {
-                    log.info("[Scrape] Upgrading to metadata-richer entry: '{}' (same year {}, meta={} vs {})",
+                    log.debug("[Scrape] Upgrading to metadata-richer entry: '{}' (same year {}, meta={} vs {})",
                             candidate.item.getTitle(), bestYear, candidate.metaScore(), best.metaScore());
                     return candidate.item;
                 }
