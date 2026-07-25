@@ -60,11 +60,6 @@ public class CoverArtService {
 
     private boolean downloadImage(String imageUrl, Path targetPath) {
         try {
-            if (Files.exists(targetPath)) {
-                log.debug("Cover already exists: {}", targetPath);
-                return true;
-            }
-
             String fullUrl = imageUrl.startsWith("http") ? imageUrl : IMAGE_BASE_URL + "/" + imageSize + imageUrl;
 
             log.debug("Downloading cover: {} -> {}", fullUrl, targetPath);
