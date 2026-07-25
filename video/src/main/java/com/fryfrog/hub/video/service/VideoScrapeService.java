@@ -495,7 +495,10 @@ public class VideoScrapeService {
                 }
             }
 
-            // 创建/绑定系列
+            // 创建/绑定系列（先清理旧 series）
+            if (video.getSeries() != null) {
+                seriesService.removeVideoFromSeries(video);
+            }
             VideoSeries series = seriesService.getOrCreateAndBindSeries(tvDetail.getName(), tmdbId);
             seriesService.assignVideoToSeries(video, series);
             boolean resolvedAdult = isAdult || Boolean.TRUE.equals(tvDetail.getAdult());
