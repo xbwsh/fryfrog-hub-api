@@ -147,27 +147,30 @@ public class VideoScrapeService {
                     // Phase 1: TMDB 搜索（无锁）
                     List<TmdbSearchResult.TmdbSearchItem> results = searchFromTmdb(query, mediaTypeFilter);
                     if (results.isEmpty()) {
-                        log.debug("[Scrape] No TMDB results for: '{}'", video.getTitle());
+                        log.info("[Scrape] No TMDB results for: '{}'", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                         continue;
                     }
 
-                    log.debug("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
+                    log.info("[Scrape] Found {} TMDB results for '{}'", results.size(), video.getTitle());
                     for (var r : results) {
-                        log.debug("[Scrape] Result: id={}, title='{}', originalTitle='{}', name='{}', originalName='{}'",
-                                r.getId(), r.getTitle(), r.getOriginalTitle(), r.getName(), r.getOriginalName());
+                        log.info("[Scrape] Result: id={}, title='{}', originalTitle='{}', backdrop={}",
+                                r.getId(), r.getTitle(), r.getOriginalTitle(),
+                                r.getBackdropPath() != null ? "yes" : "no");
                     }
 
                     TmdbSearchResult.TmdbSearchItem bestMatch = pickBestTmdbMatch(results, query);
                     if (bestMatch == null) {
-                        log.debug("[Scrape] No confident TMDB match for: '{}' (best score < 0.6)", video.getTitle());
+                        log.info("[Scrape] No confident TMDB match for: '{}' (best score < 0.6)", video.getTitle());
                         markScrapeAttempted(video);
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
                         continue;
                     }
 
-                    log.debug("[Scrape] Matched '{}' -> TMDB {} '{}' ({})", video.getTitle(), bestMatch.getId(), bestMatch.getTitle(), bestMatch.getMediaType());
+                    log.info("[Scrape] Matched '{}' -> TMDB {} '{}' (backdrop={})",
+                            video.getTitle(), bestMatch.getId(), bestMatch.getTitle(),
+                            bestMatch.getBackdropPath() != null ? "yes" : "no");
 
                     boolean isAdult = Boolean.TRUE.equals(bestMatch.getAdult());
 
@@ -287,11 +290,11 @@ public class VideoScrapeService {
             String name = r.getTitle();
             String originalName = r.getOriginalTitle();
             if (name != null && (name.equals(cleanedQuery) || name.equals(query))) {
-                log.debug("[Scrape] Exact match: '{}' == '{}'", query, name);
+                log.info("[Scrape] Exact match: '{}' == '{}'", query, name);
                 return r;
             }
             if (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query))) {
-                log.debug("[Scrape] Exact match: '{}' == '{}'", query, originalName);
+                log.info("[Scrape] Exact match: '{}' == '{}'", query, originalName);
                 return r;
             }
         }
@@ -314,7 +317,7 @@ public class VideoScrapeService {
             }
             double metaScore = calculateMetadataCompleteness(r);
             scored.add(new ScoredItem(r, titleScore, metaScore));
-            log.debug("[Scrape] Score: '{}' vs '{}'/'{}' title={} meta={} total={}",
+            log.info("[Scrape] Score: '{}' vs '{}'/'{}' title={} meta={} total={}",
                     cleanedQuery, name, originalName, titleScore, metaScore, titleScore + metaScore);
         }
 
@@ -322,7 +325,7 @@ public class VideoScrapeService {
         scored.sort((a, b) -> Double.compare(b.total(), a.total()));
 
         if (scored.isEmpty() || scored.getFirst().total() < 0.6) {
-            log.debug("[Scrape] No match above threshold 0.6");
+            log.info("[Scrape] No match above threshold 0.6");
             return null;
         }
 
@@ -335,7 +338,7 @@ public class VideoScrapeService {
             String orig1 = best.item.getOriginalTitle();
             String orig2 = second.item.getOriginalTitle();
             if (orig1 != null && orig1.equals(orig2)) {
-                log.debug("[Scrape] Duplicate originalTitle '{}': picking metadata-richer entry (meta={} vs {})",
+                log.info("[Scrape] Duplicate originalTitle '{}': picking metadata-richer entry (meta={} vs {})",
                         orig1, best.metaScore(), second.metaScore());
                 return best.item;
             }
@@ -348,7 +351,7 @@ public class VideoScrapeService {
                 if (candidate.item.getBackdropPath() != null
                         && candidate.metaScore() > best.metaScore()
                         && isSameYear(bestYear, candidate.item.getYear())) {
-                    log.debug("[Scrape] Upgrading to metadata-richer entry: '{}' (same year {}, meta={} vs {})",
+                    log.info("[Scrape] Upgrading to metadata-richer entry: '{}' (same year {}, meta={} vs {})",
                             candidate.item.getTitle(), bestYear, candidate.metaScore(), best.metaScore());
                     return candidate.item;
                 }
