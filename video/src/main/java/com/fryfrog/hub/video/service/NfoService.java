@@ -262,8 +262,6 @@ public class NfoService {
                     } else {
                         result = Paths.get(newPath);
                     }
-                    log.info("[NfoService] getMetadataDir: oldShow='{}', newShow='{}', result='{}'",
-                            dirName, showName, result);
                     return result;
                 }
                 break;

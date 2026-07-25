@@ -63,9 +63,6 @@ public class VideoOrganizeService {
                 Path oldDir = Paths.get(video.getFilePath()).getParent();
                 Path metadataDir = nfoService.getMetadataDir(video);
 
-                log.info("[Organize] Video '{}': oldDir='{}', metadataDir='{}'",
-                        video.getTitle(), oldDir, metadataDir);
-
                 if (oldDir.equals(metadataDir)) {
                     skipped++;
                     continue;
