@@ -209,6 +209,8 @@ public class NfoService {
      * 计算视频的元数据目录（NFO、封面等存放位置）
      * 电视剧：{剧名}/第 X 季/第 Y 集/
      * 电影：{电影名}/
+     *
+     * 当标题变更（如绑定新 TMDB 条目）时，会找到旧的剧名目录并替换为新标题。
      */
     public Path getMetadataDir(Video video) {
         Path videoPath = Paths.get(video.getFilePath());
@@ -220,18 +222,16 @@ public class NfoService {
         String seasonDirName = "第 " + season + " 季";
         String episodeDirName = "第 " + episode + " 集";
 
-        // 向上查找 showName 目录
+        // 1. 向上查找 showName 目录（新标题）
         Path checkDir = videoDir;
         while (checkDir != null) {
             if (checkDir.getFileName() != null && cleanTitle(checkDir.getFileName().toString()).equals(showName)) {
                 if ("tv".equalsIgnoreCase(video.getMediaType())) {
                     Path seasonDir = checkDir.resolve(seasonDirName);
                     Path episodeDir = seasonDir.resolve(episodeDirName);
-                    // 如果已在正确的集目录下，直接返回
                     if (videoDir.equals(episodeDir)) {
                         return videoDir;
                     }
-                    // 否则返回集目录（会在季目录下创建）
                     return episodeDir;
                 }
                 return checkDir;
@@ -239,11 +239,35 @@ public class NfoService {
             checkDir = checkDir.getParent();
         }
 
-        // 未在任何 showName 目录下，在当前目录创建结构
+        // 2. 向上查找旧的剧名目录（标题变更场景：如 /第一次的辣妹/第 1 季/第 1 集/）
+        //    找到旧的剧名目录后，替换为新标题
+        checkDir = videoDir;
+        while (checkDir != null) {
+            if (checkDir.getFileName() != null) {
+                String dirName = checkDir.getFileName().toString();
+                // 跳过"第 X 季"和"第 X 集"目录
+                if (java.util.regex.Pattern.matches("第\\s*\\d+\\s*季", dirName)
+                        || java.util.regex.Pattern.matches("第\\s*\\d+\\s*集", dirName)) {
+                    checkDir = checkDir.getParent();
+                    continue;
+                }
+                // 找到了一个看起来像剧名的目录，用它作为基础路径
+                Path parentOfShow = checkDir.getParent();
+                if (parentOfShow != null) {
+                    Path newShowDir = parentOfShow.resolve(showName);
+                    if ("tv".equalsIgnoreCase(video.getMediaType())) {
+                        return newShowDir.resolve(seasonDirName).resolve(episodeDirName);
+                    }
+                    return newShowDir;
+                }
+            }
+            checkDir = checkDir.getParent();
+        }
+
+        // 3. 未找到任何目录结构，在当前目录创建
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
             return videoDir.resolve(showName).resolve(seasonDirName).resolve(episodeDirName);
         }
-
         return videoDir.resolve(showName);
     }
 
