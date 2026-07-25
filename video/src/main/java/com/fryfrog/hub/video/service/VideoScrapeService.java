@@ -665,7 +665,15 @@ public class VideoScrapeService {
     // ==================== 元数据更新 ====================
 
     private void updateVideoFromMovieDetail(Video video, TmdbMovieDetail detail) {
-        video.setTitle(detail.getTitle());
+        // 保留扫描时的中文标题：如果 TMDB 标题不含中文，不覆盖
+        String existingTitle = video.getTitle();
+        String tmdbTitle = detail.getTitle();
+        if (existingTitle != null && TitleCleaner.hasCJK(existingTitle)
+                && (tmdbTitle == null || !TitleCleaner.hasCJK(tmdbTitle))) {
+            log.info("[Scrape] Preserving Chinese title '{}' over TMDB title '{}'", existingTitle, tmdbTitle);
+        } else {
+            video.setTitle(tmdbTitle);
+        }
         video.setOriginalTitle(detail.getOriginalTitle());
         video.setOverview(detail.getOverview());
         video.setYear(detail.getYear());
@@ -683,7 +691,15 @@ public class VideoScrapeService {
     }
 
     private void updateVideoFromTvDetail(Video video, TmdbTvDetail detail) {
-        video.setTitle(detail.getName());
+        // 保留扫描时的中文标题：如果 TMDB 标题不含中文，不覆盖
+        String existingTitle = video.getTitle();
+        String tmdbTitle = detail.getName();
+        if (existingTitle != null && TitleCleaner.hasCJK(existingTitle)
+                && (tmdbTitle == null || !TitleCleaner.hasCJK(tmdbTitle))) {
+            log.info("[Scrape] Preserving Chinese title '{}' over TMDB title '{}'", existingTitle, tmdbTitle);
+        } else {
+            video.setTitle(tmdbTitle);
+        }
         video.setOriginalTitle(detail.getOriginalName());
         video.setOverview(detail.getOverview());
         video.setYear(detail.getYear());
