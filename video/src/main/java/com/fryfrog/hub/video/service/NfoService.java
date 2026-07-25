@@ -1,7 +1,10 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
@@ -19,8 +22,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 @Service
+@RequiredArgsConstructor
 @Slf4j
 public class NfoService {
+
+    private final MediaLibraryService mediaLibraryService;
 
     // ==================== NFO 生成 ====================
 
@@ -222,6 +228,19 @@ public class NfoService {
         String seasonDirName = "第 " + season + " 季";
         String episodeDirName = "第 " + episode + " 集";
 
+        // 确定库根路径，作为基准目录（防止文件路径丢失了中间目录）
+        Path libraryRoot = null;
+        if (video.getLibraryId() != null) {
+            try {
+                MediaLibrary lib = mediaLibraryService.getLibraryById(video.getLibraryId());
+                if (lib != null && lib.getPath() != null) {
+                    libraryRoot = Paths.get(lib.getPath()).normalize();
+                }
+            } catch (Exception e) {
+                log.debug("[NfoService] Failed to get library path: {}", e.getMessage());
+            }
+        }
+
         // 1. 向上查找 showName 目录（新标题）
         Path checkDir = videoDir;
         while (checkDir != null) {
@@ -237,6 +256,19 @@ public class NfoService {
                 return checkDir;
             }
             checkDir = checkDir.getParent();
+        }
+
+        // 1b. 如果有库根路径且文件路径不在库路径下，用库路径作为基准
+        if (libraryRoot != null) {
+            String dirStr = videoDir.toString();
+            String libStr = libraryRoot.toString();
+            if (!dirStr.startsWith(libStr)) {
+                log.info("[NfoService] File path '{}' outside library root '{}', using library root", dirStr, libStr);
+                if ("tv".equalsIgnoreCase(video.getMediaType())) {
+                    return libraryRoot.resolve(showName).resolve(seasonDirName).resolve(episodeDirName);
+                }
+                return libraryRoot.resolve(showName);
+            }
         }
 
         // 2. 向上查找旧的剧名目录（标题变更场景）
