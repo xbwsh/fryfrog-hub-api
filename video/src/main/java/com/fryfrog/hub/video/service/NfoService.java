@@ -240,7 +240,7 @@ public class NfoService {
         }
 
         // 2. 向上查找旧的剧名目录（标题变更场景）
-        //    找到旧的剧名目录后，替换为新标题
+        //    在完整路径中替换旧剧名为新标题，保留所有父级目录（如 anime）
         checkDir = videoDir;
         while (checkDir != null) {
             if (checkDir.getFileName() != null) {
@@ -251,20 +251,22 @@ public class NfoService {
                     checkDir = checkDir.getParent();
                     continue;
                 }
-                // 找到了一个看起来像剧名的目录，用它作为基础路径
-                Path parentOfShow = checkDir.getParent();
-                if (parentOfShow != null) {
-                    Path newShowDir = parentOfShow.resolve(showName);
+                // 找到了一个看起来像剧名的目录，且名称与新标题不同
+                if (!cleanTitle(dirName).equals(showName)) {
+                    // 在完整路径中替换旧剧名为新标题
+                    String oldPath = videoDir.toString();
+                    String newPath = oldPath.replace(dirName, showName);
                     Path result;
                     if ("tv".equalsIgnoreCase(video.getMediaType())) {
-                        result = newShowDir.resolve(seasonDirName).resolve(episodeDirName);
+                        result = Paths.get(newPath).resolve(seasonDirName).resolve(episodeDirName);
                     } else {
-                        result = newShowDir;
+                        result = Paths.get(newPath);
                     }
-                    log.info("[NfoService] getMetadataDir: oldShowDir='{}', parent='{}', result='{}'",
-                            checkDir, parentOfShow, result);
+                    log.info("[NfoService] getMetadataDir: oldShow='{}', newShow='{}', result='{}'",
+                            dirName, showName, result);
                     return result;
                 }
+                break;
             }
             checkDir = checkDir.getParent();
         }
