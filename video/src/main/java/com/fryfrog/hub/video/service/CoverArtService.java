@@ -29,27 +29,13 @@ public class CoverArtService {
 
     private static final String IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
 
-    public boolean downloadPoster(Video video) {
-        if (video.getPosterUrl() == null) {
-            log.warn("No poster URL for video: {}", video.getTitle());
-            return false;
-        }
-
-        return downloadImage(video.getPosterUrl(), nfoService.getPosterPath(video));
-    }
-
-    public boolean downloadFanart(Video video) {
-        if (video.getBackdropUrl() == null) {
-            log.warn("No backdrop URL for video: {}", video.getTitle());
-            return false;
-        }
-
-        return downloadImage(video.getBackdropUrl(), nfoService.getFanartPath(video));
-    }
-
     public boolean downloadAllCovers(Video video) {
-        boolean posterOk = downloadPoster(video);
-        boolean fanartOk = downloadFanart(video);
+        return downloadAllCovers(video, false);
+    }
+
+    public boolean downloadAllCovers(Video video, boolean force) {
+        boolean posterOk = downloadPoster(video, force);
+        boolean fanartOk = downloadFanart(video, force);
 
         if (posterOk || fanartOk) {
             updateVideoCoverPaths(video, posterOk, fanartOk);
@@ -58,8 +44,37 @@ public class CoverArtService {
         return posterOk || fanartOk;
     }
 
-    private boolean downloadImage(String imageUrl, Path targetPath) {
+    public boolean downloadPoster(Video video) {
+        return downloadPoster(video, false);
+    }
+
+    public boolean downloadPoster(Video video, boolean force) {
+        if (video.getPosterUrl() == null) {
+            log.warn("No poster URL for video: {}", video.getTitle());
+            return false;
+        }
+        return downloadImage(video.getPosterUrl(), nfoService.getPosterPath(video), force);
+    }
+
+    public boolean downloadFanart(Video video) {
+        return downloadFanart(video, false);
+    }
+
+    public boolean downloadFanart(Video video, boolean force) {
+        if (video.getBackdropUrl() == null) {
+            log.warn("No backdrop URL for video: {}", video.getTitle());
+            return false;
+        }
+        return downloadImage(video.getBackdropUrl(), nfoService.getFanartPath(video), force);
+    }
+
+    private boolean downloadImage(String imageUrl, Path targetPath, boolean force) {
         try {
+            if (!force && Files.exists(targetPath)) {
+                log.debug("Cover already exists: {}", targetPath);
+                return true;
+            }
+
             String fullUrl = imageUrl.startsWith("http") ? imageUrl : IMAGE_BASE_URL + "/" + imageSize + imageUrl;
 
             log.debug("Downloading cover: {} -> {}", fullUrl, targetPath);

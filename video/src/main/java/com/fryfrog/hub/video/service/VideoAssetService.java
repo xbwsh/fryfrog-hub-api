@@ -52,6 +52,15 @@ public class VideoAssetService {
      */
     @Transactional
     public void batchGenerateAssets(List<Video> videos) {
+        batchGenerateAssets(videos, false);
+    }
+
+    /**
+     * 批量生成资产（NFO + 封面 + 演员图片）
+     * @param force 是否强制重新下载封面
+     */
+    @Transactional
+    public void batchGenerateAssets(List<Video> videos, boolean force) {
         log.debug("[Asset] Starting batch asset generation for {} videos", videos.size());
 
         int success = 0;
@@ -61,7 +70,7 @@ public class VideoAssetService {
             try {
                 // 重新获取视频（带 series 关联），避免懒加载问题
                 Video freshVideo = videoRepository.findById(video.getId()).orElse(video);
-                generateNfoAndCovers(freshVideo);
+                generateNfoAndCovers(freshVideo, force);
                 success++;
             } catch (Exception e) {
                 failed++;
@@ -76,6 +85,13 @@ public class VideoAssetService {
      * 为单个视频生成 NFO 和封面
      */
     public void generateNfoAndCovers(Video video) {
+        generateNfoAndCovers(video, false);
+    }
+
+    /**
+     * 为单个视频生成 NFO 和封面
+     */
+    public void generateNfoAndCovers(Video video, boolean force) {
         // 生成 NFO
         try {
             nfoService.generateNfo(video);
@@ -97,7 +113,7 @@ public class VideoAssetService {
 
         // 下载封面并保存路径
         try {
-            boolean downloaded = coverArtService.downloadAllCovers(video);
+            boolean downloaded = coverArtService.downloadAllCovers(video, force);
             if (downloaded) {
                 DatabaseWriteLock.runInWriteLock(() -> videoRepository.save(video));
                 log.debug("[Asset] Downloaded covers for: {}", video.getTitle());

@@ -203,8 +203,8 @@ public class VideoController {
             // 2. 重命名文件 + 移动到元数据目录
             Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
 
-            // 3. 生成 NFO + 下载封面
-            assetService.batchGenerateAssets(boundVideos);
+            // 3. 生成 NFO + 下载封面（强制覆盖）
+            assetService.batchGenerateAssets(boundVideos, true);
 
             Map<String, Object> result = new java.util.HashMap<>();
             result.put("total", boundVideos.size());
@@ -247,8 +247,8 @@ public class VideoController {
             // 重命名文件
             Map<String, Object> organizeResult = organizeService.batchOrganize(results);
 
-            // 生成 NFO + 下载封面
-            assetService.batchGenerateAssets(results);
+            // 生成 NFO + 下载封面（强制覆盖）
+            assetService.batchGenerateAssets(results, true);
 
             Map<String, Object> result = new java.util.HashMap<>();
             result.put("total", results.size());
