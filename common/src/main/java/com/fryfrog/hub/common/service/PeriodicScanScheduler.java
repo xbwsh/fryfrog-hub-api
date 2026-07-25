@@ -27,12 +27,29 @@ public class PeriodicScanScheduler implements ApplicationListener<ContextRefresh
     private ScheduledExecutorService scheduler;
     private final List<Runnable> scanTasks = new ArrayList<>();
 
+    /** 忙碌标记：bind/refresh 期间设为 true，periodic-scan 跳过执行 */
+    private volatile boolean busy = false;
+
     public PeriodicScanScheduler(SystemSettingService settingService) {
         this.settingService = settingService;
     }
 
     public void registerTask(Runnable task) {
         scanTasks.add(task);
+    }
+
+    /** 标记为忙碌，periodic-scan 将跳过 */
+    public void setBusy(boolean busy) {
+        this.busy = busy;
+        if (busy) {
+            log.info("[Scheduler] Marked as busy, periodic scan will skip");
+        } else {
+            log.info("[Scheduler] Marked as idle, periodic scan will resume");
+        }
+    }
+
+    public boolean isBusy() {
+        return busy;
     }
 
     @Override
@@ -66,6 +83,10 @@ public class PeriodicScanScheduler implements ApplicationListener<ContextRefresh
     private void runAll() {
         if (scanTasks.isEmpty()) return;
         if (!settingService.getBoolean(SWITCH_KEY, true)) return;
+        if (busy) {
+            log.debug("[Scheduler] Skipping periodic scan: busy");
+            return;
+        }
         for (Runnable task : scanTasks) {
             try {
                 task.run();

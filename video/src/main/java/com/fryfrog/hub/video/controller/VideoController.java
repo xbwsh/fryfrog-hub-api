@@ -3,6 +3,7 @@ package com.fryfrog.hub.video.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.HanimeMetadata;
@@ -66,6 +67,7 @@ public class VideoController {
     private final ScrapeProgressService scrapeProgressService;
     private final VideoOrganizeService organizeService;
     private final VideoAssetService assetService;
+    private final PeriodicScanScheduler scanScheduler;
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
@@ -192,20 +194,26 @@ public class VideoController {
             @RequestBody VideoBindRequest request) {
         log.info("[Bind] Binding video id={} to TMDB {} ({})", id, request.getTmdbId(), request.getMediaType());
 
-        // 1. 绑定整个系列
-        List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
+        // 暂停 periodic-scan，防止并发冲突
+        scanScheduler.setBusy(true);
+        try {
+            // 1. 绑定整个系列
+            List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
 
-        // 2. 重命名文件 + 移动到元数据目录
-        Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
+            // 2. 重命名文件 + 移动到元数据目录
+            Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
 
-        // 3. 生成 NFO + 下载封面
-        assetService.batchGenerateAssets(boundVideos);
+            // 3. 生成 NFO + 下载封面
+            assetService.batchGenerateAssets(boundVideos);
 
-        Map<String, Object> result = new java.util.HashMap<>();
-        result.put("total", boundVideos.size());
-        result.put("organize", organizeResult);
-        result.put("videos", boundVideos.stream().map(this::toDTO).toList());
-        return ResponseEntity.ok(ApiResponse.success(result));
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("total", boundVideos.size());
+            result.put("organize", organizeResult);
+            result.put("videos", boundVideos.stream().map(this::toDTO).toList());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } finally {
+            scanScheduler.setBusy(false);
+        }
     }
 
     @PostMapping("/{id:\\d+}/tmdb/unbind")
@@ -228,14 +236,28 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/tmdb/refresh")
-    @Operation(summary = "刷新TMDB元数据", description = "重新刮削该视频所属系列的所有视频（同tmdbId）")
+    @Operation(summary = "刷新TMDB元数据", description = "重新搜索TMDB并绑定，同时重命名文件")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
-        List<Video> results = service.rescrapeVideo(id);
-        return ResponseEntity.ok(ApiResponse.success(Map.of(
-                "total", results.size(),
-                "videos", results.stream().map(this::toDTO).toList()
-        )));
+        // 暂停 periodic-scan，防止并发冲突
+        scanScheduler.setBusy(true);
+        try {
+            List<Video> results = service.rescrapeVideo(id);
+
+            // 重命名文件
+            Map<String, Object> organizeResult = organizeService.batchOrganize(results);
+
+            // 生成 NFO + 下载封面
+            assetService.batchGenerateAssets(results);
+
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("total", results.size());
+            result.put("organize", organizeResult);
+            result.put("videos", results.stream().map(this::toDTO).toList());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } finally {
+            scanScheduler.setBusy(false);
+        }
     }
 
     @PostMapping("/tmdb/rescrape-library/{libraryId}")
