@@ -3,13 +3,9 @@ services:
     image: ghcr.io/xbwsh/fryfrog-hub-api:latest
     container_name: fryfrog-hub-api
     restart: unless-stopped
-    ports:
-      - "20058:20058"
+    network_mode: host
     environment:
       - DB_PATH=/data/fryfrog.db
     volumes:
       - ./db:/data
-      # - /your/music/path:/data/media/music
-      # - /your/video/path:/data/media/video
-      # - /your/comic/path:/data/media/comic
-      # - /your/ebook/path:/data/media/ebook
+      - /vol00/HGST HSH721414ALE6M4/jav/anime:/data/media/anime
