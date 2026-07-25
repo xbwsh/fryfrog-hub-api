@@ -286,15 +286,25 @@ public class VideoScrapeService {
         String cleanedQuery = TitleCleaner.cleanForSearch(query);
 
         // 1. 精确匹配 title 或 original_title
+        //    如果精确匹配的条目缺少 backdrop，尝试找同 originalTitle 的更完整条目
         for (var r : results) {
             String name = r.getTitle();
             String originalName = r.getOriginalTitle();
-            if (name != null && (name.equals(cleanedQuery) || name.equals(query))) {
-                log.info("[Scrape] Exact match: '{}' == '{}'", query, name);
-                return r;
-            }
-            if (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query))) {
-                log.info("[Scrape] Exact match: '{}' == '{}'", query, originalName);
+            boolean exact = (name != null && (name.equals(cleanedQuery) || name.equals(query)))
+                    || (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query)));
+            if (exact) {
+                log.info("[Scrape] Exact match: '{}'", r.getTitle());
+                // 尝试找同 originalTitle 且有 backdrop 的更完整条目
+                if (r.getBackdropPath() == null && originalName != null) {
+                    for (var alt : results) {
+                        if (alt == r) continue;
+                        if (originalName.equals(alt.getOriginalTitle()) && alt.getBackdropPath() != null) {
+                            log.info("[Scrape] Upgrading to metadata-richer entry with same originalTitle '{}': id={}",
+                                    originalName, alt.getId());
+                            return alt;
+                        }
+                    }
+                }
                 return r;
             }
         }
