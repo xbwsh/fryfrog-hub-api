@@ -49,6 +49,9 @@ public class VideoDTO {
     @Schema(description = "文件名", example = "流浪地球2.mkv")
     private String fileName;
 
+    @Schema(description = "原始文件名（刮削/重命名前）", example = "[小组] 流浪地球2 1080p.mkv")
+    private String originalFileName;
+
     @Schema(description = "文件大小（字节）", example = "10737418240")
     private Long fileSize;
 
@@ -158,6 +161,7 @@ public class VideoDTO {
         dto.setDurationMinutes(video.getDurationMinutes());
         dto.setOverview(video.getOverview());
         dto.setFileName(video.getFileName());
+        dto.setOriginalFileName(video.getOriginalFileName());
         dto.setFileSize(video.getFileSize());
         dto.setFormat(video.getFormat());
         dto.setFavorite(video.getFavorite());

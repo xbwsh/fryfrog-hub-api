@@ -51,8 +51,9 @@ public class VideoScanService {
         log.debug("[Scan] Start scanning directory: {} (libraryId={})", directoryPath, libraryId);
         long startTime = System.currentTimeMillis();
 
-        // Phase 1: 清理无效记录（需要写锁）
+        // Phase 1: 清理无效记录 + 回填原始文件名（需要写锁）
         DatabaseWriteLock.runInWriteLock(() -> {
+            backfillOriginalFileName();
             cleanupInvalidRecords();
             cleanupDuplicateSeries();
         });
@@ -133,6 +134,9 @@ public class VideoScanService {
                 log.debug("[Scan] Updating moved video path: {} -> {}", existing.getFilePath(), absolutePath);
                 existing.setFilePath(absolutePath);
                 existing.setFileName(fileName);
+                if (existing.getOriginalFileName() == null) {
+                    existing.setOriginalFileName(fileName);
+                }
                 existing.setFileSize(file.length());
                 existing.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
                 if (libraryId != null) {
@@ -152,6 +156,9 @@ public class VideoScanService {
         video.setTitle(cleanTitle.isBlank() ? baseName : cleanTitle);
         video.setFilePath(absolutePath);
         video.setFileName(fileName);
+        if (video.getOriginalFileName() == null) {
+            video.setOriginalFileName(fileName);
+        }
         video.setFileSize(file.length());
         video.setFormat(TitleCleaner.getFileExtension(fileName).toUpperCase());
 
@@ -379,6 +386,24 @@ public class VideoScanService {
     private void cleanupDuplicateSeries() {
         // Delegate to SeriesService if needed
         log.debug("[Cleanup] Checking for duplicate series...");
+    }
+
+    /**
+     * 回填所有 originalFileName 为 null 的视频记录。
+     * 对于已被重命名的老视频，回填的是当前（重命名后的）文件名，
+     * 作为"已知的最近文件名"保留；新扫描的视频会记录真正的原始文件名。
+     */
+    private void backfillOriginalFileName() {
+        List<Video> allVideos = repository.findAll();
+        List<Video> toUpdate = allVideos.stream()
+                .filter(v -> v.getOriginalFileName() == null)
+                .toList();
+        if (toUpdate.isEmpty()) return;
+        for (Video v : toUpdate) {
+            v.setOriginalFileName(v.getFileName());
+        }
+        repository.saveAll(toUpdate);
+        log.info("[Scan] Backfilled originalFileName for {} videos", toUpdate.size());
     }
 
     private void cleanupEmptySeries() {

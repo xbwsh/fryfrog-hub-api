@@ -286,26 +286,34 @@ public class VideoScrapeService {
         String cleanedQuery = TitleCleaner.cleanForSearch(query);
 
         // 1. 精确匹配 title 或 original_title
-        //    如果精确匹配的条目缺少 backdrop，尝试找同 originalTitle 的更完整条目
+        //    同 originalTitle 的条目优先选择成人条目，再选择元数据更完整的条目
         for (var r : results) {
             String name = r.getTitle();
             String originalName = r.getOriginalTitle();
             boolean exact = (name != null && (name.equals(cleanedQuery) || name.equals(query)))
                     || (originalName != null && (originalName.equals(cleanedQuery) || originalName.equals(query)));
             if (exact) {
-                log.info("[Scrape] Exact match: '{}'", r.getTitle());
-                // 尝试找同 originalTitle 且有 backdrop 的更完整条目
-                if (r.getBackdropPath() == null && originalName != null) {
-                    for (var alt : results) {
-                        if (alt == r) continue;
-                        if (originalName.equals(alt.getOriginalTitle()) && alt.getBackdropPath() != null) {
-                            log.info("[Scrape] Upgrading to metadata-richer entry with same originalTitle '{}': id={}",
-                                    originalName, alt.getId());
-                            return alt;
-                        }
+                var selected = r;
+                if (originalName != null) {
+                    selected = results.stream()
+                            .filter(candidate -> originalName.equals(candidate.getOriginalTitle()))
+                            .max(Comparator
+                                    .comparing((TmdbSearchResult.TmdbSearchItem candidate) ->
+                                            Boolean.TRUE.equals(candidate.getAdult()))
+                                    .thenComparingDouble(this::calculateMetadataCompleteness))
+                            .orElse(r);
+                    if (selected != r && Boolean.TRUE.equals(selected.getAdult())
+                            && !Boolean.TRUE.equals(r.getAdult())) {
+                        log.info("[Scrape] Preferring adult entry with same originalTitle '{}': id={}",
+                                originalName, selected.getId());
+                    } else if (selected != r && r.getBackdropPath() == null
+                            && selected.getBackdropPath() != null) {
+                        log.info("[Scrape] Upgrading to metadata-richer entry with same originalTitle '{}': id={}",
+                                originalName, selected.getId());
                     }
                 }
-                return r;
+                log.info("[Scrape] Exact match: '{}'", selected.getTitle());
+                return selected;
             }
         }
 
@@ -341,25 +349,31 @@ public class VideoScrapeService {
 
         ScoredItem best = scored.getFirst();
 
-        // 4. 同一作品多语言条目处理
-        // 4a. originalTitle 相同 → 选元数据更全的
-        if (scored.size() >= 2) {
-            ScoredItem second = scored.get(1);
-            String orig1 = best.item.getOriginalTitle();
-            String orig2 = second.item.getOriginalTitle();
-            if (orig1 != null && orig1.equals(orig2)) {
-                log.debug("[Scrape] Duplicate originalTitle '{}': picking metadata-richer entry (meta={} vs {})",
-                        orig1, best.metaScore(), second.metaScore());
-                return best.item;
+        // 4. 同一 originalTitle 的条目优先选择成人条目。
+        //    成人状态相同，再按综合评分选择元数据更完整的条目。
+        String bestOriginalTitle = best.item.getOriginalTitle();
+        if (bestOriginalTitle != null) {
+            ScoredItem preferred = scored.stream()
+                    .filter(candidate -> bestOriginalTitle.equals(candidate.item.getOriginalTitle()))
+                    .max(Comparator
+                            .comparing((ScoredItem candidate) -> Boolean.TRUE.equals(candidate.item.getAdult()))
+                            .thenComparingDouble(ScoredItem::total))
+                    .orElse(best);
+            if (preferred != best) {
+                log.info("[Scrape] Preferring adult entry with same originalTitle '{}': id={}",
+                        bestOriginalTitle, preferred.item.getId());
+                best = preferred;
             }
         }
 
-        // 4b. 最佳匹配缺少 backdrop，但有同年份的更完整条目 → 升级
+        // 5. 最佳匹配缺少 backdrop，但有同年份的更完整条目 → 升级
         if (best.item.getBackdropPath() == null && scored.size() >= 2) {
             Integer bestYear = best.item.getYear();
             for (ScoredItem candidate : scored.subList(1, scored.size())) {
                 if (candidate.item.getBackdropPath() != null
                         && candidate.metaScore() > best.metaScore()
+                        && (!Boolean.TRUE.equals(best.item.getAdult())
+                        || Boolean.TRUE.equals(candidate.item.getAdult()))
                         && isSameYear(bestYear, candidate.item.getYear())) {
                     log.debug("[Scrape] Upgrading to metadata-richer entry: '{}' (same year {}, meta={} vs {})",
                             candidate.item.getTitle(), bestYear, candidate.metaScore(), best.metaScore());

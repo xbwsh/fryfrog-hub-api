@@ -165,6 +165,10 @@ public class VideoOrganizeService {
                 return;
             }
 
+            if (video.getOriginalFileName() == null) {
+                video.setOriginalFileName(video.getFileName());
+            }
+
             Path newPath = videoPath.getParent().resolve(newFileName);
 
             // 检查目标路径是否已被其他视频占用（file_path 有 UNIQUE 约束）
