@@ -407,6 +407,74 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
+    @GetMapping("/{id:\\d+}/subtitles")
+    @Operation(summary = "获取外挂字幕列表", description = "返回视频目录中可用的外挂字幕文件列表")
+    public ResponseEntity<ApiResponse<List<Map<String, String>>>> getSubtitles(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+
+        List<Map<String, String>> subtitles = new ArrayList<>();
+        if (videoDir == null) return ResponseEntity.ok(ApiResponse.success(subtitles));
+
+        java.util.Set<String> subtitleExts = java.util.Set.of(".srt", ".ass", ".ssa", ".vtt", ".sub", ".sup", ".idx");
+
+        try (var files = java.nio.file.Files.list(videoDir)) {
+            files.filter(java.nio.file.Files::isRegularFile)
+                    .filter(f -> {
+                        String name = f.getFileName().toString();
+                        return name.startsWith(baseName) && subtitleExts.stream()
+                                .anyMatch(ext -> name.toLowerCase().endsWith(ext));
+                    })
+                    .forEach(f -> {
+                        String name = f.getFileName().toString();
+                        String lang = name.substring(baseName.length() + 1, name.lastIndexOf('.'));
+                        if (lang.isEmpty() || lang.equals(name.substring(0, name.lastIndexOf('.')))) {
+                            lang = "und";
+                        }
+                        Map<String, String> entry = new java.util.LinkedHashMap<>();
+                        entry.put("filename", name);
+                        entry.put("language", lang);
+                        entry.put("url", "/api/v1/video/" + id + "/subtitles/" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8));
+                        subtitles.add(entry);
+                    });
+        } catch (Exception e) {
+            log.debug("[Subtitle] Failed to list subtitles for video {}: {}", id, e.getMessage());
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(subtitles));
+    }
+
+    @GetMapping("/{id:\\d+}/subtitles/{filename:.+}")
+    @Operation(summary = "获取字幕文件", description = "返回指定字幕文件的原始内容")
+    public ResponseEntity<Resource> getSubtitleFile(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "字幕文件名") @PathVariable String filename) {
+        Video video = service.getVideoById(id);
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        if (videoDir == null) return ResponseEntity.notFound().build();
+
+        Path subPath = videoDir.resolve(filename).normalize();
+        // 安全校验，防止路径穿越
+        if (!subPath.startsWith(videoDir)) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (!Files.exists(subPath)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String lower = filename.toLowerCase();
+        MediaType mediaType = MediaType.TEXT_PLAIN;
+        if (lower.endsWith(".vtt")) mediaType = MediaType.parseMediaType("text/vtt");
+        else if (lower.endsWith(".srt")) mediaType = MediaType.parseMediaType("text/plain; charset=utf-8");
+        else if (lower.endsWith(".ass") || lower.endsWith(".ssa")) mediaType = MediaType.parseMediaType("text/plain; charset=utf-8");
+
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .body(new FileSystemResource(subPath.toFile()));
+    }
+
     @GetMapping("/{id:\\d+}/stream")
     @Operation(summary = "视频流播放", description = "支持 Range 请求")
     public void streamVideo(
