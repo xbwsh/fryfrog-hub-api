@@ -40,6 +40,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 
 import java.io.File;
 import java.io.IOException;
@@ -383,7 +384,7 @@ public class VideoController {
     @Operation(summary = "更新播放位置", description = "轻量更新播放位置，可选更新总时长。退出播放器时调用，自动判定是否看完")
     public ResponseEntity<ApiResponse<WatchProgressDTO>> updatePosition(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody UpdatePositionRequest request) {
+            @Valid @RequestBody UpdatePositionRequest request) {
         WatchProgress progress = watchProgressService.updatePosition(id, request.getPosition(), request.getDuration());
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }

@@ -1,12 +1,14 @@
 package com.fryfrog.hub.video.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
 @Schema(description = "更新播放位置请求")
 public class UpdatePositionRequest {
 
+    @NotNull(message = "播放位置不能为空")
     @Schema(description = "播放位置（秒）", example = "3600.5")
     private Double position;
 

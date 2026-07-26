@@ -35,24 +35,6 @@ public class WatchProgressService {
     }
 
     @Transactional
-    public WatchProgress saveProgress(Long videoId, Double positionSeconds, Double durationSeconds) {
-        Video video = videoService.getVideoById(videoId);
-
-        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
-        progress.setVideo(video);
-        progress.setPositionSeconds(positionSeconds);
-        progress.setDurationSeconds(durationSeconds);
-
-        if (durationSeconds != null && durationSeconds > 0) {
-            progress.setCompleted(positionSeconds / durationSeconds >= COMPLETED_THRESHOLD);
-        }
-
-        WatchProgress saved = repository.save(progress);
-        log.debug("Saved progress for video {}: {}s / {}s", videoId, positionSeconds, durationSeconds);
-        return saved;
-    }
-
-    @Transactional
     public WatchProgress updatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
         Video video = videoService.getVideoById(videoId);
 
@@ -93,44 +75,5 @@ public class WatchProgressService {
     @Transactional
     public void deleteProgress(Long videoId) {
         repository.findByVideo_Id(videoId).ifPresent(repository::delete);
-    }
-
-    @Transactional
-    public WatchProgress markAsWatched(Long videoId) {
-        Video video = videoService.getVideoById(videoId);
-
-        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
-        progress.setVideo(video);
-        progress.setCompleted(true);
-
-        if (progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
-            progress.setPositionSeconds(progress.getDurationSeconds());
-        }
-
-        WatchProgress saved = repository.save(progress);
-        log.info("Marked video {} as watched", videoId);
-        return saved;
-    }
-
-    @Transactional
-    public WatchProgress markAsUnwatched(Long videoId) {
-        return setWatched(videoId, false);
-    }
-
-    @Transactional
-    public WatchProgress setWatched(Long videoId, boolean completed) {
-        Video video = videoService.getVideoById(videoId);
-
-        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
-        progress.setVideo(video);
-        progress.setCompleted(completed);
-
-        if (completed && progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
-            progress.setPositionSeconds(progress.getDurationSeconds());
-        }
-
-        WatchProgress saved = repository.save(progress);
-        log.info("Set video {} watched={}", videoId, completed);
-        return saved;
     }
 }

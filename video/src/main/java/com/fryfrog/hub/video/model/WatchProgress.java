@@ -25,6 +25,6 @@ public class WatchProgress extends BaseEntity {
     @Schema(description = "视频总时长（秒）", example = "7200.0")
     private Double durationSeconds;
 
-    @Schema(description = "是否已看完（进度>=90%）", example = "false")
+    @Schema(description = "是否已看完（进度>=95%）", example = "false")
     private Boolean completed = false;
 }
