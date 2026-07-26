@@ -11,8 +11,9 @@ import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.VideoBindRequest;
 import com.fryfrog.hub.video.dto.VideoDTO;
+import com.fryfrog.hub.video.dto.UpdatePositionRequest;
+import com.fryfrog.hub.video.dto.UpdateWatchedRequest;
 import com.fryfrog.hub.video.dto.WatchProgressDTO;
-import com.fryfrog.hub.video.dto.WatchProgressRequest;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.WatchProgress;
@@ -379,21 +380,21 @@ public class VideoController {
     }
 
     @PutMapping("/{id:\\d+}/progress")
-    @Operation(summary = "保存观看进度", description = "保存视频的播放位置和总时长")
-    public ResponseEntity<ApiResponse<WatchProgressDTO>> saveProgress(
+    @Operation(summary = "更新播放位置", description = "轻量更新播放位置，可选更新总时长。退出播放器时调用，自动判定是否看完")
+    public ResponseEntity<ApiResponse<WatchProgressDTO>> updatePosition(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody WatchProgressRequest request) {
-        WatchProgress progress = watchProgressService.saveProgress(id, request.getPosition(), request.getDuration());
+            @RequestBody UpdatePositionRequest request) {
+        WatchProgress progress = watchProgressService.updatePosition(id, request.getPosition(), request.getDuration());
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 
     @PutMapping("/{id:\\d+}/watched")
-    @Operation(summary = "设置已观看状态", description = "通过请求体控制视频的已观看状态")
-    public ResponseEntity<ApiResponse<WatchProgressDTO>> setWatched(
+    @Operation(summary = "设置已观看状态", description = "标记视频为已看完或未看完")
+    public ResponseEntity<ApiResponse<WatchProgressDTO>> updateWatched(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody(required = false) WatchProgressRequest request) {
+            @RequestBody UpdateWatchedRequest request) {
         boolean completed = request != null && Boolean.TRUE.equals(request.getCompleted());
-        WatchProgress progress = watchProgressService.setWatched(id, completed);
+        WatchProgress progress = watchProgressService.updateWatched(id, completed);
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 

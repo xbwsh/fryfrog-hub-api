@@ -53,6 +53,44 @@ public class WatchProgressService {
     }
 
     @Transactional
+    public WatchProgress updatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
+        Video video = videoService.getVideoById(videoId);
+
+        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
+        progress.setVideo(video);
+        progress.setPositionSeconds(positionSeconds);
+        if (durationSeconds != null) {
+            progress.setDurationSeconds(durationSeconds);
+        }
+
+        Double dur = progress.getDurationSeconds();
+        if (dur != null && dur > 0) {
+            progress.setCompleted(positionSeconds / dur >= COMPLETED_THRESHOLD);
+        }
+
+        WatchProgress saved = repository.save(progress);
+        log.debug("Updated position for video {}: {}s", videoId, positionSeconds);
+        return saved;
+    }
+
+    @Transactional
+    public WatchProgress updateWatched(Long videoId, boolean completed) {
+        Video video = videoService.getVideoById(videoId);
+
+        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
+        progress.setVideo(video);
+        progress.setCompleted(completed);
+
+        if (completed && progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
+            progress.setPositionSeconds(progress.getDurationSeconds());
+        }
+
+        WatchProgress saved = repository.save(progress);
+        log.debug("Set video {} watched={}", videoId, completed);
+        return saved;
+    }
+
+    @Transactional
     public void deleteProgress(Long videoId) {
         repository.findByVideo_Id(videoId).ifPresent(repository::delete);
     }
