@@ -9,8 +9,8 @@ spring:
       enabled: true
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:54321}/${DB_NAME:fryfroghub}
-    username: ${DB_USERNAME:fryfrog}
-    password: ${DB_PASSWORD:fryfrog}
+    username: ${DB_USERNAME:admin}
+    password: ${DB_PASSWORD:admin}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:

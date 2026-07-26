@@ -5,8 +5,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:fryfroghub}
-      POSTGRES_USER: ${DB_USERNAME:fryfrog}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:fryfrog}
+      POSTGRES_USER: ${DB_USERNAME:admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:admin}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
