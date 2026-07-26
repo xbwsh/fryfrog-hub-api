@@ -247,12 +247,7 @@ public class EbookService {
     }
 
     public Ebook extractAndSaveMetadata(String filePath) {
-        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
-        try {
-            return transactionTemplate.execute(status -> doExtractAndSaveMetadata(filePath));
-        } finally {
-            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
-        }
+        return transactionTemplate.execute(status -> doExtractAndSaveMetadata(filePath));
     }
 
     private Ebook doExtractAndSaveMetadata(String filePath) {
@@ -584,18 +579,13 @@ public class EbookService {
     }
 
     public boolean moveEbookToSeriesFolder(Ebook ebook) {
-        com.fryfrog.hub.common.util.DatabaseWriteLock.lock();
-        try {
-            return transactionTemplate.execute(status -> {
-                try {
-                    return doMoveEbookToSeriesFolder(ebook);
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed to move ebook: " + e.getMessage(), e);
-                }
-            });
-        } finally {
-            com.fryfrog.hub.common.util.DatabaseWriteLock.unlock();
-        }
+        return transactionTemplate.execute(status -> {
+            try {
+                return doMoveEbookToSeriesFolder(ebook);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to move ebook: " + e.getMessage(), e);
+            }
+        });
     }
 
     private boolean doMoveEbookToSeriesFolder(Ebook ebook) throws IOException {

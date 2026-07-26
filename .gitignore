@@ -32,6 +32,7 @@ logs/
 # Environment
 .env
 .env.local
+.env.example
 app/src/main/resources/application-dev.yml
 
 # Media Library (contains media files)
@@ -55,10 +56,3 @@ media-library/
 *.epub
 *.pdf
 *.mobi
-
-# SQLite Database
-data/
-*.db
-*.db-journal
-*.db-wal
-*.db-shm

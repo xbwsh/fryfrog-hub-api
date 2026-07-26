@@ -4,7 +4,6 @@ import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
-import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.model.Video;
@@ -162,12 +161,7 @@ public class VideoService {
     // ==================== Hanime ====================
 
     public Video scrapeAndBindHanime(Long videoId, String hanimeId) {
-        DatabaseWriteLock.lock();
-        try {
-            return transactionTemplate.execute(status -> doScrapeAndBindHanime(videoId, hanimeId));
-        } finally {
-            DatabaseWriteLock.unlock();
-        }
+        return transactionTemplate.execute(status -> doScrapeAndBindHanime(videoId, hanimeId));
     }
 
     @Transactional

@@ -1,6 +1,5 @@
 package com.fryfrog.hub.video.service;
 
-import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.repository.VideoRepository;
@@ -95,9 +94,9 @@ public class VideoOrganizeService {
                     // 移动外挂字幕文件
                     moveAssociatedSubtitles(oldDir, metadataDir, baseName);
 
-                    // Phase 2: DB 更新（写锁内）
+                    // Phase 2: DB 更新
                     video.setFilePath(newVideoPath.toString());
-                    DatabaseWriteLock.runInWriteLock(() -> repository.save(video));
+                    repository.save(video);
                     moved++;
 
                     // Phase 3: 移动 actors 目录（失败不影响 video 路径保存）
@@ -190,7 +189,7 @@ public class VideoOrganizeService {
 
             video.setFileName(newFileName);
             video.setFilePath(newPath.toString());
-            DatabaseWriteLock.runInWriteLock(() -> repository.save(video));
+            repository.save(video);
             log.info("[Organize] Renamed video: {} -> {}", oldBaseName, newFileName);
         } catch (Exception e) {
             log.warn("[Organize] Failed to rename video {}: {}", video.getFileName(), e.getMessage());
@@ -234,7 +233,7 @@ public class VideoOrganizeService {
             moveAssociatedSubtitles(videoPath.getParent(), targetPath.getParent(), baseName);
 
             video.setFilePath(targetPath.toString());
-            DatabaseWriteLock.runInWriteLock(() -> repository.save(video));
+            repository.save(video);
         } catch (IOException e) {
             log.error("[Organize] Failed to move video {} to metadata dir: {}", video.getFileName(), e.getMessage(), e);
         }

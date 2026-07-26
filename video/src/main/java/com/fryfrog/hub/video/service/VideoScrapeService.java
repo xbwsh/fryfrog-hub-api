@@ -5,7 +5,6 @@ import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
-import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
@@ -414,15 +413,10 @@ public class VideoScrapeService {
     }
 
     /**
-     * 绑定 TMDB 元数据到视频（写锁内）
+     * 绑定 TMDB 元数据到视频
      */
     public Video scrapeAndBindTmdb(Long videoId, Long tmdbId, String mediaType, boolean isAdult) {
-        DatabaseWriteLock.lock();
-        try {
-            return transactionTemplate.execute(status -> doScrapeAndBind(videoId, tmdbId, mediaType, isAdult));
-        } finally {
-            DatabaseWriteLock.unlock();
-        }
+        return transactionTemplate.execute(status -> doScrapeAndBind(videoId, tmdbId, mediaType, isAdult));
     }
 
     /**
@@ -537,15 +531,10 @@ public class VideoScrapeService {
     // ==================== 解绑 ====================
 
     /**
-     * 解绑 TMDB 元数据（写锁内）
+     * 解绑 TMDB 元数据
      */
     public Video unbindTmdb(Long videoId) {
-        DatabaseWriteLock.lock();
-        try {
-            return transactionTemplate.execute(status -> doUnbindTmdb(videoId));
-        } finally {
-            DatabaseWriteLock.unlock();
-        }
+        return transactionTemplate.execute(status -> doUnbindTmdb(videoId));
     }
 
     @Transactional
@@ -591,46 +580,41 @@ public class VideoScrapeService {
      * 按 tmdbId 批量解绑
      */
     public int unbindByTmdbId(Long tmdbId) {
-        DatabaseWriteLock.lock();
-        try {
-            return transactionTemplate.execute(status -> {
-                List<Video> videos = repository.findAllByTmdbId(tmdbId);
-                log.info("[Unbind] Found {} videos with tmdbId={}", videos.size(), tmdbId);
-                int count = 0;
-                for (Video video : videos) {
-                    log.info("[Unbind] Unbinding video id={}, title='{}', filePath='{}'",
-                            video.getId(), video.getTitle(), video.getFilePath());
-                    cleanupUnboundFiles(video);
-                    cleanupUnboundActors(video);
+        return transactionTemplate.execute(status -> {
+            List<Video> videos = repository.findAllByTmdbId(tmdbId);
+            log.info("[Unbind] Found {} videos with tmdbId={}", videos.size(), tmdbId);
+            int count = 0;
+            for (Video video : videos) {
+                log.info("[Unbind] Unbinding video id={}, title='{}', filePath='{}'",
+                        video.getId(), video.getTitle(), video.getFilePath());
+                cleanupUnboundFiles(video);
+                cleanupUnboundActors(video);
 
-                    video.setTmdbId(null);
-                    video.setMediaType(null);
-                    video.setMetadataSource(null);
-                    video.setOriginalTitle(null);
-                    video.setOverview(null);
-                    video.setPosterUrl(null);
-                    video.setBackdropUrl(null);
-                    video.setImdbId(null);
-                    video.setRating(null);
-                    video.setVoteCount(null);
-                    video.setDirector(null);
-                    video.setActors(null);
-                    video.setGenre(null);
-                    video.setStatus(null);
-                    video.setMetadataUpdatedAt(null);
+                video.setTmdbId(null);
+                video.setMediaType(null);
+                video.setMetadataSource(null);
+                video.setOriginalTitle(null);
+                video.setOverview(null);
+                video.setPosterUrl(null);
+                video.setBackdropUrl(null);
+                video.setImdbId(null);
+                video.setRating(null);
+                video.setVoteCount(null);
+                video.setDirector(null);
+                video.setActors(null);
+                video.setGenre(null);
+                video.setStatus(null);
+                video.setMetadataUpdatedAt(null);
 
-                    if (video.getSeries() != null) {
-                        seriesService.removeVideoFromSeries(video);
-                    }
-
-                    repository.save(video);
-                    count++;
+                if (video.getSeries() != null) {
+                    seriesService.removeVideoFromSeries(video);
                 }
-                return count;
-            });
-        } finally {
-            DatabaseWriteLock.unlock();
-        }
+
+                repository.save(video);
+                count++;
+            }
+            return count;
+        });
     }
 
     // ==================== 重新刮削 ====================

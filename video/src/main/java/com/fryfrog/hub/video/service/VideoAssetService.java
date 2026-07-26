@@ -1,6 +1,5 @@
 package com.fryfrog.hub.video.service;
 
-import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import com.fryfrog.hub.video.model.Video;
@@ -115,7 +114,7 @@ public class VideoAssetService {
         try {
             boolean downloaded = coverArtService.downloadAllCovers(video, force);
             if (downloaded) {
-                DatabaseWriteLock.runInWriteLock(() -> videoRepository.save(video));
+                videoRepository.save(video);
                 log.debug("[Asset] Downloaded covers for: {}", video.getTitle());
             }
         } catch (Exception e) {
@@ -176,7 +175,7 @@ public class VideoAssetService {
         }
 
         if (updated) {
-            DatabaseWriteLock.runInWriteLock(() -> seriesService.saveSeries(series));
+            seriesService.saveSeries(series);
         }
     }
 
@@ -186,10 +185,8 @@ public class VideoAssetService {
     public void saveActors(Video video, String mediaType, Long tmdbId, Object preloadedDetail) {
         try {
             // 清除旧演员
-            DatabaseWriteLock.runInWriteLock(() -> {
-                actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
-                actorRepository.flush();
-            });
+            actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
+            actorRepository.flush();
 
             Path actorsDir = getActorsDir(video, mediaType);
             if (actorsDir == null) return;
@@ -270,7 +267,7 @@ public class VideoAssetService {
             actor.setImagePath(actorPath.toAbsolutePath().toString());
         }
 
-        DatabaseWriteLock.runInWriteLock(() -> actorRepository.save(actor));
+        actorRepository.save(actor);
         return count + 1;
     }
 

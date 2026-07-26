@@ -2,7 +2,6 @@ package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
-import com.fryfrog.hub.common.util.DatabaseWriteLock;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
@@ -19,7 +18,6 @@ import java.util.stream.Stream;
 
 /**
  * 视频扫描服务：负责发现视频文件、提取基础元数据、批量入库。
- * 所有 I/O 操作在写锁外执行，只在 DB 批量写入时短暂持有写锁。
  */
 @Service
 @RequiredArgsConstructor
@@ -51,12 +49,10 @@ public class VideoScanService {
         log.debug("[Scan] Start scanning directory: {} (libraryId={})", directoryPath, libraryId);
         long startTime = System.currentTimeMillis();
 
-        // Phase 1: 清理无效记录 + 回填原始文件名（需要写锁）
-        DatabaseWriteLock.runInWriteLock(() -> {
-            backfillOriginalFileName();
-            cleanupInvalidRecords();
-            cleanupDuplicateSeries();
-        });
+        // Phase 1: 清理无效记录 + 回填原始文件名
+        backfillOriginalFileName();
+        cleanupInvalidRecords();
+        cleanupDuplicateSeries();
 
         // Phase 2: 扫描文件系统（无锁）
         List<Path> videoFiles = collectVideoFiles(directoryPath);
@@ -81,14 +77,12 @@ public class VideoScanService {
             }
         }
 
-        // Phase 4: 批量入库（单次写锁）
-        DatabaseWriteLock.runInWriteLock(() -> {
-            repository.saveAll(videos);
-        });
+        // Phase 4: 批量入库
+        repository.saveAll(videos);
         log.debug("[Scan] Saved {} videos to database", videos.size());
 
-        // Phase 5: 自动分组系列（需要写锁）
-        DatabaseWriteLock.runInWriteLock(this::autoGroupSeries);
+        // Phase 5: 自动分组系列
+        autoGroupSeries();
 
         long elapsed = System.currentTimeMillis() - startTime;
         log.debug("[Scan] Scan complete: {} videos in {}ms (dir={})", videos.size(), elapsed, directoryPath);
