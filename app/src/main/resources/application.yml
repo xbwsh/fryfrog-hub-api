@@ -58,7 +58,7 @@ hanime:
 
 tmdb:
   api-key: ${TMDB_API_KEY:}
-  language: ${TMDB_LANGUAGE:}
+  language: ${TMDB_LANGUAGE:zh-CN}
   image-size: ${TMDB_IMAGE_SIZE:original}
   include-adult: ${TMDB_INCLUDE_ADULT:true}
 

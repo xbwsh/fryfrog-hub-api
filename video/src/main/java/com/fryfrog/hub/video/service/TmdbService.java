@@ -29,8 +29,11 @@ public class TmdbService {
     @Value("${tmdb.api-key:}")
     private String apiKey;
 
-    @Value("${tmdb.language:}")
+    @Value("${tmdb.language:zh-CN}")
     private String language;
+
+    /** 备用语言，默认日文 */
+    private static final String FALLBACK_LANGUAGE = "ja-JP";
 
     @Value("${tmdb.image-size:original}")
     private String imageSize;
@@ -58,6 +61,10 @@ public class TmdbService {
      */
     public String getLanguage() {
         return language;
+    }
+
+    public String getFallbackLanguage() {
+        return FALLBACK_LANGUAGE;
     }
 
     /**

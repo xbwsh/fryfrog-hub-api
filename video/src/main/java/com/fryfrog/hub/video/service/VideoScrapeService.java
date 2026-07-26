@@ -281,6 +281,25 @@ public class VideoScrapeService {
             }
         }
 
+        // 第四次搜索：日文（中文搜索结果为空时尝试日文匹配）
+        if (movieResults.isEmpty() && tvResults.isEmpty()) {
+            log.debug("[Scrape] No results with '{}', trying fallback language '{}'", tmdbService.getLanguage(), tmdbService.getFallbackLanguage());
+            if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+                movieResults = tmdbService.searchMovies(cleanedQuery, tmdbService.getFallbackLanguage());
+            }
+            if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+                tvResults = tmdbService.searchTv(cleanedQuery, tmdbService.getFallbackLanguage());
+            }
+            if (movieResults.isEmpty() && tvResults.isEmpty() && !cleanedQuery.equals(query)) {
+                if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+                    movieResults = tmdbService.searchMovies(query, tmdbService.getFallbackLanguage());
+                }
+                if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+                    tvResults = tmdbService.searchTv(query, tmdbService.getFallbackLanguage());
+                }
+            }
+        }
+
         List<TmdbSearchResult.TmdbSearchItem> allResults = new ArrayList<>(movieResults);
         allResults.addAll(tvResults);
         allResults.sort((a, b) -> {
@@ -495,6 +514,13 @@ public class VideoScrapeService {
             if (tvDetail == null) {
                 throw new ResourceNotFoundException("TMDB TV", "id", tmdbId);
             }
+            // 中文 overview 为空（无中文翻译）时用日文重试
+            if (tvDetail.getOverview() == null || tvDetail.getOverview().isBlank()) {
+                TmdbTvDetail jaDetail = tmdbService.getTvDetail(tmdbId, tmdbService.getFallbackLanguage());
+                if (jaDetail != null && jaDetail.getOverview() != null && !jaDetail.getOverview().isBlank()) {
+                    tvDetail = jaDetail;
+                }
+            }
             updateVideoFromTvDetail(video, tvDetail);
             log.debug("[Scrape] Set posterUrl={}, backdropUrl={} for video: {}", video.getPosterUrl(), video.getBackdropUrl(), video.getTitle());
 
@@ -504,6 +530,13 @@ public class VideoScrapeService {
 
             // 获取剧集详情
             TmdbEpisodeDetail episodeDetail = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1]);
+            // 用日文重试（中文 still_path 或 overview 缺失时）
+            if (episodeDetail == null || episodeDetail.getStillPath() == null) {
+                TmdbEpisodeDetail jaEpisode = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1], tmdbService.getFallbackLanguage());
+                if (jaEpisode != null) {
+                    episodeDetail = jaEpisode;
+                }
+            }
             if (episodeDetail != null) {
                 if (episodeDetail.getOverview() != null && !episodeDetail.getOverview().isBlank()) {
                     video.setOverview(episodeDetail.getOverview());
