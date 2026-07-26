@@ -59,6 +59,15 @@ public abstract class AbstractFileWatcherService {
         return 5;
     }
 
+    /**
+     * 文件被删除时的处理回调（可选）。
+     * 基类会检测监听目录中的文件删除事件并调用此方法。
+     * 默认空实现，子类按需覆盖。
+     */
+    protected void onFileDeleted(Path filePath) {
+        // 默认不处理
+    }
+
     // ==================== 生命周期 ====================
 
     @PostConstruct
@@ -153,7 +162,7 @@ public abstract class AbstractFileWatcherService {
 
     private boolean registerDir(Path dir) {
         try {
-            dir.register(watchService, ENTRY_CREATE);
+            dir.register(watchService, ENTRY_CREATE, ENTRY_DELETE);
             return true;
         } catch (IOException e) {
             log.debug("[{}] Cannot register directory: {} ({})", tag(), dir, e.getMessage());
@@ -175,6 +184,14 @@ public abstract class AbstractFileWatcherService {
 
                     Path name = (Path) event.context();
                     Path fullPath = watchDir.resolve(name);
+
+                    if (kind == ENTRY_DELETE) {
+                        if (isWatchedFile(name)) {
+                            log.debug("[{}] File deleted: {}", tag(), fullPath);
+                            handleFileDeleted(fullPath);
+                        }
+                        continue;
+                    }
 
                     if (Files.isDirectory(fullPath)) {
                         log.debug("[{}] New directory detected, registering: {}", tag(), fullPath);
@@ -203,11 +220,22 @@ public abstract class AbstractFileWatcherService {
     }
 
     private boolean isWatchedFile(Path path) {
-        String name = path.getFileName().toString();
+        return isWatchedFileName(path.getFileName().toString());
+    }
+
+    private boolean isWatchedFileName(String name) {
         int dot = name.lastIndexOf('.');
         if (dot < 0) return false;
         String ext = name.substring(dot + 1).toLowerCase();
         return getWatchedExtensions().contains(ext);
+    }
+
+    private void handleFileDeleted(Path filePath) {
+        try {
+            onFileDeleted(filePath);
+        } catch (Exception e) {
+            log.warn("[{}] Failed to handle file deletion {}: {}", tag(), filePath, e.getMessage());
+        }
     }
 
     // ==================== Debounce ====================
