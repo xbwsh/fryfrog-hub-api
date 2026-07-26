@@ -429,9 +429,13 @@ public class VideoController {
                     })
                     .forEach(f -> {
                         String name = f.getFileName().toString();
-                        String lang = name.substring(baseName.length() + 1, name.lastIndexOf('.'));
-                        if (lang.isEmpty() || lang.equals(name.substring(0, name.lastIndexOf('.')))) {
-                            lang = "und";
+                        // 提取语言标签: 堀与宫村 - S01E01.ass   → und
+                        //              堀与宫村 - S01E01.zh.ass → zh
+                        String suffix = name.substring(baseName.length());
+                        String lang = "und";
+                        if (suffix.startsWith(".")) {
+                            String noExt = suffix.substring(1, suffix.lastIndexOf('.'));
+                            if (!noExt.isEmpty()) lang = noExt;
                         }
                         Map<String, String> entry = new java.util.LinkedHashMap<>();
                         entry.put("filename", name);
