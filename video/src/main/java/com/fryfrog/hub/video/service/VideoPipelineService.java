@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ public class VideoPipelineService {
     private final VideoScrapeService scrapeService;
     private final VideoOrganizeService organizeService;
     private final VideoAssetService assetService;
+    private final VideoRepository videoRepository;
 
     private volatile ExecutorService pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -40,14 +42,39 @@ public class VideoPipelineService {
             return;
         }
 
-        // Phase 5-6: TMDB 刮削
+        // Phase 3: TMDB 刮削
         scrapeService.batchScrapeAndBind(videos);
 
-        // Phase 7: 文件整理
+        // 重新获取视频列表（刮削后 tmdbId 等字段已更新）
+        List<Long> videoIds = videos.stream().map(Video::getId).toList();
+        List<Video> scrapedVideos = videoRepository.findAllById(videoIds);
+        if (!scrapedVideos.isEmpty()) {
+            videos = scrapedVideos;
+        }
+
+        // Phase 4: 保存演员
+        for (Video video : videos) {
+            if (video.getTmdbId() != null && video.getMediaType() != null) {
+                try {
+                    assetService.saveActors(video, video.getMediaType(), video.getTmdbId(), null);
+                } catch (Exception e) {
+                    log.debug("[Pipeline] Failed to save actors for {}: {}", video.getTitle(), e.getMessage());
+                }
+            }
+        }
+
+        // Phase 5: 文件整理
         organizeService.batchOrganize(videos);
 
-        // Phase 8: 资产生成
+        // Phase 6: 资产生成
         assetService.batchGenerateAssets(videos);
+
+        // Phase 7: 清理空目录
+        try {
+            organizeService.cleanupEmptyLibraryDir(directoryPath);
+        } catch (Exception e) {
+            log.debug("[Pipeline] Failed to cleanup empty dirs: {}", e.getMessage());
+        }
 
         long elapsed = System.currentTimeMillis() - startTime;
         log.info("[Pipeline] Full pipeline complete: {} videos in {}ms", videos.size(), elapsed);

@@ -473,13 +473,14 @@ public final class TitleCleaner {
 
     /**
      * 计算两个字符串的相似度（0.0 ~ 1.0）。
-     * 预处理：繁体转简体，转小写，移除所有非字母数字和 CJK 字符。
+     * 预处理：繁体转简体，转小写，移除分隔符/标点，保留字母数字、CJK 和日文假名。
      */
     public static double calculateSimilarity(String s1, String s2) {
         if (s1 == null || s2 == null) return 0;
-        // 繁体转简体，统一比较
-        String a = ChineseConverter.toSimplified(s1).toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
-        String b = ChineseConverter.toSimplified(s2).toLowerCase().replaceAll("[^a-z0-9\\u4e00-\\u9fff]", "");
+        // 保留字母数字、CJK 统一汉字、扩展A、平假名、片假名
+        String keepPattern = "[^a-z0-9\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3040-\\u309f\\u30a0-\\u30ff]";
+        String a = ChineseConverter.toSimplified(s1).toLowerCase().replaceAll(keepPattern, "");
+        String b = ChineseConverter.toSimplified(s2).toLowerCase().replaceAll(keepPattern, "");
         if (a.equals(b)) return 1.0;
         if (a.isEmpty() || b.isEmpty()) return 0;
         int maxLen = Math.max(a.length(), b.length());

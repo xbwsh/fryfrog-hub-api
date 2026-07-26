@@ -240,9 +240,4 @@ public class VideoService {
         return organizeService.batchOrganize(videos);
     }
 
-    public int cleanupInvalidRecords() {
-        log.info("[Video] Cleanup invalid records - delegated to scan service");
-        // 实际清理逻辑在 VideoScanService.cleanupInvalidRecords() 中
-        return 0;
-    }
 }

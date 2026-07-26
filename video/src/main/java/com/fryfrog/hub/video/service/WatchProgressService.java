@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Collection;
 import java.util.Map;
@@ -21,6 +22,7 @@ public class WatchProgressService {
 
     private final WatchProgressRepository repository;
     private final VideoService videoService;
+    private final TransactionTemplate transactionTemplate;
 
     private static final double COMPLETED_THRESHOLD = 0.95;
     private static final int MAX_RETRIES = 3;
@@ -38,54 +40,48 @@ public class WatchProgressService {
     }
 
     public WatchProgress updatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
-        return retryOnLock(() -> doUpdatePosition(videoId, positionSeconds, durationSeconds));
+        return retryOnLock(() -> transactionTemplate.execute(status -> {
+            Video video = videoService.getVideoById(videoId);
+
+            WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
+            progress.setVideo(video);
+            progress.setPositionSeconds(positionSeconds);
+            if (durationSeconds != null) {
+                progress.setDurationSeconds(durationSeconds);
+            }
+
+            Double dur = progress.getDurationSeconds();
+            if (dur != null && dur > 0) {
+                progress.setCompleted(positionSeconds / dur >= COMPLETED_THRESHOLD);
+            }
+
+            WatchProgress saved = repository.save(progress);
+            log.debug("Updated position for video {}: {}s", videoId, positionSeconds);
+            return saved;
+        }));
     }
 
     public WatchProgress updateWatched(Long videoId, boolean completed) {
-        return retryOnLock(() -> doUpdateWatched(videoId, completed));
+        return retryOnLock(() -> transactionTemplate.execute(status -> {
+            Video video = videoService.getVideoById(videoId);
+
+            WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
+            progress.setVideo(video);
+            progress.setCompleted(completed);
+
+            if (completed && progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
+                progress.setPositionSeconds(progress.getDurationSeconds());
+            }
+
+            WatchProgress saved = repository.save(progress);
+            log.debug("Set video {} watched={}", videoId, completed);
+            return saved;
+        }));
     }
 
     @Transactional
     public void deleteProgress(Long videoId) {
         repository.findByVideo_Id(videoId).ifPresent(repository::delete);
-    }
-
-    @Transactional
-    WatchProgress doUpdatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
-        Video video = videoService.getVideoById(videoId);
-
-        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
-        progress.setVideo(video);
-        progress.setPositionSeconds(positionSeconds);
-        if (durationSeconds != null) {
-            progress.setDurationSeconds(durationSeconds);
-        }
-
-        Double dur = progress.getDurationSeconds();
-        if (dur != null && dur > 0) {
-            progress.setCompleted(positionSeconds / dur >= COMPLETED_THRESHOLD);
-        }
-
-        WatchProgress saved = repository.save(progress);
-        log.debug("Updated position for video {}: {}s", videoId, positionSeconds);
-        return saved;
-    }
-
-    @Transactional
-    WatchProgress doUpdateWatched(Long videoId, boolean completed) {
-        Video video = videoService.getVideoById(videoId);
-
-        WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
-        progress.setVideo(video);
-        progress.setCompleted(completed);
-
-        if (completed && progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
-            progress.setPositionSeconds(progress.getDurationSeconds());
-        }
-
-        WatchProgress saved = repository.save(progress);
-        log.debug("Set video {} watched={}", videoId, completed);
-        return saved;
     }
 
     private <T> T retryOnLock(Supplier<T> action) {

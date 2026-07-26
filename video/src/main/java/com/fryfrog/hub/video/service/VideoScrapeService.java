@@ -83,7 +83,26 @@ public class VideoScrapeService {
             return repository.findAll();
         }
 
-        Runnable scrapeTask = () -> executeScrapeBatch(videos);
+        Runnable scrapeTask = () -> {
+            executeScrapeBatch(videos);
+            // 重新获取视频列表（executeScrapeBatch 中 video 对象未更新）
+            List<Video> scrapedVideos = repository.findAllById(
+                    videos.stream().map(Video::getId).toList());
+            // 刮削完成后保存演员信息
+            for (Video video : scrapedVideos) {
+                if (video.getTmdbId() != null && video.getMediaType() != null) {
+                    try {
+                        assetService.saveActors(video, video.getMediaType(), video.getTmdbId(), null);
+                    } catch (Exception e) {
+                        log.debug("[Scrape] Failed to save actors for {}: {}", video.getTitle(), e.getMessage());
+                    }
+                }
+            }
+            // 刮削完成后生成 NFO 和下载封面
+            if (!scrapedVideos.isEmpty()) {
+                assetService.batchGenerateAssets(scrapedVideos);
+            }
+        };
 
         if (async) {
             scrapeExecutor.submit(scrapeTask);
@@ -259,6 +278,26 @@ public class VideoScrapeService {
             }
             if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
                 tvResults = tmdbService.searchTv(query);
+            }
+        }
+
+        // 第四次搜索：不传 language（让 TMDB 用默认匹配，对日文等多语言片名更友好）
+        if (movieResults.isEmpty() && tvResults.isEmpty()) {
+            log.debug("[Scrape] No results with language='{}', trying without language parameter", tmdbService.getLanguage());
+            if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+                movieResults = tmdbService.searchMovies(cleanedQuery, null);
+            }
+            if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+                tvResults = tmdbService.searchTv(cleanedQuery, null);
+            }
+            // 如果清洗后的无结果，再用原始查询试一次
+            if (movieResults.isEmpty() && tvResults.isEmpty() && !cleanedQuery.equals(query)) {
+                if (mediaTypeFilter == null || "movie".equalsIgnoreCase(mediaTypeFilter)) {
+                    movieResults = tmdbService.searchMovies(query, null);
+                }
+                if (mediaTypeFilter == null || "tv".equalsIgnoreCase(mediaTypeFilter)) {
+                    tvResults = tmdbService.searchTv(query, null);
+                }
             }
         }
 
@@ -472,9 +511,19 @@ public class VideoScrapeService {
             return saved;
 
         } else if ("tv".equalsIgnoreCase(mediaType)) {
+            // 先尝试用默认语言（zh-CN）获取详情，如果 overview 为空说明无中文翻译，
+            // 回退到不传 language（TMDB 用默认语言，通常是 en-US 或日文原文）
             TmdbTvDetail tvDetail = tmdbService.getTvDetail(tmdbId);
             if (tvDetail == null) {
                 throw new ResourceNotFoundException("TMDB TV", "id", tmdbId);
+            }
+            if (tvDetail.getOverview() == null || tvDetail.getOverview().isBlank()) {
+                TmdbTvDetail fallbackDetail = tmdbService.getTvDetail(tmdbId, null);
+                if (fallbackDetail != null && fallbackDetail.getOverview() != null
+                        && !fallbackDetail.getOverview().isBlank()) {
+                    tvDetail = fallbackDetail;
+                    log.debug("[Scrape] Used fallback language for TV detail: tmdbId={}", tmdbId);
+                }
             }
             updateVideoFromTvDetail(video, tvDetail);
             log.debug("[Scrape] Set posterUrl={}, backdropUrl={} for video: {}", video.getPosterUrl(), video.getBackdropUrl(), video.getTitle());
@@ -483,8 +532,14 @@ public class VideoScrapeService {
             video.setSeasonNumber(seasonEpisode[0]);
             video.setEpisodeNumber(seasonEpisode[1]);
 
-            // 获取剧集详情
+            // 获取剧集详情（同样做语言回退）
             TmdbEpisodeDetail episodeDetail = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1]);
+            if (episodeDetail == null || episodeDetail.getStillPath() == null) {
+                TmdbEpisodeDetail fallbackEpisode = tmdbService.getTvEpisodeDetail(tmdbId, seasonEpisode[0], seasonEpisode[1], null);
+                if (fallbackEpisode != null) {
+                    episodeDetail = fallbackEpisode;
+                }
+            }
             if (episodeDetail != null) {
                 if (episodeDetail.getOverview() != null && !episodeDetail.getOverview().isBlank()) {
                     video.setOverview(episodeDetail.getOverview());

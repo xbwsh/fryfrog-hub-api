@@ -197,9 +197,9 @@ public class TranscodingService {
         cmd.add("-vf");
         cmd.add("scale=" + width + ":-2");
 
-        // 视频编码
+        // 视频编码（libx264 几乎在所有 FFmpeg 发行版中可用）
         cmd.add("-c:v");
-        cmd.add("libopenh264");
+        cmd.add("libx264");
         cmd.add("-profile:v");
         cmd.add("high");
         cmd.add("-b:v");

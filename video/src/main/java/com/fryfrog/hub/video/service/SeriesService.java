@@ -91,6 +91,10 @@ public class SeriesService {
         return seriesRepository.findAll();
     }
 
+    public long count() {
+        return seriesRepository.count();
+    }
+
     public Page<VideoSeries> getSeriesPage(Pageable pageable) {
         return seriesRepository.findAll(pageable);
     }

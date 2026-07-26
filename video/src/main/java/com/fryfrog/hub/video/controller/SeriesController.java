@@ -30,7 +30,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -52,45 +51,67 @@ public class SeriesController {
     public ResponseEntity<ApiResponse<PageResponse<SeriesDTO>>> getAllSeries(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        // 合并系列和独立视频，按标题排序
+        long seriesCount = seriesService.count();
+        long standaloneCount = videoRepository.countBySeriesIsNull();
+        long total = seriesCount + standaloneCount;
+
+        int start = page * size;
+        if (start >= total) {
+            return ResponseEntity.ok(ApiResponse.success(
+                    PageResponse.of(List.of(), page, size, total)));
+        }
+        int end = Math.min(start + size, (int) total);
+
         List<SeriesDTO> allItems = new ArrayList<>();
 
-        // 查询所有系列
-        List<VideoSeries> allSeries = seriesService.getAllSeries();
-        List<Long> allVideoIds = new ArrayList<>();
-        for (VideoSeries series : allSeries) {
-            series.getVideos().forEach(v -> allVideoIds.add(v.getId()));
-        }
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(allVideoIds);
+        // 计算当前页落在系列和独立视频范围
+        long seriesEnd = Math.min(end, seriesCount);
+        long standaloneStart = Math.max(0, start - seriesCount);
+        long standaloneEnd = Math.max(0, end - seriesCount);
 
-        for (VideoSeries series : allSeries) {
-            List<VideoDTO> episodes = series.getVideos().stream()
-                    .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
-                    .collect(Collectors.toList());
-            allItems.add(SeriesDTO.fromEntity(series, episodes));
-        }
-
-        // 查询独立视频（无系列关联）
-        List<Video> standaloneVideos = videoRepository.findBySeriesIsNullOrderByTitleAsc();
-        List<Long> standaloneIds = standaloneVideos.stream().map(Video::getId).toList();
-        Map<Long, WatchProgress> standaloneProgressMap = watchProgressService.getProgressByVideoIds(standaloneIds);
-
-        for (Video video : standaloneVideos) {
-            VideoDTO episode = toVideoDTO(video, standaloneProgressMap.get(video.getId()));
-            allItems.add(SeriesDTO.fromStandaloneVideo(video, episode));
+        // 系列（通常数量少，加载全部）
+        if (start < seriesCount) {
+            List<VideoSeries> allSeries = seriesService.getAllSeries();
+            List<VideoSeries> pagedSeries = allSeries.subList(
+                    (int) Math.min(start, seriesCount),
+                    (int) Math.min(seriesEnd, allSeries.size()));
+            List<Long> videoIds = pagedSeries.stream()
+                    .flatMap(s -> s.getVideos().stream().map(Video::getId))
+                    .toList();
+            Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+            for (VideoSeries s : pagedSeries) {
+                List<VideoDTO> episodes = s.getVideos().stream()
+                        .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
+                        .collect(Collectors.toList());
+                allItems.add(SeriesDTO.fromEntity(s, episodes));
+            }
         }
 
-        // 按标题排序
-        allItems.sort(Comparator.comparing(SeriesDTO::getTitle, Comparator.nullsLast(Comparator.naturalOrder())));
-
-        // 手动分页
-        int total = allItems.size();
-        int start = page * size;
-        int end = Math.min(start + size, total);
-        List<SeriesDTO> paged = start < total ? allItems.subList(start, end) : List.of();
+        // 独立视频（数据库分页）
+        if (standaloneEnd > 0) {
+            int saPage = (int) (standaloneStart / size);
+            int saOffset = (int) (standaloneStart % size);
+            int saLimit = (int) (standaloneEnd - standaloneStart);
+            Page<Video> standalonePage = videoRepository.findBySeriesIsNull(
+                    PageRequest.of(saPage, Math.max(size, saLimit),
+                            Sort.by(Sort.Direction.ASC, "title")));
+            List<Video> pagedVideos = standalonePage.getContent();
+            if (saOffset > 0 && pagedVideos.size() > saOffset) {
+                pagedVideos = pagedVideos.subList(saOffset,
+                        Math.min(saOffset + saLimit, pagedVideos.size()));
+            } else if (saOffset > 0) {
+                pagedVideos = List.of();
+            }
+            List<Long> ids = pagedVideos.stream().map(Video::getId).toList();
+            Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(ids);
+            for (Video video : pagedVideos) {
+                allItems.add(SeriesDTO.fromStandaloneVideo(video,
+                        toVideoDTO(video, progressMap.get(video.getId()))));
+            }
+        }
 
         return ResponseEntity.ok(ApiResponse.success(
-                PageResponse.of(paged, page, size, total)));
+                PageResponse.of(allItems, page, size, total)));
     }
 
     @GetMapping("/{id}")

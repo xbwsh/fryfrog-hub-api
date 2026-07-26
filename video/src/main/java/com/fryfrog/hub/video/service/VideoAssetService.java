@@ -125,7 +125,7 @@ public class VideoAssetService {
         if ("tv".equalsIgnoreCase(video.getMediaType()) && video.getSeries() != null) {
             try {
                 Path episodeDir = nfoService.getMetadataDir(video);
-                downloadSeriesCovers(video.getSeries(), episodeDir);
+                downloadSeriesCovers(video.getSeries(), episodeDir, force);
             } catch (Exception e) {
                 log.debug("[Asset] Failed to download series covers for {}: {}", video.getTitle(), e.getMessage());
             }
@@ -136,6 +136,14 @@ public class VideoAssetService {
      * 下载系列封面到剧名目录（tvshow-poster.jpg, tvshow-fanart.jpg）
      */
     public void downloadSeriesCovers(VideoSeries series, Path episodeMetadataDir) {
+        downloadSeriesCovers(series, episodeMetadataDir, false);
+    }
+
+    /**
+     * 下载系列封面到剧名目录（tvshow-poster.jpg, tvshow-fanart.jpg）
+     * @param force true 时无视已有文件，强制重新下载
+     */
+    public void downloadSeriesCovers(VideoSeries series, Path episodeMetadataDir, boolean force) {
         if (series.getPosterUrl() == null && series.getBackdropUrl() == null) return;
 
         Path seasonDir = episodeMetadataDir.getParent();
@@ -153,10 +161,10 @@ public class VideoAssetService {
         // 下载系列海报
         if (series.getPosterUrl() != null) {
             Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
-            if (!Files.exists(posterPath)) {
+            if (force || !Files.exists(posterPath)) {
                 downloadCoverImage(series.getPosterUrl(), posterPath);
             }
-            if (Files.exists(posterPath) && series.getPosterLocalPath() == null) {
+            if (Files.exists(posterPath) && (force || series.getPosterLocalPath() == null)) {
                 series.setPosterLocalPath(posterPath.toString());
                 updated = true;
             }
@@ -165,10 +173,10 @@ public class VideoAssetService {
         // 下载系列背景图
         if (series.getBackdropUrl() != null) {
             Path fanartPath = seasonDir.resolve("tvshow-fanart.jpg");
-            if (!Files.exists(fanartPath)) {
+            if (force || !Files.exists(fanartPath)) {
                 downloadCoverImage(series.getBackdropUrl(), fanartPath);
             }
-            if (Files.exists(fanartPath) && series.getBackdropLocalPath() == null) {
+            if (Files.exists(fanartPath) && (force || series.getBackdropLocalPath() == null)) {
                 series.setBackdropLocalPath(fanartPath.toString());
                 updated = true;
             }

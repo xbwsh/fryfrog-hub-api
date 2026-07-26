@@ -53,8 +53,21 @@ public class TmdbService {
         return apiKey;
     }
 
-    private String getLanguage() {
+    /**
+     * 当前配置的语言。对外可见，供 VideoScrapeService 判断是否需要语言回退。
+     */
+    public String getLanguage() {
         return language;
+    }
+
+    /**
+     * 携带语言参数构建 URL，若 language 为 null 则不传该参数（让 TMDB 使用默认行为）。
+     */
+    private UriComponentsBuilder addLanguageParam(UriComponentsBuilder builder, String lang) {
+        if (lang != null && !lang.isBlank()) {
+            return builder.queryParam("language", lang);
+        }
+        return builder;
     }
 
     private String getImageSize() {
@@ -82,20 +95,28 @@ public class TmdbService {
     }
 
     public List<TmdbSearchResult.TmdbSearchItem> searchMovies(String query) {
+        return searchMovies(query, getLanguage());
+    }
+
+    /**
+     * 搜索电影，可指定语言。language 为 null 时不传 language 参数（TMDB 默认行为）。
+     */
+    public List<TmdbSearchResult.TmdbSearchItem> searchMovies(String query, String language) {
         if (!isConfigured()) {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
-        String cacheKey = "movie:" + query;
+        String cacheKey = "movie:" + language + ":" + query;
         TmdbSearchResult cached = searchCache.getIfPresent(cacheKey);
         if (cached != null) {
             return cached.getResults() != null ? cached.getResults() : List.of();
         }
 
-        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/movie")
-                .queryParam("language", getLanguage())
-                .queryParam("query", query)
-                .queryParam("include_adult", String.valueOf(isIncludeAdult()))
+        String url = addLanguageParam(
+                UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/movie")
+                        .queryParam("query", query)
+                        .queryParam("include_adult", String.valueOf(isIncludeAdult())),
+                language)
                 .toUriString();
 
         try {
@@ -117,20 +138,28 @@ public class TmdbService {
     }
 
     public List<TmdbSearchResult.TmdbSearchItem> searchTv(String query) {
+        return searchTv(query, getLanguage());
+    }
+
+    /**
+     * 搜索电视剧，可指定语言。language 为 null 时不传 language 参数（TMDB 默认行为）。
+     */
+    public List<TmdbSearchResult.TmdbSearchItem> searchTv(String query, String language) {
         if (!isConfigured()) {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
-        String cacheKey = "tv:" + query;
+        String cacheKey = "tv:" + language + ":" + query;
         TmdbSearchResult cached = searchCache.getIfPresent(cacheKey);
         if (cached != null) {
             return cached.getResults() != null ? cached.getResults() : List.of();
         }
 
-        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/tv")
-                .queryParam("language", getLanguage())
-                .queryParam("query", query)
-                .queryParam("include_adult", String.valueOf(isIncludeAdult()))
+        String url = addLanguageParam(
+                UriComponentsBuilder.fromHttpUrl(BASE_URL + "/search/tv")
+                        .queryParam("query", query)
+                        .queryParam("include_adult", String.valueOf(isIncludeAdult())),
+                language)
                 .toUriString();
 
         try {
@@ -181,18 +210,28 @@ public class TmdbService {
     }
 
     public TmdbTvDetail getTvDetail(Long tvId) {
+        return getTvDetail(tvId, getLanguage());
+    }
+
+    /**
+     * 获取电视剧详情，可指定语言。language 为 null 时不传 language 参数。
+     */
+    public TmdbTvDetail getTvDetail(Long tvId, String language) {
         if (!isConfigured()) {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
+        String cacheKey = tvId + ":" + language;
         TmdbTvDetail cached = tvDetailCache.getIfPresent(tvId);
+        // 缓存不分语言（快速返回），但如果缓存存在且语言不同，仍可复用
         if (cached != null) {
             return cached;
         }
 
-        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId)
-                .queryParam("language", getLanguage())
-                .queryParam("append_to_response", "created_by,credits")
+        String url = addLanguageParam(
+                UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId)
+                        .queryParam("append_to_response", "created_by,credits"),
+                language)
                 .toUriString();
 
         try {
@@ -210,12 +249,20 @@ public class TmdbService {
     }
 
     public TmdbEpisodeDetail getTvEpisodeDetail(Long tvId, Integer seasonNumber, Integer episodeNumber) {
+        return getTvEpisodeDetail(tvId, seasonNumber, episodeNumber, getLanguage());
+    }
+
+    /**
+     * 获取单集详情，可指定语言。language 为 null 时不传 language 参数。
+     */
+    public TmdbEpisodeDetail getTvEpisodeDetail(Long tvId, Integer seasonNumber, Integer episodeNumber, String language) {
         if (!isConfigured()) {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
-        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/season/" + seasonNumber + "/episode/" + episodeNumber)
-                .queryParam("language", getLanguage())
+        String url = addLanguageParam(
+                UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/season/" + seasonNumber + "/episode/" + episodeNumber),
+                language)
                 .toUriString();
 
         try {

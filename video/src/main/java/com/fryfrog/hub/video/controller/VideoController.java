@@ -43,8 +43,6 @@ import jakarta.validation.Valid;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -325,7 +323,10 @@ public class VideoController {
     public ResponseEntity<ApiResponse<Map<String, String>>> downloadCovers(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
-        boolean success = coverArtService.downloadAllCovers(video);
+        boolean success = coverArtService.downloadAllCovers(video, true);
+        if (success) {
+            videoRepository.save(video);
+        }
         return ResponseEntity.ok(ApiResponse.success(Map.of(
                 "videoId", String.valueOf(id),
                 "success", String.valueOf(success)
@@ -623,68 +624,6 @@ public class VideoController {
         if (lower.endsWith(".ts")) return "video/mp2t";
         if (lower.endsWith(".m4v")) return "video/x-m4v";
         return "application/octet-stream";
-    }
-
-    private static class RangeResource extends org.springframework.core.io.AbstractResource {
-        private final File file;
-        private final long start;
-        private final long length;
-
-        public RangeResource(File file, long start, long length) {
-            this.file = file;
-            this.start = start;
-            this.length = length;
-        }
-
-        @Override
-        public String getDescription() {
-            return "Range resource [" + file.getName() + " bytes " + start + "-" + (start + length - 1) + "]";
-        }
-
-        @Override
-        public long contentLength() {
-            return length;
-        }
-
-        @Override
-        public InputStream getInputStream() throws IOException {
-            RandomAccessFile raf = new RandomAccessFile(file, "r");
-            raf.seek(start);
-            return new BoundedInputStream(raf, length);
-        }
-    }
-
-    private static class BoundedInputStream extends InputStream {
-        private final RandomAccessFile raf;
-        private final long maxLength;
-        private long position = 0;
-
-        public BoundedInputStream(RandomAccessFile raf, long maxLength) {
-            this.raf = raf;
-            this.maxLength = maxLength;
-        }
-
-        @Override
-        public int read() throws IOException {
-            if (position >= maxLength) return -1;
-            int b = raf.read();
-            if (b >= 0) position++;
-            return b;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) throws IOException {
-            if (position >= maxLength) return -1;
-            int toRead = (int) Math.min(len, maxLength - position);
-            int read = raf.read(b, off, toRead);
-            if (read > 0) position += read;
-            return read;
-        }
-
-        @Override
-        public void close() throws IOException {
-            raf.close();
-        }
     }
 
     private VideoDTO toDTO(Video video, WatchProgress progress) {

@@ -52,4 +52,9 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     List<Video> findByFilePathContaining(String path);
 
     List<Video> findBySeriesIsNullOrderByTitleAsc();
+
+    Page<Video> findBySeriesIsNull(Pageable pageable);
+
+    @Query("SELECT COUNT(v) FROM Video v WHERE v.series IS NULL")
+    long countBySeriesIsNull();
 }
