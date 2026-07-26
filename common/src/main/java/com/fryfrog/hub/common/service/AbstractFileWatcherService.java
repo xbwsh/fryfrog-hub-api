@@ -188,7 +188,8 @@ public abstract class AbstractFileWatcherService {
                     if (kind == ENTRY_DELETE) {
                         if (isWatchedFile(name)) {
                             log.debug("[{}] File deleted: {}", tag(), fullPath);
-                            handleFileDeleted(fullPath);
+                            // 延迟处理，避免 batchOrganize 重命名时 DB 尚未更新
+                            scheduleDebouncedDelete(fullPath);
                         }
                         continue;
                     }
@@ -256,6 +257,11 @@ public abstract class AbstractFileWatcherService {
         }, getDebounceSeconds(), TimeUnit.SECONDS);
 
         debounceTasks.put(dir, task);
+    }
+
+    /** 删除事件延迟处理（默认 3 秒，等 pipeline 提交事务） */
+    private void scheduleDebouncedDelete(Path filePath) {
+        debounceExecutor.schedule(() -> handleFileDeleted(filePath), 3, TimeUnit.SECONDS);
     }
 
     // ==================== 辅助 ====================
