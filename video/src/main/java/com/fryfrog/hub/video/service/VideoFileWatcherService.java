@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -93,13 +94,7 @@ public class VideoFileWatcherService extends AbstractFileWatcherService {
         String path = filePath.toString();
         Optional<Video> opt = videoRepository.findByFilePath(path);
         if (opt.isEmpty()) {
-            // 可能是整理后文件路径已变化，尝试用文件名查找
-            String fileName = filePath.getFileName().toString();
-            opt = videoRepository.findByFileName(fileName);
-        }
-
-        if (opt.isEmpty()) {
-            log.debug("[VideoWatcher] Deleted file not in database, skipping cleanup: {}", filePath);
+            log.debug("[VideoWatcher] Deleted file not in database (likely a rename), skipping: {}", filePath);
             return;
         }
 
@@ -110,15 +105,26 @@ public class VideoFileWatcherService extends AbstractFileWatcherService {
         actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
 
         // 删除磁盘上的 NFO 和封面文件
-        try {
-            java.nio.file.Files.deleteIfExists(nfoService.getNfoPath(video));
-        } catch (Exception ignored) {}
-        try {
-            java.nio.file.Files.deleteIfExists(nfoService.getPosterPath(video));
-        } catch (Exception ignored) {}
-        try {
-            java.nio.file.Files.deleteIfExists(nfoService.getFanartPath(video));
-        } catch (Exception ignored) {}
+        try { java.nio.file.Files.deleteIfExists(nfoService.getNfoPath(video)); } catch (Exception ignored) {}
+        try { java.nio.file.Files.deleteIfExists(nfoService.getPosterPath(video)); } catch (Exception ignored) {}
+        try { java.nio.file.Files.deleteIfExists(nfoService.getFanartPath(video)); } catch (Exception ignored) {}
+
+        // 删除同名的外挂字幕文件
+        Path dir = Paths.get(video.getFilePath()).getParent();
+        if (dir != null) {
+            String baseName = nfoService.getBaseName(video.getFileName());
+            java.util.Set<String> subExts = java.util.Set.of(".srt", ".ass", ".ssa", ".vtt", ".sub", ".sup", ".idx");
+            try (var files = java.nio.file.Files.list(dir)) {
+                files.filter(java.nio.file.Files::isRegularFile)
+                        .filter(f -> {
+                            String name = f.getFileName().toString();
+                            return name.startsWith(baseName) && subExts.stream().anyMatch(name.toLowerCase()::endsWith);
+                        })
+                        .forEach(f -> {
+                            try { java.nio.file.Files.deleteIfExists(f); } catch (Exception ignored) {}
+                        });
+            } catch (Exception ignored) {}
+        }
 
         // 从系列中移除
         if (video.getSeries() != null) {
