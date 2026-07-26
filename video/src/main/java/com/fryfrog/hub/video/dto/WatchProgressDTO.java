@@ -36,7 +36,9 @@ public class WatchProgressDTO {
         dto.setCompleted(progress.getCompleted());
         dto.setUpdatedAt(progress.getUpdatedAt());
 
-        if (progress.getDurationSeconds() != null && progress.getDurationSeconds() > 0) {
+        if (progress.getPositionSeconds() != null
+                && progress.getDurationSeconds() != null
+                && progress.getDurationSeconds() > 0) {
             dto.setProgressPercent(progress.getPositionSeconds() / progress.getDurationSeconds() * 100);
         } else {
             dto.setProgressPercent(0.0);

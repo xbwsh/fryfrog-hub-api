@@ -399,6 +399,14 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 
+    @DeleteMapping("/{id:\\d+}/progress")
+    @Operation(summary = "清除观看进度", description = "删除指定视频的观看进度记录")
+    public ResponseEntity<ApiResponse<Void>> deleteProgress(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        watchProgressService.deleteProgress(id);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
     @GetMapping("/{id:\\d+}/stream")
     @Operation(summary = "视频流播放", description = "支持 Range 请求")
     public void streamVideo(
