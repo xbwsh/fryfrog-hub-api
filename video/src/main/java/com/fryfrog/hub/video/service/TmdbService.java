@@ -29,7 +29,7 @@ public class TmdbService {
     @Value("${tmdb.api-key:}")
     private String apiKey;
 
-    @Value("${tmdb.language:zh-CN}")
+    @Value("${tmdb.language:}")
     private String language;
 
     @Value("${tmdb.image-size:original}")
