@@ -70,6 +70,16 @@ public class VideoOrganizeService {
                     Path videoPath = Paths.get(video.getFilePath());
                     Path newVideoPath = metadataDir.resolve(video.getFileName());
 
+                    // 检查目标路径是否已被其他视频占用（file_path 有 UNIQUE 约束）
+                    String newVideoPathStr = newVideoPath.toString();
+                    Optional<Video> existingPath = repository.findByFilePath(newVideoPathStr);
+                    if (existingPath.isPresent() && !existingPath.get().getId().equals(video.getId())) {
+                        log.warn("[Organize] Skip move {}: target path already used by video id={}",
+                                video.getFileName(), existingPath.get().getId());
+                        skipped++;
+                        continue;
+                    }
+
                     // 移动视频文件
                     if (Files.exists(videoPath) && !Files.exists(newVideoPath)) {
                         Files.move(videoPath, newVideoPath);
@@ -157,6 +167,15 @@ public class VideoOrganizeService {
 
             Path newPath = videoPath.getParent().resolve(newFileName);
 
+            // 检查目标路径是否已被其他视频占用（file_path 有 UNIQUE 约束）
+            String newPathStr = newPath.toString();
+            Optional<Video> existing = repository.findByFilePath(newPathStr);
+            if (existing.isPresent() && !existing.get().getId().equals(video.getId())) {
+                log.warn("[Organize] Skip rename {}: target path already used by video id={}",
+                        newFileName, existing.get().getId());
+                return;
+            }
+
             String oldBaseName = nfoService.getBaseName(video.getFileName());
             Files.move(videoPath, newPath, StandardCopyOption.REPLACE_EXISTING);
 
@@ -191,6 +210,15 @@ public class VideoOrganizeService {
 
             if (!Files.exists(videoPath)) {
                 log.warn("[Organize] Source video not found: {}", videoPath);
+                return;
+            }
+
+            // 检查目标路径是否已被其他视频占用（file_path 有 UNIQUE 约束）
+            String targetPathStr = targetPath.toString();
+            Optional<Video> existing = repository.findByFilePath(targetPathStr);
+            if (existing.isPresent() && !existing.get().getId().equals(video.getId())) {
+                log.warn("[Organize] Skip move {}: target path already used by video id={}",
+                        video.getFileName(), existing.get().getId());
                 return;
             }
 
