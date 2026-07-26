@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:54321/fryfrog
+    url: jdbc:postgresql://localhost:54321/fryfroghub
     username: fryfrog
     password: fryfrog
     driver-class-name: org.postgresql.Driver

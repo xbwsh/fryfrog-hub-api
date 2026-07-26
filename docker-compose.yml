@@ -4,7 +4,7 @@ services:
     container_name: fryfrog-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:fryfrog}
+      POSTGRES_DB: ${DB_NAME:fryfroghub}
       POSTGRES_USER: ${DB_USERNAME:fryfrog}
       POSTGRES_PASSWORD: ${DB_PASSWORD:fryfrog}
     volumes:
