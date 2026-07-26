@@ -5,11 +5,13 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.WatchProgressRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -21,6 +23,7 @@ public class WatchProgressService {
     private final VideoService videoService;
 
     private static final double COMPLETED_THRESHOLD = 0.95;
+    private static final int MAX_RETRIES = 3;
 
     public WatchProgress getProgress(Long videoId) {
         return repository.findByVideo_Id(videoId).orElse(null);
@@ -34,8 +37,21 @@ public class WatchProgressService {
                 .collect(Collectors.toMap(wp -> wp.getVideo().getId(), wp -> wp));
     }
 
-    @Transactional
     public WatchProgress updatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
+        return retryOnLock(() -> doUpdatePosition(videoId, positionSeconds, durationSeconds));
+    }
+
+    public WatchProgress updateWatched(Long videoId, boolean completed) {
+        return retryOnLock(() -> doUpdateWatched(videoId, completed));
+    }
+
+    @Transactional
+    public void deleteProgress(Long videoId) {
+        repository.findByVideo_Id(videoId).ifPresent(repository::delete);
+    }
+
+    @Transactional
+    WatchProgress doUpdatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
         Video video = videoService.getVideoById(videoId);
 
         WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
@@ -56,7 +72,7 @@ public class WatchProgressService {
     }
 
     @Transactional
-    public WatchProgress updateWatched(Long videoId, boolean completed) {
+    WatchProgress doUpdateWatched(Long videoId, boolean completed) {
         Video video = videoService.getVideoById(videoId);
 
         WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
@@ -72,8 +88,24 @@ public class WatchProgressService {
         return saved;
     }
 
-    @Transactional
-    public void deleteProgress(Long videoId) {
-        repository.findByVideo_Id(videoId).ifPresent(repository::delete);
+    private <T> T retryOnLock(Supplier<T> action) {
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return action.get();
+            } catch (CannotAcquireLockException e) {
+                if (attempt == MAX_RETRIES) {
+                    log.warn("SQLite lock conflict after {} retries, giving up", MAX_RETRIES);
+                    throw e;
+                }
+                log.debug("SQLite lock conflict, retrying ({}/{})", attempt, MAX_RETRIES);
+                try {
+                    Thread.sleep(50L * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+        throw new IllegalStateException("unreachable");
     }
 }
