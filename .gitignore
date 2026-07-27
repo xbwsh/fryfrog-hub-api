@@ -32,7 +32,6 @@ logs/
 # Environment
 .env
 .env.local
-.env.example
 app/src/main/resources/application-dev.yml
 
 # Media Library (contains media files)

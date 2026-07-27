@@ -4,15 +4,15 @@ services:
     container_name: fryfrog-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:fryfroghub}
-      POSTGRES_USER: ${DB_USERNAME:admin}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:admin}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${DB_PORT:54321}:5432"
+      - "${DB_PORT}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:fryfrog}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,9 +29,9 @@ services:
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=${DB_NAME:fryfrog}
-      - DB_USERNAME=${DB_USERNAME:fryfrog}
-      - DB_PASSWORD=${DB_PASSWORD:fryfrog}
+      - DB_NAME=${DB_NAME}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - ./db:/data
       # - /your/music/path:/data/media/music

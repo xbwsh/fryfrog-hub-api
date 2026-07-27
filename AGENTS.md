@@ -11,7 +11,7 @@
 ## Tech Stack
 
 - Java 21 + Spring Boot 3.2.5
-- Spring Data JPA + **SQLite**（非 H2/PostgreSQL，生产也用 SQLite）
+- Spring Data JPA + **PostgreSQL**
 - 虚拟线程已启用：`spring.threads.virtual.enabled: true`
 - FFmpeg + ProcessBuilder（音频/视频转码）
 - jaudiotagger（音乐元数据）
@@ -84,21 +84,21 @@ mvn verify
 ## Key Configuration
 
 - 端口：`20058`（`SERVER_PORT` 环境变量可覆盖）
-- 数据库：SQLite，路径 `./data/fryfrog.db`，启用 WAL 模式
-- 认证：`hub.auth.enabled` 默认开启，密码 `hub.auth.password` 默认 `1234`
-- 媒体路径：`hub.{music|video|comic|ebook}.root-paths`，支持逗号分隔多路径
-- `application-dev.yml` 已加入 `.gitignore`，开发时从模板复制
-- 开发配置模板：`app/src/main/resources/application-dev.yml.example`
+- 数据库：PostgreSQL，通过环境变量配置（开发用 `.env`，Docker 用环境变量）
+- 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认 `1234`
+- 媒体路径：`MUSIC_ROOT_PATHS`、`VIDEO_ROOT_PATHS`、`COMIC_ROOT_PATHS`、`EBOOK_ROOT_PATHS`
+- `.env` 为开发环境配置，已加入 `.gitignore`
+- `.env.example` 为配置模板，已提交到仓库
 
 ## Common Pitfalls
 
-- SQLite 不支持并发写入，高并发场景需注意 `busy_timeout=5000` 配置
-- `application-dev.yml` 不在仓库中，新建开发环境需从 `.example` 复制
+- PostgreSQL 必填环境变量：`DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USERNAME`、`DB_PASSWORD`
+- `.env` 已加入 `.gitignore`，新建开发环境需从 `.env.example` 复制并填写
 - 虚拟线程已启用，不要在代码中创建平台线程池
 - FFmpeg 路径需在配置中指定，不要硬编码
-- Docker 部署必须使用 `network_mode: host`，否则无法访问服务
+- Docker 部署使用 `docker compose up -d`，内置 PostgreSQL
 - Docker 镜像已内置 FFmpeg
-- Testcontainers 不在项目中使用，测试用 H2 内存库
+- 测试用 H2 内存库，无需 PostgreSQL
 
 ## Environment
 
@@ -115,9 +115,12 @@ mvn verify
 ## Docker 部署
 
 ```bash
+# 复制环境变量模板并配置
+cp .env.example .env
+# 编辑 .env 填写数据库密码等配置
+
+# 启动服务
 docker compose up -d
-# 或
-docker run -d --network host -e DB_PATH=/data/fryfrog.db \
-  -v ./db:/data -v /your/media:/data/media \
-  ghcr.io/xbwsh/fryfrog-hub-api:latest
 ```
+
+Docker Compose 会同时启动 PostgreSQL 和 API 服务，数据持久化到 Docker volume。
