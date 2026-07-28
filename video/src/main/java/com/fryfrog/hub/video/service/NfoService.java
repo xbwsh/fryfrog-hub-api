@@ -372,6 +372,11 @@ public class NfoService {
                 return null;
             }
 
+            // 清理 BOM（字节顺序标记）
+            if (content.charAt(0) == '\uFEFF') {
+                content = content.substring(1);
+            }
+
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             DocumentBuilder builder = factory.newDocumentBuilder();
@@ -381,6 +386,7 @@ public class NfoService {
             Element root = doc.getDocumentElement();
             String rootTag = root.getTagName();
             data.isTvShow = "episodedetails".equalsIgnoreCase(rootTag) || "tvshow".equalsIgnoreCase(rootTag);
+            log.debug("Parsed NFO: root={}, isTvShow={}", rootTag, data.isTvShow);
 
             // 通用字段
             data.title = getTagText(root, "title");
