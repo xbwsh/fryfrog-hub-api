@@ -37,7 +37,8 @@ public class VideoPipelineService {
         if (libraryId == null) return true;
         try {
             var library = mediaLibraryService.getLibraryById(libraryId);
-            return Boolean.TRUE.equals(library.getEnableScraping());
+            Boolean enabled = library.getEnableScraping();
+            return enabled == null || enabled;
         } catch (Exception e) {
             return true;
         }
