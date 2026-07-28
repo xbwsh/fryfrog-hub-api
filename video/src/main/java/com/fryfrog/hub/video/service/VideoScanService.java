@@ -163,6 +163,23 @@ public class VideoScanService {
             log.debug("[Scan] Applied local NFO metadata: {}", fileName);
         }
 
+        // 兜底：检测同目录下的 poster.jpg / fanart.jpg
+        Path videoDir = path.getParent();
+        if (videoDir != null) {
+            if (video.getCoverArtPath() == null) {
+                Path poster = videoDir.resolve("poster.jpg");
+                if (Files.exists(poster)) {
+                    video.setCoverArtPath(poster.toString());
+                }
+            }
+            if (video.getBackdropLocalPath() == null) {
+                Path fanart = videoDir.resolve("fanart.jpg");
+                if (Files.exists(fanart)) {
+                    video.setBackdropLocalPath(fanart.toString());
+                }
+            }
+        }
+
         // 从文件名解析集数
         int[] se = parseSeasonEpisode(fileName);
         video.setSeasonNumber(se[0]);

@@ -526,22 +526,33 @@ public class NfoService {
             video.setSeriesName(data.seriesTitle);
         }
 
-        // 设置本地封面路径
-        if (data.thumb != null && !data.thumb.isBlank()) {
-            Path videoDir = Paths.get(video.getFilePath()).getParent();
-            if (videoDir != null) {
+        // 设置本地封面路径（优先使用 NFO 引用，兜底检测同目录文件）
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        if (videoDir != null) {
+            // poster
+            if (data.thumb != null && !data.thumb.isBlank()) {
                 Path posterPath = videoDir.resolve(data.thumb);
                 if (Files.exists(posterPath)) {
                     video.setCoverArtPath(posterPath.toString());
                 }
             }
-        }
-        if (data.fanart != null && !data.fanart.isBlank()) {
-            Path videoDir = Paths.get(video.getFilePath()).getParent();
-            if (videoDir != null) {
+            if (video.getCoverArtPath() == null) {
+                Path fallback = videoDir.resolve("poster.jpg");
+                if (Files.exists(fallback)) {
+                    video.setCoverArtPath(fallback.toString());
+                }
+            }
+            // fanart
+            if (data.fanart != null && !data.fanart.isBlank()) {
                 Path fanartPath = videoDir.resolve(data.fanart);
                 if (Files.exists(fanartPath)) {
                     video.setBackdropLocalPath(fanartPath.toString());
+                }
+            }
+            if (video.getBackdropLocalPath() == null) {
+                Path fallback = videoDir.resolve("fanart.jpg");
+                if (Files.exists(fallback)) {
+                    video.setBackdropLocalPath(fallback.toString());
                 }
             }
         }
