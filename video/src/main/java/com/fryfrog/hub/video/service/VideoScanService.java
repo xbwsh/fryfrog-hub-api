@@ -178,6 +178,16 @@ public class VideoScanService {
                     video.setBackdropLocalPath(fanart.toString());
                 }
             }
+            // 修正：如果两者指向同一文件，尝试用标准文件名修正
+            if (video.getCoverArtPath() != null && video.getCoverArtPath().equals(video.getBackdropLocalPath())) {
+                Path correctFanart = videoDir.resolve("fanart.jpg");
+                Path correctPoster = videoDir.resolve("poster.jpg");
+                if (Files.exists(correctFanart) && !correctFanart.toString().equals(video.getCoverArtPath())) {
+                    video.setBackdropLocalPath(correctFanart.toString());
+                } else if (Files.exists(correctPoster) && !correctPoster.toString().equals(video.getBackdropLocalPath())) {
+                    video.setCoverArtPath(correctPoster.toString());
+                }
+            }
         }
 
         // 从文件名解析集数
