@@ -164,8 +164,19 @@ public class VideoController {
     public ResponseEntity<Resource> getCoverArt(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
-        Path posterPath = nfoService.getPosterPath(video);
 
+        // 优先使用数据库中已存的本地封面路径
+        if (video.getCoverArtPath() != null) {
+            Path stored = Paths.get(video.getCoverArtPath());
+            if (Files.exists(stored)) {
+                return ResponseEntity.ok()
+                        .contentType(MediaType.IMAGE_JPEG)
+                        .body(new FileSystemResource(stored.toFile()));
+            }
+        }
+
+        // 兜底：检查元数据目录
+        Path posterPath = nfoService.getPosterPath(video);
         if (Files.exists(posterPath)) {
             return ResponseEntity.ok()
                     .contentType(MediaType.IMAGE_JPEG)
@@ -338,6 +349,18 @@ public class VideoController {
     public ResponseEntity<Resource> getFanart(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
+
+        // 优先使用数据库中已存的本地背景图路径
+        if (video.getBackdropLocalPath() != null) {
+            Path stored = Paths.get(video.getBackdropLocalPath());
+            if (Files.exists(stored)) {
+                return ResponseEntity.ok()
+                        .contentType(MediaType.IMAGE_JPEG)
+                        .body(new FileSystemResource(stored.toFile()));
+            }
+        }
+
+        // 兜底：检查元数据目录
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         String baseName = nfoService.getBaseName(video.getFileName());
         Path fanartPath = videoDir.resolve(baseName + "-fanart.jpg");
