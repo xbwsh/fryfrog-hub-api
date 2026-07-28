@@ -163,30 +163,16 @@ public class VideoScanService {
             log.debug("[Scan] Applied local NFO metadata: {}", fileName);
         }
 
-        // 兜底：检测同目录下的 poster.jpg / fanart.jpg
+        // 兜底：poster.jpg / fanart.jpg 优先
         Path videoDir = path.getParent();
         if (videoDir != null) {
-            if (video.getCoverArtPath() == null) {
-                Path poster = videoDir.resolve("poster.jpg");
-                if (Files.exists(poster)) {
-                    video.setCoverArtPath(poster.toString());
-                }
+            Path poster = videoDir.resolve("poster.jpg");
+            if (Files.exists(poster)) {
+                video.setCoverArtPath(poster.toString());
             }
-            if (video.getBackdropLocalPath() == null) {
-                Path fanart = videoDir.resolve("fanart.jpg");
-                if (Files.exists(fanart)) {
-                    video.setBackdropLocalPath(fanart.toString());
-                }
-            }
-            // 修正：如果两者指向同一文件，尝试用标准文件名修正
-            if (video.getCoverArtPath() != null && video.getCoverArtPath().equals(video.getBackdropLocalPath())) {
-                Path correctFanart = videoDir.resolve("fanart.jpg");
-                Path correctPoster = videoDir.resolve("poster.jpg");
-                if (Files.exists(correctFanart) && !correctFanart.toString().equals(video.getCoverArtPath())) {
-                    video.setBackdropLocalPath(correctFanart.toString());
-                } else if (Files.exists(correctPoster) && !correctPoster.toString().equals(video.getBackdropLocalPath())) {
-                    video.setCoverArtPath(correctPoster.toString());
-                }
+            Path fanart = videoDir.resolve("fanart.jpg");
+            if (Files.exists(fanart)) {
+                video.setBackdropLocalPath(fanart.toString());
             }
         }
 

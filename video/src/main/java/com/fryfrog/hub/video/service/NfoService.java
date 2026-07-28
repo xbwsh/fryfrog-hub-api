@@ -532,43 +532,27 @@ public class NfoService {
             video.setSeriesName(data.seriesTitle);
         }
 
-        // 设置本地封面路径（优先使用 NFO 引用，兜底检测同目录文件）
+        // 设置本地封面路径（poster.jpg/fanart.jpg 优先，NFO 引用兜底）
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         if (videoDir != null) {
-            // poster
-            if (data.thumb != null && !data.thumb.isBlank()) {
-                Path posterPath = videoDir.resolve(data.thumb);
-                if (Files.exists(posterPath)) {
-                    video.setCoverArtPath(posterPath.toString());
+            // poster：优先 poster.jpg，其次 NFO 的 <thumb> 引用
+            Path poster = videoDir.resolve("poster.jpg");
+            if (Files.exists(poster)) {
+                video.setCoverArtPath(poster.toString());
+            } else if (data.thumb != null && !data.thumb.isBlank()) {
+                Path fromNfo = videoDir.resolve(data.thumb);
+                if (Files.exists(fromNfo)) {
+                    video.setCoverArtPath(fromNfo.toString());
                 }
             }
-            if (video.getCoverArtPath() == null) {
-                Path fallback = videoDir.resolve("poster.jpg");
-                if (Files.exists(fallback)) {
-                    video.setCoverArtPath(fallback.toString());
-                }
-            }
-            // fanart
-            if (data.fanart != null && !data.fanart.isBlank()) {
-                Path fanartPath = videoDir.resolve(data.fanart);
-                if (Files.exists(fanartPath)) {
-                    video.setBackdropLocalPath(fanartPath.toString());
-                }
-            }
-            if (video.getBackdropLocalPath() == null) {
-                Path fallback = videoDir.resolve("fanart.jpg");
-                if (Files.exists(fallback)) {
-                    video.setBackdropLocalPath(fallback.toString());
-                }
-            }
-            // 修正：如果两者指向同一文件，尝试用标准文件名修正
-            if (video.getCoverArtPath() != null && video.getCoverArtPath().equals(video.getBackdropLocalPath())) {
-                Path correctFanart = videoDir.resolve("fanart.jpg");
-                Path correctPoster = videoDir.resolve("poster.jpg");
-                if (Files.exists(correctFanart) && !correctFanart.toString().equals(video.getCoverArtPath())) {
-                    video.setBackdropLocalPath(correctFanart.toString());
-                } else if (Files.exists(correctPoster) && !correctPoster.toString().equals(video.getBackdropLocalPath())) {
-                    video.setCoverArtPath(correctPoster.toString());
+            // fanart：优先 fanart.jpg，其次 NFO 的 <fanart> 引用
+            Path fanart = videoDir.resolve("fanart.jpg");
+            if (Files.exists(fanart)) {
+                video.setBackdropLocalPath(fanart.toString());
+            } else if (data.fanart != null && !data.fanart.isBlank()) {
+                Path fromNfo = videoDir.resolve(data.fanart);
+                if (Files.exists(fromNfo)) {
+                    video.setBackdropLocalPath(fromNfo.toString());
                 }
             }
         }
