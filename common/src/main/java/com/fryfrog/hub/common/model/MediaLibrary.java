@@ -36,6 +36,10 @@ public class MediaLibrary extends BaseEntity {
     @Column(nullable = false)
     private Boolean enabled = true;
 
+    @Schema(description = "是否启用刮削整理（关闭后仅入库不刮削）", example = "true")
+    @Column(nullable = false)
+    private Boolean enableScraping = true;
+
     @Schema(description = "排序", example = "0")
     private Integer sortOrder;
 

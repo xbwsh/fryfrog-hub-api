@@ -98,6 +98,7 @@ public class MediaLibraryService {
         if (updated.getType() != null) library.setType(updated.getType());
         if (updated.getSubType() != null) library.setSubType(updated.getSubType());
         if (updated.getEnabled() != null) library.setEnabled(updated.getEnabled());
+        if (updated.getEnableScraping() != null) library.setEnableScraping(updated.getEnableScraping());
         if (updated.getSortOrder() != null) library.setSortOrder(updated.getSortOrder());
         if (updated.getDescription() != null) library.setDescription(updated.getDescription());
         return repository.save(library);

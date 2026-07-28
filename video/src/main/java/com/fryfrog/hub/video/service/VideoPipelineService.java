@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,8 +26,22 @@ public class VideoPipelineService {
     private final VideoOrganizeService organizeService;
     private final VideoAssetService assetService;
     private final VideoRepository videoRepository;
+    private final MediaLibraryService mediaLibraryService;
 
     private volatile ExecutorService pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+    /**
+     * 检查媒体库是否启用刮削整理
+     */
+    private boolean isScrapingEnabled(Long libraryId) {
+        if (libraryId == null) return true;
+        try {
+            var library = mediaLibraryService.getLibraryById(libraryId);
+            return Boolean.TRUE.equals(library.getEnableScraping());
+        } catch (Exception e) {
+            return true;
+        }
+    }
 
     /**
      * 完整流水线：扫描 → 刮削 → 整理 → 资产生成
@@ -35,10 +50,19 @@ public class VideoPipelineService {
         log.info("[Pipeline] Starting full pipeline for: {} (libraryId={})", directoryPath, libraryId);
         long startTime = System.currentTimeMillis();
 
-        // Phase 1-2: 扫描 + 批量入库
+        // Phase 1-2: 扫描 + 批量入库（始终执行）
         List<Video> videos = scanService.scanAndSave(directoryPath, libraryId);
         if (videos.isEmpty()) {
             log.info("[Pipeline] No videos found, pipeline complete");
+            return;
+        }
+
+        // 检查媒体库是否启用刮削整理
+        boolean scrapingEnabled = isScrapingEnabled(libraryId);
+        if (!scrapingEnabled) {
+            log.info("[Pipeline] Scraping/organizing disabled for library {}, scan-only mode", libraryId);
+            long elapsed = System.currentTimeMillis() - startTime;
+            log.info("[Pipeline] Pipeline complete (scan-only): {} videos in {}ms", videos.size(), elapsed);
             return;
         }
 
