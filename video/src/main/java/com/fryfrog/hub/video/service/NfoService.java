@@ -82,8 +82,13 @@ public class NfoService {
 
         // 电视剧额外字段
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
-            appendField(sb, "season", video.getSeasonNumber() != null ? video.getSeasonNumber() : 1);
-            appendField(sb, "episode", video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1);
+            int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
+            int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
+            appendField(sb, "season", season);
+            appendField(sb, "episode", episode);
+            // 显示季/集（通常与 season/episode 相同，特殊情况下可以不同）
+            appendField(sb, "displayseason", season);
+            appendField(sb, "displayepisode", episode);
         }
 
         // 封面文件名
@@ -157,12 +162,45 @@ public class NfoService {
     private void appendCommonFields(StringBuilder sb, Video video) {
         appendField(sb, "title", video.getTitle());
         appendField(sb, "originaltitle", video.getOriginalTitle());
+
+        // 电视剧显示标题
+        if ("tv".equalsIgnoreCase(video.getMediaType()) && video.getSeriesName() != null) {
+            appendField(sb, "showtitle", video.getSeriesName());
+        }
+
         appendField(sb, "plot", video.getOverview());
         appendField(sb, "year", video.getYear());
         appendField(sb, "director", video.getDirector());
 
-        // 演员
-        if (video.getActors() != null) {
+        // 编剧（从 credits 中提取 Director 类型的 crew）
+        if (video.getDirector() != null) {
+            String[] directors = video.getDirector().split(",");
+            for (String director : directors) {
+                String trimmed = director.trim();
+                if (!trimmed.isEmpty()) {
+                    appendField(sb, "credits", trimmed);
+                }
+            }
+        }
+
+        // 演员（包含角色信息）
+        if (video.getActorEntities() != null && !video.getActorEntities().isEmpty()) {
+            for (var actorEntity : video.getActorEntities()) {
+                sb.append("  <actor>\n");
+                sb.append("    <name>").append(escapeXml(actorEntity.getName())).append("</name>\n");
+                if (actorEntity.getCharacter() != null && !actorEntity.getCharacter().isBlank()) {
+                    sb.append("    <role>").append(escapeXml(actorEntity.getCharacter())).append("</role>\n");
+                }
+                if (actorEntity.getImageUrl() != null && !actorEntity.getImageUrl().isBlank()) {
+                    sb.append("    <thumb>").append(escapeXml(actorEntity.getImageUrl())).append("</thumb>\n");
+                }
+                if (actorEntity.getSourceActorId() != null) {
+                    sb.append("    <tmdbid>").append(actorEntity.getSourceActorId()).append("</tmdbid>\n");
+                }
+                sb.append("  </actor>\n");
+            }
+        } else if (video.getActors() != null) {
+            // 回退到逗号分隔的字符串
             String[] actors = video.getActors().split(",");
             for (String actor : actors) {
                 String trimmed = actor.trim();
@@ -185,9 +223,26 @@ public class NfoService {
             }
         }
 
-        appendField(sb, "rating", video.getRating());
-        appendField(sb, "votes", video.getVoteCount());
+        // 评分（支持多源）
+        if (video.getRating() != null) {
+            sb.append("  <ratings>\n");
+            sb.append("    <rating max=\"10\" name=\"themoviedb\">\n");
+            sb.append("      <value>").append(video.getRating()).append("</value>\n");
+            if (video.getVoteCount() != null) {
+                sb.append("      <votes>").append(video.getVoteCount()).append("</votes>\n");
+            }
+            sb.append("    </rating>\n");
+            sb.append("  </ratings>\n");
+        }
         appendField(sb, "runtime", video.getDurationMinutes());
+
+        // 首播日期/上映日期
+        if (video.getYear() != null) {
+            appendField(sb, "premiered", video.getYear() + "-01-01");
+        }
+
+        // 制作公司
+        appendField(sb, "studio", video.getStudio());
 
         // TMDB ID
         if (video.getTmdbId() != null) {
@@ -203,9 +258,24 @@ public class NfoService {
                     .append("</uniqueid>\n");
         }
 
+        // 观看状态
+        if (video.getWatchProgress() != null) {
+            boolean watched = Boolean.TRUE.equals(video.getWatchProgress().getCompleted());
+            appendField(sb, "watched", watched ? "true" : "false");
+            appendField(sb, "playcount", watched ? 1 : 0);
+        } else {
+            appendField(sb, "watched", "false");
+            appendField(sb, "playcount", 0);
+        }
+
         // 成人内容标记
         if (Boolean.TRUE.equals(video.getIsAdult())) {
             sb.append("  <adult>true</adult>\n");
+        }
+
+        // 添加时间
+        if (video.getCreatedAt() != null) {
+            appendField(sb, "dateadded", video.getCreatedAt().toString().replace("T", " ").substring(0, 19));
         }
     }
 
@@ -447,6 +517,25 @@ public class NfoService {
             if ("episodedetails".equalsIgnoreCase(rootTag) || "tvshow".equalsIgnoreCase(rootTag)) {
                 data.season = getTagText(root, "season");
                 data.episode = getTagText(root, "episode");
+                data.displaySeason = getTagText(root, "displayseason");
+                data.displayEpisode = getTagText(root, "displayepisode");
+            }
+
+            // 制作公司
+            data.studio = getTagText(root, "studio");
+
+            // 首播日期
+            data.premiered = getTagText(root, "premiered");
+
+            // 添加时间
+            data.dateAdded = getTagText(root, "dateadded");
+
+            // 观看状态
+            String watchedText = getTagText(root, "watched");
+            data.watched = "true".equalsIgnoreCase(watchedText);
+            String playcountText = getTagText(root, "playcount");
+            if (playcountText != null) {
+                try { data.playCount = Integer.parseInt(playcountText); } catch (NumberFormatException ignored) {}
             }
 
             // 演员
@@ -530,6 +619,17 @@ public class NfoService {
         }
         if (data.seriesTitle != null) {
             video.setSeriesName(data.seriesTitle);
+        }
+        if (data.studio != null) {
+            video.setStudio(data.studio);
+        }
+        if (data.premiered != null && data.premiered.length() >= 4) {
+            try {
+                int year = Integer.parseInt(data.premiered.substring(0, 4));
+                if (video.getYear() == null) {
+                    video.setYear(year);
+                }
+            } catch (NumberFormatException ignored) {}
         }
 
         // 设置本地封面路径（poster.jpg/fanart.jpg 优先，NFO 引用兜底）
@@ -630,11 +730,18 @@ public class NfoService {
         public String runtime;
         public String season;
         public String episode;
+        public String displaySeason;
+        public String displayEpisode;
         public String status;
         public boolean isTvShow;
         public String seriesTitle;
         public String thumb;
         public String fanart;
         public boolean isAdult;
+        public String studio;
+        public String premiered;
+        public String dateAdded;
+        public boolean watched;
+        public int playCount;
     }
 }

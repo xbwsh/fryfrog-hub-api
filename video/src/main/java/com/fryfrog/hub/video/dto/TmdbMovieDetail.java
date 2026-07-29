@@ -58,6 +58,9 @@ public class TmdbMovieDetail {
     @JsonProperty("adult")
     private Boolean adult;
 
+    @JsonProperty("production_companies")
+    private List<ProductionCompany> productionCompanies;
+
     public Integer getYear() {
         if (releaseDate != null && releaseDate.length() >= 4) {
             try {
@@ -157,5 +160,28 @@ public class TmdbMovieDetail {
 
         @JsonProperty("department")
         private String department;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ProductionCompany {
+        @JsonProperty("id")
+        private Long id;
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("logo_path")
+        private String logoPath;
+    }
+
+    public String getStudio() {
+        if (productionCompanies != null && !productionCompanies.isEmpty()) {
+            return productionCompanies.stream()
+                    .map(ProductionCompany::getName)
+                    .reduce((a, b) -> a + "," + b)
+                    .orElse(null);
+        }
+        return null;
     }
 }

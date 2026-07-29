@@ -797,6 +797,11 @@ public class VideoScrapeService {
         if (detail.getRuntime() != null) {
             video.setDurationMinutes(detail.getRuntime());
         }
+
+        // 制作公司
+        if (detail.getStudio() != null) {
+            video.setStudio(detail.getStudio());
+        }
     }
 
     private void updateVideoFromTvDetail(Video video, TmdbTvDetail detail) {
@@ -820,6 +825,15 @@ public class VideoScrapeService {
         video.setStatus(detail.getStatus());
         video.setPosterUrl(tmdbService.getPosterUrl(detail.getPosterPath()));
         video.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
+
+        // 从网络公司信息
+        if (detail.getCreatedBy() != null && !detail.getCreatedBy().isEmpty()) {
+            String studios = detail.getCreatedBy().stream()
+                    .map(TmdbTvDetail.Creator::getName)
+                    .reduce((a, b) -> a + "," + b)
+                    .orElse(null);
+            video.setStudio(studios);
+        }
     }
 
     // ==================== 辅助方法 ====================
