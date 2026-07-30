@@ -90,4 +90,10 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     @Query("SELECT COUNT(v) FROM Video v WHERE v.series IS NULL AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
     long countBySeriesIsNullAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE v.tmdbId IS NOT NULL AND (v.isAdult = false OR v.isAdult IS NULL)")
+    List<Video> findWithTmdbIdButNoAdultFlag();
+
+    @Query("SELECT v FROM Video v WHERE v.tmdbId IS NOT NULL AND (v.isAdult = false OR v.isAdult IS NULL) AND v.libraryId = :libraryId")
+    List<Video> findWithTmdbIdButNoAdultFlagByLibrary(@Param("libraryId") Long libraryId);
 }

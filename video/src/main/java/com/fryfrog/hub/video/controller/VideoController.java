@@ -24,6 +24,7 @@ import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoAssetService;
 import com.fryfrog.hub.video.service.VideoOrganizeService;
+import com.fryfrog.hub.video.service.VideoScrapeService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -70,6 +71,7 @@ public class VideoController {
     private final VideoAssetService assetService;
     private final SeriesService seriesService;
     private final PeriodicScanScheduler scanScheduler;
+    private final VideoScrapeService scrapeService;
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
@@ -282,6 +284,17 @@ public class VideoController {
             @Parameter(description = "资源库ID") @PathVariable Long libraryId) {
         service.rescrapeByLibrary(libraryId);
         return ResponseEntity.ok(ApiResponse.success("Rescrape started for library " + libraryId));
+    }
+
+    @PostMapping("/scrape/adult-only")
+    @Operation(summary = "补全成人分级信息", description = "对有 TMDB ID 但未设置 isAdult 的视频，从 TMDB 获取成人分级标记")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> scrapeAdultOnly(
+            @Parameter(description = "资源库ID（可选，不传则处理所有）") @RequestParam(required = false) Long libraryId) {
+        int updated = scrapeService.scrapeAdultOnly(libraryId);
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("updated", updated);
+        result.put("message", "Updated " + updated + " videos with isAdult flag");
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/scrape/progress")

@@ -185,6 +185,14 @@ public class VideoScanService {
             video.setLibraryId(libraryId);
         }
 
+        // 如果资源库标记为成人，自动设置 isAdult
+        if (libraryId != null && !Boolean.TRUE.equals(video.getIsAdult())) {
+            MediaLibrary library = mediaLibraryService.getLibraryById(libraryId);
+            if (Boolean.TRUE.equals(library.getIsAdult())) {
+                video.setIsAdult(true);
+            }
+        }
+
         // 推断 mediaType（不依赖 TMDB）
         if (video.getMediaType() == null) {
             String inferredMediaType = inferMediaType(video, libraryId);

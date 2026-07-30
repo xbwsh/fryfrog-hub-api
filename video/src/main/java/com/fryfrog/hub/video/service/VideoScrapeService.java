@@ -57,6 +57,62 @@ public class VideoScrapeService {
         return scanService.findUnscraped(libraryId);
     }
 
+    /**
+     * 轻量补全 isAdult：对有 TMDB ID 但未设置 isAdult 的视频，从 TMDB 获取成人分级
+     * @param libraryId 指定资源库 ID，null 则处理所有
+     * @return 更新数量
+     */
+    public int scrapeAdultOnly(Long libraryId) {
+        List<Video> videos = libraryId != null
+                ? repository.findWithTmdbIdButNoAdultFlagByLibrary(libraryId)
+                : repository.findWithTmdbIdButNoAdultFlag();
+
+        if (videos.isEmpty()) {
+            return 0;
+        }
+
+        log.info("[Scrape] Found {} videos needing isAdult flag update", videos.size());
+        int updated = 0;
+
+        for (Video video : videos) {
+            try {
+                boolean isAdult = false;
+                if ("movie".equalsIgnoreCase(video.getMediaType())) {
+                    var detail = tmdbService.getMovieDetail(video.getTmdbId());
+                    if (detail != null) {
+                        isAdult = Boolean.TRUE.equals(detail.getAdult());
+                    }
+                } else if ("tv".equalsIgnoreCase(video.getMediaType())) {
+                    var detail = tmdbService.getTvDetail(video.getTmdbId());
+                    if (detail != null) {
+                        isAdult = Boolean.TRUE.equals(detail.getAdult());
+                    }
+                }
+
+                if (isAdult) {
+                    video.setIsAdult(true);
+                    repository.save(video);
+
+                    // 同步更新 VideoSeries
+                    if (video.getSeries() != null) {
+                        var series = video.getSeries();
+                        if (!Boolean.TRUE.equals(series.getIsAdult())) {
+                            series.setIsAdult(true);
+                            seriesService.saveSeries(series);
+                        }
+                    }
+                    updated++;
+                    log.debug("[Scrape] Updated isAdult for: {} (tmdbId={})", video.getTitle(), video.getTmdbId());
+                }
+            } catch (Exception e) {
+                log.debug("[Scrape] Failed to check isAdult for {}: {}", video.getTitle(), e.getMessage());
+            }
+        }
+
+        log.info("[Scrape] isAdult update completed: {}/{} videos updated", updated, videos.size());
+        return updated;
+    }
+
     // ==================== 自动刮削 ====================
 
     /**

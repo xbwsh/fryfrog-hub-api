@@ -39,6 +39,10 @@ public class MediaLibrary extends BaseEntity {
     @Schema(description = "是否启用刮削整理（关闭后仅入库不刮削）", example = "true")
     private Boolean enableScraping = true;
 
+    @Schema(description = "是否为成人内容库（库内所有内容自动标记为成人）", example = "false")
+    @Column(nullable = false)
+    private Boolean isAdult = false;
+
     @Schema(description = "排序", example = "0")
     private Integer sortOrder;
 

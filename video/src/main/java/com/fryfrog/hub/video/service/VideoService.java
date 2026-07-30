@@ -205,6 +205,7 @@ public class VideoService {
         video.setHanimeId(hanimeId);
         video.setMetadataSource("hanime");
         video.setMetadataUpdatedAt(java.time.LocalDateTime.now());
+        video.setIsAdult(true); // Hanime 内容始终为成人内容
 
         Video saved = repository.save(video);
         assetService.generateNfoAndCovers(saved);
