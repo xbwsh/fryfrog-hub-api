@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.SeriesDTO;
+import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
@@ -48,7 +49,7 @@ public class SeriesController {
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
-    public ResponseEntity<ApiResponse<PageResponse<SeriesDTO>>> getAllSeries(
+    public ResponseEntity<ApiResponse<PageResponse<SeriesListDTO>>> getAllSeries(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         long seriesCount = seriesService.count();
@@ -62,7 +63,7 @@ public class SeriesController {
         }
         int end = Math.min(start + size, (int) total);
 
-        List<SeriesDTO> allItems = new ArrayList<>();
+        List<SeriesListDTO> allItems = new ArrayList<>();
 
         // 计算当前页落在系列和独立视频范围
         long seriesEnd = Math.min(end, seriesCount);
@@ -75,15 +76,8 @@ public class SeriesController {
             List<VideoSeries> pagedSeries = allSeries.subList(
                     (int) Math.min(start, seriesCount),
                     (int) Math.min(seriesEnd, allSeries.size()));
-            List<Long> videoIds = pagedSeries.stream()
-                    .flatMap(s -> s.getVideos().stream().map(Video::getId))
-                    .toList();
-            Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
             for (VideoSeries s : pagedSeries) {
-                List<VideoDTO> episodes = s.getVideos().stream()
-                        .map(v -> toVideoDTO(v, progressMap.get(v.getId())))
-                        .collect(Collectors.toList());
-                allItems.add(SeriesDTO.fromEntity(s, episodes));
+                allItems.add(SeriesListDTO.fromEntity(s, s.getVideos()));
             }
         }
 
@@ -102,11 +96,8 @@ public class SeriesController {
             } else if (saOffset > 0) {
                 pagedVideos = List.of();
             }
-            List<Long> ids = pagedVideos.stream().map(Video::getId).toList();
-            Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(ids);
             for (Video video : pagedVideos) {
-                allItems.add(SeriesDTO.fromStandaloneVideo(video,
-                        toVideoDTO(video, progressMap.get(video.getId()))));
+                allItems.add(SeriesListDTO.fromStandaloneVideo(video));
             }
         }
 
