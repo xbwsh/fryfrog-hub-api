@@ -40,7 +40,6 @@ public class MediaLibrary extends BaseEntity {
     private Boolean enableScraping = true;
 
     @Schema(description = "是否为成人内容库（库内所有内容自动标记为成人）", example = "false")
-    @Column(nullable = false)
     private Boolean isAdult = false;
 
     @Schema(description = "排序", example = "0")
