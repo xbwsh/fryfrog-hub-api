@@ -5,7 +5,10 @@ import com.fryfrog.hub.video.model.VideoSeries;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @com.fasterxml.jackson.annotation.JsonPropertyOrder({"id", "type", "title", "coverUrl", "fanartUrl", "originalTitle", "overview"})
@@ -75,8 +78,8 @@ public class SeriesDTO {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String metadataDir;
 
-    @Schema(description = "包含的视频列表")
-    private List<VideoDTO> episodes;
+    @Schema(description = "按季分组的剧集列表")
+    private List<SeasonDTO> seasons;
 
     @Schema(description = "海报本地路径")
     @com.fasterxml.jackson.annotation.JsonIgnore
@@ -110,8 +113,19 @@ public class SeriesDTO {
         dto.setMetadataDir(series.getMetadataDir());
         dto.setPosterLocalPath(series.getPosterLocalPath());
         dto.setBackdropLocalPath(series.getBackdropLocalPath());
-        dto.setEpisodes(episodes);
+        dto.setSeasons(groupEpisodesBySeason(episodes));
         return dto;
+    }
+
+    private static List<SeasonDTO> groupEpisodesBySeason(List<VideoDTO> episodes) {
+        Map<Integer, List<VideoDTO>> grouped = new LinkedHashMap<>();
+        for (VideoDTO ep : episodes) {
+            int season = ep.getSeasonNumber() != null ? ep.getSeasonNumber() : 1;
+            grouped.computeIfAbsent(season, k -> new ArrayList<>()).add(ep);
+        }
+        return grouped.entrySet().stream()
+                .map(e -> SeasonDTO.of(e.getKey(), e.getValue()))
+                .toList();
     }
 
     public static SeriesDTO fromStandaloneVideo(Video video, VideoDTO episode) {
@@ -136,7 +150,7 @@ public class SeriesDTO {
         dto.setStatus(video.getStatus());
         dto.setPosterLocalPath(video.getCoverArtPath());
         dto.setBackdropLocalPath(video.getBackdropLocalPath());
-        dto.setEpisodes(List.of(episode));
+        dto.setSeasons(List.of(SeasonDTO.of(1, List.of(episode))));
         return dto;
     }
 }

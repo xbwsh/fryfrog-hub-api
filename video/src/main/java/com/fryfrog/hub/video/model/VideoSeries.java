@@ -83,7 +83,7 @@ public class VideoSeries extends BaseEntity {
     private String metadataDir;
 
     @OneToMany(mappedBy = "series", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @OrderBy("episodeNumber ASC")
+    @OrderBy("seasonNumber ASC, episodeNumber ASC")
     @Schema(description = "包含的视频")
     private List<Video> videos = new ArrayList<>();
 
