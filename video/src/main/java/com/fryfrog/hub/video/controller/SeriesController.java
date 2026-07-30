@@ -2,6 +2,7 @@ package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.SeriesDTO;
 import com.fryfrog.hub.video.dto.SeriesListDTO;
@@ -46,6 +47,7 @@ public class SeriesController {
     private final VideoRepository videoRepository;
     private final NfoService nfoService;
     private final WatchProgressService watchProgressService;
+    private final MediaLibraryService mediaLibraryService;
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -86,7 +88,9 @@ public class SeriesController {
             int saPage = (int) (standaloneStart / size);
             int saOffset = (int) (standaloneStart % size);
             int saLimit = (int) (standaloneEnd - standaloneStart);
-            Page<Video> standalonePage = videoRepository.findBySeriesIsNull(
+            List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+            Page<Video> standalonePage = videoRepository.findBySeriesIsNullAndEnabledLibraries(
+                    enabledIds,
                     PageRequest.of(saPage, Math.max(size, saLimit),
                             Sort.by(Sort.Direction.ASC, "title")));
             List<Video> pagedVideos = standalonePage.getContent();

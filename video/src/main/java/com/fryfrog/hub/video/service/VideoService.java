@@ -74,7 +74,8 @@ public class VideoService {
     // ==================== 视频查询 ====================
 
     public List<Video> getAllVideos() {
-        return repository.findAll();
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        return repository.findAllByEnabledLibraries(enabledIds);
     }
 
     public Video getVideoById(Long id) {
@@ -83,29 +84,35 @@ public class VideoService {
     }
 
     public List<Video> searchByTitle(String title) {
-        return repository.findByTitleContainingIgnoreCase(title);
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        return repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, enabledIds);
     }
 
     public List<Video> searchByDirector(String director) {
-        return repository.findByDirectorContainingIgnoreCase(director);
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        return repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, enabledIds);
     }
 
     public List<Video> getFavorites() {
-        return repository.findByFavoriteTrue();
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        return repository.findByFavoriteTrueAndEnabledLibraries(enabledIds);
     }
 
     public PageResponse<Video> searchByTitle(String title, int page, int size) {
-        var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        var result = repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, enabledIds, PageRequest.of(page, size));
         return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     public PageResponse<Video> searchByDirector(String director, int page, int size) {
-        var result = repository.findByDirectorContainingIgnoreCase(director, PageRequest.of(page, size));
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        var result = repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, enabledIds, PageRequest.of(page, size));
         return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     public PageResponse<Video> getFavorites(int page, int size) {
-        var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        var result = repository.findByFavoriteTrueAndEnabledLibraries(enabledIds, PageRequest.of(page, size));
         return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 

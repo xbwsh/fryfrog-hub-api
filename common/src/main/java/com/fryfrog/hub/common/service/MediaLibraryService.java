@@ -130,10 +130,22 @@ public class MediaLibraryService {
         return repository.save(library);
     }
 
+    public List<Long> getEnabledLibraryIds() {
+        return getEnabledLibraries().stream()
+                .map(MediaLibrary::getId)
+                .collect(Collectors.toList());
+    }
+
     public List<String> getEnabledPaths() {
         return getEnabledLibraries().stream()
                 .map(MediaLibrary::getPath)
                 .collect(Collectors.toList());
+    }
+
+    public boolean isPathInEnabledLibrary(String filePath) {
+        if (filePath == null) return false;
+        return getEnabledPaths().stream()
+                .anyMatch(path -> filePath.startsWith(path));
     }
 
     public MediaLibrary findByPath(String path) {

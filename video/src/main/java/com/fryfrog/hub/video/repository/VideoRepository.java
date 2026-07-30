@@ -57,4 +57,37 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     @Query("SELECT COUNT(v) FROM Video v WHERE v.series IS NULL")
     long countBySeriesIsNull();
+
+    @Query("SELECT v FROM Video v WHERE v.libraryId IS NULL OR v.libraryId IN :enabledIds")
+    List<Video> findAllByEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE v.favorite = true AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    List<Video> findByFavoriteTrueAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE v.favorite = true AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    Page<Video> findByFavoriteTrueAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds, Pageable pageable);
+
+    @Query("SELECT v FROM Video v WHERE LOWER(v.title) LIKE LOWER(CONCAT('%', :title, '%')) AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    List<Video> findByTitleContainingIgnoreCaseAndEnabledLibraries(@Param("title") String title, @Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE LOWER(v.title) LIKE LOWER(CONCAT('%', :title, '%')) AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    Page<Video> findByTitleContainingIgnoreCaseAndEnabledLibraries(@Param("title") String title, @Param("enabledIds") List<Long> enabledIds, Pageable pageable);
+
+    @Query("SELECT v FROM Video v WHERE LOWER(v.director) LIKE LOWER(CONCAT('%', :director, '%')) AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    List<Video> findByDirectorContainingIgnoreCaseAndEnabledLibraries(@Param("director") String director, @Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE LOWER(v.director) LIKE LOWER(CONCAT('%', :director, '%')) AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    Page<Video> findByDirectorContainingIgnoreCaseAndEnabledLibraries(@Param("director") String director, @Param("enabledIds") List<Long> enabledIds, Pageable pageable);
+
+    @Query("SELECT v FROM Video v WHERE v.tmdbId IS NULL AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    List<Video> findByTmdbIdIsNullAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE v.series IS NULL AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    List<Video> findBySeriesIsNullAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
+
+    @Query("SELECT v FROM Video v WHERE v.series IS NULL AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    Page<Video> findBySeriesIsNullAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds, Pageable pageable);
+
+    @Query("SELECT COUNT(v) FROM Video v WHERE v.series IS NULL AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
+    long countBySeriesIsNullAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
 }

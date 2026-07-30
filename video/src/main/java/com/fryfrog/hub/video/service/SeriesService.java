@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
@@ -29,6 +30,7 @@ public class SeriesService {
     private final VideoRepository videoRepository;
     private final TmdbService tmdbService;
     private final NfoService nfoService;
+    private final MediaLibraryService mediaLibraryService;
 
     private static final Pattern EPISODE_PATTERN = Pattern.compile(
             "(?:S\\d{1,2})?E(\\d{1,4})|(?i:EP?)(\\d{1,4})|[＃#](\\d{1,4})|[\\s._\\-　](\\d{1,4})$|(\\d{1,4})$", Pattern.CASE_INSENSITIVE
@@ -88,11 +90,16 @@ public class SeriesService {
     }
 
     public List<VideoSeries> getAllSeries() {
-        return seriesRepository.findAll();
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        return seriesRepository.findAll().stream()
+                .filter(series -> series.getVideos().isEmpty() ||
+                        series.getVideos().stream().anyMatch(v ->
+                                v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
+                .toList();
     }
 
     public long count() {
-        return seriesRepository.count();
+        return getAllSeries().size();
     }
 
     public Page<VideoSeries> getSeriesPage(Pageable pageable) {

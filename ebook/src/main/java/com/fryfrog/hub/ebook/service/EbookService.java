@@ -78,8 +78,16 @@ public class EbookService {
         return ebook.getCoverArtPath() != null && new File(ebook.getCoverArtPath()).exists();
     }
 
+    private List<Ebook> filterByEnabledLibraries(List<Ebook> ebooks) {
+        List<String> enabledPaths = mediaLibraryService.getEnabledPaths();
+        if (enabledPaths.isEmpty()) return ebooks;
+        return ebooks.stream()
+                .filter(e -> e.getFilePath() != null && mediaLibraryService.isPathInEnabledLibrary(e.getFilePath()))
+                .toList();
+    }
+
     public List<EbookDTO> getAllEbooks() {
-        return repository.findAll().stream()
+        return filterByEnabledLibraries(repository.findAll()).stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
     }
@@ -96,56 +104,60 @@ public class EbookService {
     }
 
     public List<EbookDTO> searchByTitle(String title) {
-        return repository.findByTitleContainingIgnoreCase(title).stream()
+        return filterByEnabledLibraries(repository.findByTitleContainingIgnoreCase(title)).stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
     }
 
     public PageResponse<EbookDTO> searchByTitle(String title, int page, int size) {
         var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<EbookDTO> searchByAuthor(String author) {
-        return repository.findByAuthorContainingIgnoreCase(author).stream()
+        return filterByEnabledLibraries(repository.findByAuthorContainingIgnoreCase(author)).stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
     }
 
     public PageResponse<EbookDTO> searchByAuthor(String author, int page, int size) {
         var result = repository.findByAuthorContainingIgnoreCase(author, PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<EbookDTO> getFavorites() {
-        return repository.findByFavoriteTrue().stream()
+        return filterByEnabledLibraries(repository.findByFavoriteTrue()).stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
     }
 
     public PageResponse<EbookDTO> getFavorites(int page, int size) {
         var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<EbookDTO> getRecentlyAdded() {
-        return repository.findAllByOrderByCreatedAtDesc().stream()
+        return filterByEnabledLibraries(repository.findAllByOrderByCreatedAtDesc()).stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
     }
 
     public PageResponse<EbookDTO> getRecentlyAdded(int page, int size) {
         var result = repository.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(e -> EbookDTO.fromEntity(e, hasCover(e)))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());

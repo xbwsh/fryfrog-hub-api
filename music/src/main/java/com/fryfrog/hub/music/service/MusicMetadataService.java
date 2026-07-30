@@ -72,13 +72,22 @@ public class MusicMetadataService {
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("mp3", "flac", "ogg", "wav", "aac", "m4a");
 
+    private List<MusicTrack> filterByEnabledLibraries(List<MusicTrack> tracks) {
+        List<String> enabledPaths = mediaLibraryService.getEnabledPaths();
+        if (enabledPaths.isEmpty()) return tracks;
+        return tracks.stream()
+                .filter(t -> t.getFilePath() != null && mediaLibraryService.isPathInEnabledLibrary(t.getFilePath()))
+                .toList();
+    }
+
     public List<MusicTrack> getAllTracks() {
-        return repository.findAll();
+        return filterByEnabledLibraries(repository.findAll());
     }
 
     public PageResponse<MusicTrack> getAllTracks(int page, int size) {
         var result = repository.findAll(PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     public MusicTrack getTrackById(Long id) {
@@ -87,21 +96,23 @@ public class MusicMetadataService {
     }
 
     public List<MusicTrack> searchByTitle(String title) {
-        return repository.findByTitleContainingIgnoreCase(title);
+        return filterByEnabledLibraries(repository.findByTitleContainingIgnoreCase(title));
     }
 
     public PageResponse<MusicTrack> searchByTitle(String title, int page, int size) {
         var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     public List<MusicTrack> searchByArtist(String artist) {
-        return repository.findByArtistContainingIgnoreCase(artist);
+        return filterByEnabledLibraries(repository.findByArtistContainingIgnoreCase(artist));
     }
 
     public PageResponse<MusicTrack> searchByArtist(String artist, int page, int size) {
         var result = repository.findByArtistContainingIgnoreCase(artist, PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     public MusicTrack setFavorite(Long id, boolean status) {
@@ -111,12 +122,13 @@ public class MusicMetadataService {
     }
 
     public List<MusicTrack> getFavorites() {
-        return repository.findByFavoriteTrue();
+        return filterByEnabledLibraries(repository.findByFavoriteTrue());
     }
 
     public PageResponse<MusicTrack> getFavorites(int page, int size) {
         var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     @Transactional
@@ -128,30 +140,33 @@ public class MusicMetadataService {
     }
 
     public List<MusicTrack> getRecentlyPlayed() {
-        return repository.findByLastPlayedAtIsNotNullOrderByLastPlayedAtDesc();
+        return filterByEnabledLibraries(repository.findByLastPlayedAtIsNotNullOrderByLastPlayedAtDesc());
     }
 
     public PageResponse<MusicTrack> getRecentlyPlayed(int page, int size) {
         var result = repository.findByLastPlayedAtIsNotNullOrderByLastPlayedAtDesc(PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     public List<MusicTrack> getMostPlayed() {
-        return repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0);
+        return filterByEnabledLibraries(repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0));
     }
 
     public PageResponse<MusicTrack> getMostPlayed(int page, int size) {
         var result = repository.findByPlayCountGreaterThanOrderByPlayCountDesc(0, PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     public List<MusicTrack> getRecentlyAdded() {
-        return repository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+        return filterByEnabledLibraries(repository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt")));
     }
 
     public PageResponse<MusicTrack> getRecentlyAdded(int page, int size) {
         var result = repository.findAll(PageRequest.of(page, size, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt")));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        List<MusicTrack> filtered = filterByEnabledLibraries(result.getContent());
+        return PageResponse.of(filtered, page, size, result.getTotalElements());
     }
 
     public Map<String, List<MusicTrack>> getRecommendations() {

@@ -64,8 +64,16 @@ public class ComicMetadataService {
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("cbz", "cbr", "zip", "rar", "epub");
 
+    private List<Comic> filterByEnabledLibraries(List<Comic> comics) {
+        List<String> enabledPaths = mediaLibraryService.getEnabledPaths();
+        if (enabledPaths.isEmpty()) return comics;
+        return comics.stream()
+                .filter(c -> c.getFilePath() != null && mediaLibraryService.isPathInEnabledLibrary(c.getFilePath()))
+                .toList();
+    }
+
     public List<Comic> getAllComics() {
-        return repository.findAll();
+        return filterByEnabledLibraries(repository.findAll());
     }
 
     public Comic getComicById(Long id) {
@@ -74,36 +82,39 @@ public class ComicMetadataService {
     }
 
     public List<Comic> searchByTitle(String title) {
-        return repository.findByTitleContainingIgnoreCase(title);
+        return filterByEnabledLibraries(repository.findByTitleContainingIgnoreCase(title));
     }
 
     public PageResponse<ComicDTO> searchByTitle(String title, int page, int size) {
         var result = repository.findByTitleContainingIgnoreCase(title, PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<Comic> searchByAuthor(String author) {
-        return repository.findByAuthorContainingIgnoreCase(author);
+        return filterByEnabledLibraries(repository.findByAuthorContainingIgnoreCase(author));
     }
 
     public PageResponse<ComicDTO> searchByAuthor(String author, int page, int size) {
         var result = repository.findByAuthorContainingIgnoreCase(author, PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());
     }
 
     public List<Comic> getFavorites() {
-        return repository.findByFavoriteTrue();
+        return filterByEnabledLibraries(repository.findByFavoriteTrue());
     }
 
     public PageResponse<ComicDTO> getFavorites(int page, int size) {
         var result = repository.findByFavoriteTrue(PageRequest.of(page, size));
-        var dtos = result.getContent().stream()
+        var filtered = filterByEnabledLibraries(result.getContent());
+        var dtos = filtered.stream()
                 .map(c -> ComicDTO.fromEntity(c, c.getCoverArtPath() != null))
                 .toList();
         return PageResponse.of(dtos, page, size, result.getTotalElements());
@@ -116,7 +127,7 @@ public class ComicMetadataService {
     }
 
     public List<ComicSeries> getComicsBySeries() {
-        List<Comic> allComics = repository.findAll();
+        List<Comic> allComics = filterByEnabledLibraries(repository.findAll());
 
         // 按 seriesRef 分组（优先），无 seriesRef 的回退到 seriesName
         Map<String, List<Comic>> grouped = allComics.stream()
