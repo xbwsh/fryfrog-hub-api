@@ -34,6 +34,10 @@ logs/
 .env.local
 app/src/main/resources/application-dev.yml
 
+# Runtime data
+*.db
+data/
+
 # Media Library (contains media files)
 media-library/
 *.mp3
