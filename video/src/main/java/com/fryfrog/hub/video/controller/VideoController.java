@@ -449,7 +449,6 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
         Path videoDir = Paths.get(video.getFilePath()).getParent();
-        String baseName = nfoService.getBaseName(video.getFileName());
 
         List<Map<String, String>> subtitles = new ArrayList<>();
         if (videoDir == null) return ResponseEntity.ok(ApiResponse.success(subtitles));
@@ -459,20 +458,12 @@ public class VideoController {
         try (var files = java.nio.file.Files.list(videoDir)) {
             files.filter(java.nio.file.Files::isRegularFile)
                     .filter(f -> {
-                        String name = f.getFileName().toString();
-                        return name.startsWith(baseName) && subtitleExts.stream()
-                                .anyMatch(ext -> name.toLowerCase().endsWith(ext));
+                        String name = f.getFileName().toString().toLowerCase();
+                        return subtitleExts.stream().anyMatch(ext -> name.endsWith(ext));
                     })
                     .forEach(f -> {
                         String name = f.getFileName().toString();
-                        // 提取语言标签: 堀与宫村 - S01E01.ass   → und
-                        //              堀与宫村 - S01E01.zh.ass → zh
-                        String suffix = name.substring(baseName.length());
-                        String lang = "und";
-                        if (suffix.startsWith(".")) {
-                            String noExt = suffix.substring(1, suffix.lastIndexOf('.'));
-                            if (!noExt.isEmpty()) lang = noExt;
-                        }
+                        String lang = extractLanguageFromSubtitle(name);
                         Map<String, String> entry = new java.util.LinkedHashMap<>();
                         entry.put("filename", name);
                         entry.put("language", lang);
@@ -484,6 +475,20 @@ public class VideoController {
         }
 
         return ResponseEntity.ok(ApiResponse.success(subtitles));
+    }
+
+    private String extractLanguageFromSubtitle(String filename) {
+        String name = filename;
+        int lastDot = name.lastIndexOf('.');
+        if (lastDot > 0) {
+            name = name.substring(0, lastDot);
+        }
+        int secondLastDot = name.lastIndexOf('.');
+        if (secondLastDot > 0) {
+            String lang = name.substring(secondLastDot + 1);
+            if (!lang.isEmpty()) return lang;
+        }
+        return "und";
     }
 
     @GetMapping("/{id:\\d+}/subtitles/{filename:.+}")
