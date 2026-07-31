@@ -58,4 +58,10 @@ public class EbookFileWatcherService extends AbstractFileWatcherService {
         ebookService.organizeAll();
         scrapeService.autoScrapeAll();
     }
+
+    @Override
+    protected void onFileDeleted(Path filePath) {
+        log.info("[EbookWatcher] File deleted: {}", filePath);
+        ebookService.cleanupInvalidRecords();
+    }
 }
