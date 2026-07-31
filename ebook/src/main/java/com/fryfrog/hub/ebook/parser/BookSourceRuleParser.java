@@ -260,6 +260,8 @@ public class BookSourceRuleParser {
         String result = selector;
         result = result.replaceAll("(?<!\\w)class\\.", ".");
         result = result.replaceAll("(?<!\\w)id:", "#");
+        result = result.replaceAll("(?<!\\w)tag\\.", "");
+        result = result.replaceAll("!\\d+", "");
         result = result.replace("@", " ");
         return result;
     }

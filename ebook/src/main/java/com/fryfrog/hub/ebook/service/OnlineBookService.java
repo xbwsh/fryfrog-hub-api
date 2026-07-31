@@ -226,27 +226,60 @@ public class OnlineBookService {
 
     private String fetchUrl(String url, String headerJson) {
         try {
-            return webClientBuilder.build()
-                    .get()
-                    .uri(java.net.URI.create(url))
-                    .headers(headers -> {
-                        if (headerJson != null && !headerJson.isEmpty()) {
-                            try {
-                                Map<String, String> headerMap = objectMapper.readValue(headerJson, Map.class);
-                                headerMap.forEach(headers::add);
-                            } catch (Exception e) {
-                                log.debug("解析请求头失败: {}", e.getMessage());
-                            }
-                        }
-                        headers.add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                    })
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            String actualUrl = url;
+            String postBody = null;
+
+            int commaIdx = url.indexOf(",{");
+            if (commaIdx > 0 && url.endsWith("}")) {
+                actualUrl = url.substring(0, commaIdx);
+                String configJson = url.substring(commaIdx + 1);
+                try {
+                    Map<String, Object> config = objectMapper.readValue(configJson, Map.class);
+                    String method = config.getOrDefault("method", "GET").toString();
+                    if ("POST".equalsIgnoreCase(method)) {
+                        postBody = config.getOrDefault("body", "").toString();
+                    }
+                } catch (Exception e) {
+                    log.debug("解析搜索URL配置失败: {}", e.getMessage());
+                }
+            }
+
+            java.net.URI uri = java.net.URI.create(actualUrl);
+            var webClient = webClientBuilder.build();
+
+            if (postBody != null) {
+                return webClient.post()
+                        .uri(uri)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED)
+                        .headers(headers -> applyHeaders(headers, headerJson))
+                        .bodyValue(postBody)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            } else {
+                return webClient.get()
+                        .uri(uri)
+                        .headers(headers -> applyHeaders(headers, headerJson))
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            }
         } catch (Exception e) {
             log.error("获取URL失败: {}", url, e);
             return "";
         }
+    }
+
+    private void applyHeaders(org.springframework.http.HttpHeaders headers, String headerJson) {
+        if (headerJson != null && !headerJson.isEmpty()) {
+            try {
+                Map<String, String> headerMap = objectMapper.readValue(headerJson, Map.class);
+                headerMap.forEach(headers::add);
+            } catch (Exception e) {
+                log.debug("解析请求头失败: {}", e.getMessage());
+            }
+        }
+        headers.add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
     }
 
     private String resolveUrl(String url, String baseUrl) {
