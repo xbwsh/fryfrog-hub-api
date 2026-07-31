@@ -46,7 +46,7 @@ public class BookSourceRuleParser {
         Document doc = Jsoup.parse(html, baseUrl);
         List<Map<String, String>> results = new ArrayList<>();
 
-        Elements bookElements = doc.select(rule.getBookList());
+        Elements bookElements = doc.select(convertLegadoSelector(rule.getBookList()));
         for (Element bookElement : bookElements) {
             Map<String, String> book = new HashMap<>();
             book.put("name", extractText(bookElement, rule.getName()));
@@ -82,7 +82,7 @@ public class BookSourceRuleParser {
         Document doc = Jsoup.parse(html, baseUrl);
         List<Map<String, String>> chapters = new ArrayList<>();
 
-        Elements chapterElements = doc.select(rule.getChapterList());
+        Elements chapterElements = doc.select(convertLegadoSelector(rule.getChapterList()));
         for (Element chapterElement : chapterElements) {
             Map<String, String> chapter = new HashMap<>();
             chapter.put("chapterName", extractText(chapterElement, rule.getChapterName()));
@@ -103,7 +103,7 @@ public class BookSourceRuleParser {
         Document doc = Jsoup.parse(html, baseUrl);
         StringBuilder content = new StringBuilder();
 
-        Elements contentElements = doc.select(rule.getContent());
+        Elements contentElements = doc.select(convertLegadoSelector(rule.getContent()));
         for (Element element : contentElements) {
             content.append(element.html()).append("\n");
         }
@@ -253,10 +253,22 @@ public class BookSourceRuleParser {
         }
     }
 
+    private String convertLegadoSelector(String selector) {
+        if (selector == null || selector.isEmpty()) {
+            return selector;
+        }
+        String result = selector;
+        result = result.replaceAll("(?<!\\w)class\\.", ".");
+        result = result.replaceAll("(?<!\\w)id:", "#");
+        result = result.replace("@", " ");
+        return result;
+    }
+
     private ParsedSelector parseSelector(String selector) {
-        Matcher matcher = CSS_SELECTOR_PATTERN.matcher(selector);
+        String converted = convertLegadoSelector(selector);
+        Matcher matcher = CSS_SELECTOR_PATTERN.matcher(converted);
         if (!matcher.matches()) {
-            return new ParsedSelector(selector, null, null);
+            return new ParsedSelector(converted, null, null);
         }
 
         String cssSelector = matcher.group(1);

@@ -228,7 +228,7 @@ public class OnlineBookService {
         try {
             return webClientBuilder.build()
                     .get()
-                    .uri(url)
+                    .uri(java.net.URI.create(url))
                     .headers(headers -> {
                         if (headerJson != null && !headerJson.isEmpty()) {
                             try {
