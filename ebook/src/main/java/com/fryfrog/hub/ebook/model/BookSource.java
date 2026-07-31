@@ -47,6 +47,7 @@ public class BookSource extends BaseEntity {
     private Boolean enabled = true;
 
     @Schema(description = "书源分组", example = "小说")
+    @Column(name = "\"group\"")
     private String group;
 
     @Schema(description = "书源类型：book/novel/comic")
