@@ -2,6 +2,7 @@ package com.fryfrog.hub.ebook.repository;
 
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
+import com.fryfrog.hub.ebook.model.SourceType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -52,4 +53,32 @@ public interface EbookRepository extends JpaRepository<Ebook, Long> {
 
     @Query("SELECT COUNT(e) FROM Ebook e WHERE e.favorite = true")
     long countFavorites();
+
+    // ========== 在线书籍相关查询 ==========
+
+    Page<Ebook> findBySourceTypeOrderByCreatedAtDesc(SourceType sourceType, Pageable pageable);
+
+    Page<Ebook> findBySourceTypeAndTitleContainingIgnoreCase(SourceType sourceType, String title, Pageable pageable);
+
+    Page<Ebook> findBySourceTypeAndAuthorContainingIgnoreCase(SourceType sourceType, String author, Pageable pageable);
+
+    @Query("SELECT e FROM Ebook e WHERE e.sourceType = :sourceType AND e.bangumiId IS NULL AND e.openLibraryId IS NULL")
+    List<Ebook> findUnscrapedBySourceType(@Param("sourceType") SourceType sourceType);
+
+    Optional<Ebook> findByOnlineUrlAndSourceType(String onlineUrl, SourceType sourceType);
+
+    boolean existsByOnlineUrlAndSourceType(String onlineUrl, SourceType sourceType);
+
+    @Query("SELECT e FROM Ebook e WHERE e.sourceType = :sourceType AND e.favorite = true ORDER BY e.createdAt DESC")
+    Page<Ebook> findFavoritesBySourceType(@Param("sourceType") SourceType sourceType, Pageable pageable);
+
+    @Query("SELECT e FROM Ebook e JOIN EbookReadingProgress p ON e.id = p.ebook.id WHERE e.sourceType = :sourceType ORDER BY p.updatedAt DESC")
+    List<Ebook> findRecentlyReadBySourceType(@Param("sourceType") SourceType sourceType);
+
+    @Query("SELECT COUNT(e) FROM Ebook e WHERE e.sourceType = :sourceType")
+    long countBySourceType(@Param("sourceType") SourceType sourceType);
+
+    @Query("SELECT COUNT(e) FROM Ebook e WHERE e.sourceType = :sourceType AND e.favorite = true")
+    long countFavoritesBySourceType(@Param("sourceType") SourceType sourceType);
 }
+

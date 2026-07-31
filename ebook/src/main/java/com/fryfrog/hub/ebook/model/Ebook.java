@@ -94,6 +94,24 @@ public class Ebook extends BaseEntity {
     @Schema(description = "刮削尝试时间（用于跳过近期已尝试的电子书）")
     private java.time.LocalDateTime scrapeAttemptedAt;
 
+    @Schema(description = "来源类型")
+    @Column(nullable = false)
+    @Enumerated(EnumType.STRING)
+    private SourceType sourceType = SourceType.LOCAL;
+
+    @Schema(description = "书源ID（在线书籍关联）")
+    @Column(name = "book_source_id")
+    private Long bookSourceId;
+
+    @Schema(description = "在线书籍原始URL")
+    @Column(columnDefinition = "TEXT")
+    private String onlineUrl;
+
+    @Schema(description = "章节缓存JSON（在线书籍）")
+    @Column(columnDefinition = "TEXT")
+    @JsonIgnore
+    private String chaptersJson;
+
     @Schema(description = "系列名称")
     @com.fasterxml.jackson.annotation.JsonGetter("series")
     public String getSeries() {
@@ -112,6 +130,14 @@ public class Ebook extends BaseEntity {
 
     @com.fasterxml.jackson.annotation.JsonGetter("readUrl")
     public String getReadUrl() {
+        if (sourceType == SourceType.ONLINE) {
+            return "/api/v1/ebook/" + getId() + "/read/online";
+        }
         return "/api/v1/ebook/" + getId() + "/read";
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("isOnline")
+    public Boolean getIsOnline() {
+        return sourceType == SourceType.ONLINE;
     }
 }
