@@ -93,9 +93,23 @@ public class OnlineBookService {
             return "";
         }
 
+        if (searchUrlTemplate.startsWith("@js:")) {
+            log.debug("跳过JS脚本搜索URL: {}", searchUrlTemplate.substring(0, Math.min(50, searchUrlTemplate.length())));
+            return "";
+        }
+
         String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
         String url = searchUrlTemplate.replace("{{key}}", encodedKeyword);
         url = url.replace("{{key-utf8}}", encodedKeyword);
+        url = url.replace("{{page}}", "0");
+        url = url.replace("{{page-1}}", "1");
+        url = url.replace("{{page+1}}", "1");
+        url = url.replace("{{getCurrentUrl()}}", baseUrl);
+
+        if (url.contains("{{") && url.contains("}}")) {
+            log.debug("URL模板包含未处理的变量: {}", url);
+            return "";
+        }
 
         if (url.startsWith("http://") || url.startsWith("https://")) {
             return url;
@@ -193,6 +207,7 @@ public class OnlineBookService {
         ebook.setSourceType(SourceType.ONLINE);
         ebook.setBookSourceId(sourceId);
         ebook.setOnlineUrl(bookUrl);
+        ebook.setFileName(bookUrl);
         ebook.setFavorite(false);
 
         Ebook saved = ebookRepository.save(ebook);
@@ -226,6 +241,15 @@ public class OnlineBookService {
 
     private String fetchUrl(String url, String headerJson) {
         try {
+            if (url == null || url.isEmpty()) {
+                return "";
+            }
+
+            if (url.startsWith("@js:") || url.contains("{{")) {
+                log.debug("跳过包含JS脚本或未解析模板变量的URL: {}", url.substring(0, Math.min(80, url.length())));
+                return "";
+            }
+
             String actualUrl = url;
             String postBody = null;
 

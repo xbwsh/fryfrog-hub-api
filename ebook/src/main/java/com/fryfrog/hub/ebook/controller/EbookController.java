@@ -202,7 +202,7 @@ public class EbookController {
     public ResponseEntity<ApiResponse<List<MediaSeriesCharacter>>> getCharacters(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
         Ebook ebook = service.getEbookEntityById(id);
-        if (ebook.getSeriesRef() == null) {
+        if (ebook.getSourceType() == SourceType.ONLINE || ebook.getSeriesRef() == null) {
             return ResponseEntity.ok(ApiResponse.success(List.of()));
         }
         List<MediaSeriesCharacter> characters =
@@ -270,7 +270,11 @@ public class EbookController {
         // 在线书籍
         if (ebook.getSourceType() == SourceType.ONLINE) {
             if (chapterUrl == null || chapterUrl.isEmpty()) {
-                throw new IllegalArgumentException("在线书籍需要提供chapterUrl参数");
+                List<OnlineChapterDTO> chapters = onlineBookService.getChapters(ebook.getOnlineUrl(), ebook.getBookSourceId());
+                if (chapters.isEmpty()) {
+                    throw new IllegalArgumentException("该书籍没有可用章节");
+                }
+                chapterUrl = chapters.get(0).getChapterUrl();
             }
             log.info("阅读在线书籍: id={}, chapterUrl={}", id, chapterUrl);
             String content = onlineBookService.getChapterContent(chapterUrl, ebook.getBookSourceId());

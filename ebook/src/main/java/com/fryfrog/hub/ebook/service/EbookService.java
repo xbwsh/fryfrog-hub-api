@@ -46,6 +46,7 @@ public class EbookService {
     private final com.fryfrog.hub.common.repository.MediaSeriesRepository seriesRepository;
     private final com.fryfrog.hub.common.repository.MediaSeriesCharacterRepository seriesCharacterRepository;
     private final MediaLibraryService mediaLibraryService;
+    private final OnlineBookService onlineBookService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -418,6 +419,13 @@ public class EbookService {
 
     public List<ChapterInfo> getChapterList(Long id) {
         Ebook ebook = getEbookEntityById(id);
+
+        if (ebook.getSourceType() == com.fryfrog.hub.ebook.model.SourceType.ONLINE) {
+            return onlineBookService.getChapters(ebook.getOnlineUrl(), ebook.getBookSourceId()).stream()
+                    .map(ch -> new ChapterInfo(ch.getChapterNum(), ch.getChapterName()))
+                    .toList();
+        }
+
         File file = new File(ebook.getFilePath());
         if (!file.exists()) {
             throw new IllegalArgumentException("Ebook file not found: " + ebook.getFilePath());
