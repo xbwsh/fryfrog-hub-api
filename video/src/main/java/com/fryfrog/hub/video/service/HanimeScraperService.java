@@ -33,6 +33,8 @@ public class HanimeScraperService {
 
     private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})");
     private static final Pattern NUMBER_PATTERN = Pattern.compile("\\d+");
+    private static final Pattern VIDEO_URL_PATTERN = Pattern.compile("https?://[^\"'\\s>]+\\.(?:mp4|m3u8)[^\"'\\s>]*");
+    private static final Pattern JS_SOURCE_PATTERN = Pattern.compile("const\\s+source\\s*=\\s*['\"]([^'\"]+)['\"]");
 
     public HanimeScraperService(CfBypassClient cfClient, SystemSettingService settingService) {
         this.cfClient = cfClient;
@@ -59,7 +61,7 @@ public class HanimeScraperService {
     }
 
     /**
-     * 根据视频 ID 刮削元数据
+     * 根据视频 ID 刮削元数据（不含视频播放地址）
      */
     public HanimeMetadata scrape(String videoId) {
         HanimeMetadata cached = metadataCache.getIfPresent(videoId);
@@ -88,6 +90,208 @@ public class HanimeScraperService {
         }
 
         return metadata;
+    }
+
+    /**
+     * 解析视频完整信息（含视频播放地址）
+     */
+    public HanimeMetadata scrapeWithSources(String videoId) {
+        HanimeMetadata cached = metadataCache.getIfPresent("sources_" + videoId);
+        if (cached != null && cached.getSources() != null && !cached.getSources().isEmpty()) {
+            log.debug("Hanime metadata with sources from cache: {}", videoId);
+            return cached;
+        }
+
+        log.info("Scraping Hanime with sources: {}", videoId);
+        sleep(getRequestInterval());
+
+        String watchUrl = getBaseUrl() + "/watch?v=" + videoId;
+        String downloadUrl = getBaseUrl() + "/download?v=" + videoId;
+
+        String watchHtml = cfClient.fetch(watchUrl, null);
+        if (watchHtml == null || watchHtml.isEmpty()) {
+            log.error("Failed to fetch Hanime watch page: {}", videoId);
+            return null;
+        }
+
+        Document watchDoc = Jsoup.parse(watchHtml);
+        HanimeMetadata metadata = extractMetadata(watchDoc, videoId);
+
+        if (metadata == null) {
+            return null;
+        }
+
+        metadata.setWatchUrl(watchUrl);
+
+        // 从 watch 页面提取视频源
+        List<HanimeMetadata.VideoSource> sources = extractVideoSourcesFromWatch(watchDoc);
+
+        // 如果 watch 页面没有找到，尝试 download 页面
+        if (sources.isEmpty()) {
+            log.debug("No sources from watch page, trying download page: {}", videoId);
+            sleep(getRequestInterval());
+            String downloadHtml = cfClient.fetch(downloadUrl, null);
+            if (downloadHtml != null && !downloadHtml.isEmpty()) {
+                Document downloadDoc = Jsoup.parse(downloadHtml);
+                sources = extractVideoSourcesFromDownload(downloadDoc);
+            }
+        }
+
+        // 如果还没有找到，从 watch 页面的 JS 中提取
+        if (sources.isEmpty()) {
+            log.debug("Trying to extract from JS: {}", videoId);
+            sources = extractVideoSourcesFromJs(watchHtml);
+        }
+
+        metadata.setSources(sources);
+
+        // 设置默认播放地址（最高画质）
+        if (!sources.isEmpty()) {
+            metadata.setDefaultUrl(sources.get(0).getUrl());
+        }
+
+        // 缓存带源的结果
+        metadataCache.put("sources_" + videoId, metadata);
+        log.info("Hanime scrape with sources complete: {} - {} sources found", videoId, sources.size());
+
+        return metadata;
+    }
+
+    /**
+     * 从 watch 页面的 video 标签提取视频源
+     */
+    private List<HanimeMetadata.VideoSource> extractVideoSourcesFromWatch(Document doc) {
+        List<HanimeMetadata.VideoSource> sources = new ArrayList<>();
+
+        Elements videoSources = doc.select("video#player source");
+        for (Element source : videoSources) {
+            String url = source.attr("src");
+            String resolution = source.attr("size");
+            String type = source.attr("type");
+
+            if (url != null && !url.isEmpty()) {
+                String format = "mp4";
+                if (type != null && type.contains("mpegurl")) {
+                    format = "m3u8";
+                } else if (url.contains(".m3u8")) {
+                    format = "m3u8";
+                }
+
+                sources.add(HanimeMetadata.VideoSource.builder()
+                        .resolution(resolution != null && !resolution.isEmpty() ? resolution + "p" : "unknown")
+                        .format(format)
+                        .url(url)
+                        .build());
+            }
+        }
+
+        // 按分辨率排序（高到低）
+        sources.sort((a, b) -> {
+            int aRes = parseResolution(a.getResolution());
+            int bRes = parseResolution(b.getResolution());
+            return Integer.compare(bRes, aRes);
+        });
+
+        return sources;
+    }
+
+    /**
+     * 从 download 页面的 download-table 提取视频源
+     */
+    private List<HanimeMetadata.VideoSource> extractVideoSourcesFromDownload(Document doc) {
+        List<HanimeMetadata.VideoSource> sources = new ArrayList<>();
+
+        Elements rows = doc.select("table.download-table tr");
+        for (int i = 1; i < rows.size(); i++) { // 跳过表头
+            Element row = rows.get(i);
+            Elements tds = row.select("td");
+
+            if (tds.size() >= 4) {
+                String resolution = tds.get(1).text().trim();
+                String format = tds.get(2).text().trim();
+                String fileSize = tds.get(3).text().trim();
+                Element link = row.select("a[data-url]").first();
+
+                if (link != null) {
+                    String url = link.attr("data-url");
+                    if (url != null && !url.isEmpty()) {
+                        sources.add(HanimeMetadata.VideoSource.builder()
+                                .resolution(resolution)
+                                .format(format.toLowerCase())
+                                .url(url)
+                                .fileSize(parseFileSize(fileSize))
+                                .build());
+                    }
+                }
+            }
+        }
+
+        return sources;
+    }
+
+    /**
+     * 从 watch 页面的 JavaScript 中提取视频源
+     */
+    private List<HanimeMetadata.VideoSource> extractVideoSourcesFromJs(String html) {
+        List<HanimeMetadata.VideoSource> sources = new ArrayList<>();
+
+        // 尝试匹配 const source = '...'
+        Matcher jsMatcher = JS_SOURCE_PATTERN.matcher(html);
+        if (jsMatcher.find()) {
+            String url = jsMatcher.group(1);
+            if (url != null && !url.isEmpty()) {
+                String format = url.contains(".m3u8") ? "m3u8" : "mp4";
+                sources.add(HanimeMetadata.VideoSource.builder()
+                        .resolution("default")
+                        .format(format)
+                        .url(url)
+                        .build());
+            }
+        }
+
+        // 尝试匹配所有 mp4/m3u8 URL
+        if (sources.isEmpty()) {
+            Matcher urlMatcher = VIDEO_URL_PATTERN.matcher(html);
+            Set<String> seen = new HashSet<>();
+            while (urlMatcher.find()) {
+                String url = urlMatcher.group();
+                if (seen.add(url)) {
+                    String format = url.contains(".m3u8") ? "m3u8" : "mp4";
+                    sources.add(HanimeMetadata.VideoSource.builder()
+                            .resolution("default")
+                            .format(format)
+                            .url(url)
+                            .build());
+                }
+            }
+        }
+
+        return sources;
+    }
+
+    private int parseResolution(String resolution) {
+        if (resolution == null) return 0;
+        String num = resolution.replaceAll("[^\\d]", "");
+        if (num.isEmpty()) return 0;
+        try {
+            return Integer.parseInt(num);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private long parseFileSize(String sizeStr) {
+        if (sizeStr == null || sizeStr.isEmpty()) return 0;
+        try {
+            String numStr = sizeStr.replaceAll("[^\\d.]", "");
+            double num = Double.parseDouble(numStr);
+            if (sizeStr.contains("GB")) return (long) (num * 1024 * 1024 * 1024);
+            if (sizeStr.contains("MB")) return (long) (num * 1024 * 1024);
+            if (sizeStr.contains("KB")) return (long) (num * 1024);
+            return (long) num;
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     /**

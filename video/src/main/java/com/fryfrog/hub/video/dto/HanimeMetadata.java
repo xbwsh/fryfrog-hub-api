@@ -50,4 +50,37 @@ public class HanimeMetadata {
 
     @Schema(description = "刮削时间戳")
     private Long scrapedAt;
+
+    // ===== 视频播放地址相关字段 =====
+
+    @Schema(description = "视频播放地址列表（不同分辨率）")
+    private List<VideoSource> sources;
+
+    @Schema(description = "默认播放地址（最高画质）")
+    private String defaultUrl;
+
+    @Schema(description = "页面地址")
+    private String watchUrl;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Schema(description = "视频源")
+    public static class VideoSource {
+        @Schema(description = "分辨率", example = "1080p")
+        private String resolution;
+
+        @Schema(description = "视频格式", example = "mp4")
+        private String format;
+
+        @Schema(description = "视频 URL")
+        private String url;
+
+        @Schema(description = "文件大小（字节）")
+        private Long fileSize;
+
+        @Schema(description = "时长（秒）")
+        private Integer duration;
+    }
 }
