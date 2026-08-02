@@ -11,7 +11,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
@@ -31,13 +30,10 @@ class VideoServiceAdultSyncTest {
     @Mock private VideoScanService scanService;
     @Mock private VideoScrapeService scrapeService;
     @Mock private VideoOrganizeService organizeService;
-    @Mock private VideoAssetService assetService;
     @Mock private VideoPipelineService pipelineService;
-    @Mock private HanimeScraperService hanimeScraperService;
     @Mock private MediaLibraryService mediaLibraryService;
     @Mock private NfoService nfoService;
     @Mock private CoverArtService coverArtService;
-    @Mock private TransactionTemplate transactionTemplate;
     @Mock private RestTemplate scraperRestTemplate;
 
     @InjectMocks

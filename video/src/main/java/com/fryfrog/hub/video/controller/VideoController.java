@@ -6,7 +6,6 @@ import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
-import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.VideoBindRequest;
 import com.fryfrog.hub.video.dto.VideoDTO;
@@ -301,33 +300,6 @@ public class VideoController {
     @Operation(summary = "刮削进度", description = "返回当前视频刮削任务的进度")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("video")));
-    }
-
-    // ==================== Hanime ====================
-
-    @PostMapping("/{id:\\d+}/hanime/bind")
-    @Operation(summary = "绑定 Hanime 元数据", description = "将 Hanime 视频元数据绑定到指定视频")
-    public ResponseEntity<ApiResponse<VideoDTO>> bindHanime(
-            @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "Hanime 视频ID") @RequestParam String hanimeId) {
-        Video video = service.scrapeAndBindHanime(id, hanimeId);
-        boolean hasNfo = nfoService.readNfoForVideo(Path.of(video.getFilePath())) != null;
-        boolean hasPoster = Files.exists(nfoService.getPosterPath(video));
-        boolean hasFanart = Files.exists(nfoService.getFanartPath(video));
-        boolean hasMetadataDir = Files.exists(nfoService.getMetadataDir(video));
-        return ResponseEntity.ok(ApiResponse.success(
-                VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir)));
-    }
-
-    @GetMapping("/hanime/scrape")
-    @Operation(summary = "刮削 Hanime 元数据", description = "根据 Hanime ID 获取视频元数据（不绑定到已有视频）")
-    public ResponseEntity<ApiResponse<HanimeMetadata>> scrapeHanime(
-            @Parameter(description = "Hanime 视频ID") @RequestParam String hanimeId) {
-        HanimeMetadata metadata = service.scrapeHanimeOnly(hanimeId);
-        if (metadata == null) {
-            return ResponseEntity.ok(ApiResponse.error("Failed to scrape Hanime metadata"));
-        }
-        return ResponseEntity.ok(ApiResponse.success(metadata));
     }
 
     @PostMapping("/{id:\\d+}/nfo")

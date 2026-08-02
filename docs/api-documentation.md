@@ -219,13 +219,6 @@
 | GET | `/api/v1/video/tmdb/search` | 搜索 TMDB |
 | POST | `/api/v1/video/tmdb/rescrape-library/{libraryId}` | 按资源库重新刮削 |
 
-### Hanime 元数据
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/v1/video/hanime/scrape` | 刮削 Hanime 元数据 |
-| POST | `/api/v1/video/{id}/hanime/bind` | 绑定 Hanime 元数据 |
-
 ### 刮削进度
 
 | 方法 | 路径 | 说明 |

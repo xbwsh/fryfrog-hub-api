@@ -487,23 +487,17 @@
 }
 ```
 
-### 4.17 绑定 Hanime 元数据
-- **POST** `/video/{id}/hanime/bind?hanimeId=xxx`
-
-### 4.18 刮削 Hanime 元数据
-- **GET** `/video/hanime/scrape?hanimeId=xxx`
-
-### 4.19 生成 NFO 文件
+### 4.17 生成 NFO 文件
 - **POST** `/video/{id}/nfo`
 
-### 4.20 下载封面图片
+### 4.18 下载封面图片
 - **POST** `/video/{id}/covers`
 
-### 4.21 获取 NFO 内容
+### 4.19 获取 NFO 内容
 - **GET** `/video/{id}/nfo`
 - **响应**: 返回 NFO XML 字符串
 
-### 4.22 获取观看进度
+### 4.20 获取观看进度
 - **GET** `/video/{id}/progress`
 - **响应**:
 ```json
@@ -519,7 +513,7 @@
 }
 ```
 
-### 4.23 保存观看进度
+### 4.21 保存观看进度
 - **PUT** `/video/{id}/progress`
 - **请求体**:
 ```json
@@ -529,7 +523,7 @@
 }
 ```
 
-### 4.24 设置已观看状态
+### 4.22 设置已观看状态
 - **PUT** `/video/{id}/watched`
 - **请求体**:
 ```json
@@ -538,12 +532,12 @@
 }
 ```
 
-### 4.25 视频流播放
+### 4.23 视频流播放
 - **GET** `/video/{id}/stream`
 - **Header**: `Range: bytes=0-1023` (可选)
 - **响应**: 视频文件流
 
-### 4.26 获取媒体技术信息
+### 4.24 获取媒体技术信息
 - **GET** `/video/{id}/media-info`
 - **响应**:
 ```json
@@ -566,7 +560,7 @@
 }
 ```
 
-### 4.27 获取内嵌字幕列表
+### 4.25 获取内嵌字幕列表
 - **GET** `/video/{id}/subtitles`
 - **响应**:
 ```json
@@ -583,7 +577,7 @@
 }
 ```
 
-### 4.28 获取外挂字幕列表
+### 4.26 获取外挂字幕列表
 - **GET** `/video/{id}/subtitle/external`
 - **响应**:
 ```json
@@ -599,11 +593,11 @@
 }
 ```
 
-### 4.29 获取字幕 WebVTT
+### 4.27 获取字幕 WebVTT
 - **GET** `/video/{id}/subtitle/vtt?index=0` 或 `?file=movie.srt`
 - **响应**: WebVTT 格式字幕文本
 
-### 4.30 音频转码
+### 4.28 音频转码
 - **POST** `/video/{id}/audio/transcode`
 - **响应**:
 ```json
@@ -617,7 +611,7 @@
 }
 ```
 
-### 4.31 生成系列播放列表
+### 4.29 生成系列播放列表
 - **GET** `/video/{id}/playlist.m3u`
 - **响应**: M3U 播放列表文件
 

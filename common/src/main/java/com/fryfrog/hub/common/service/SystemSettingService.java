@@ -36,15 +36,7 @@ public class SystemSettingService {
             entry("scrape.auto-scrape", "true"),
             // Watcher
             entry("watcher.periodic-scan", "true"),
-            entry("watcher.periodic-scan-interval", "30"),
-            // Hanime
-            entry("hanime.cf-bypass-url", "http://localhost:8000"),
-            entry("hanime.use-proxy", "false"),
-            entry("hanime.scraper.request-interval", "1500"),
-            entry("hanime.scraper.max-retries", "3"),
-            entry("hanime.scraper.timeout", "30"),
-            entry("hanime.scraper.cache-ttl", "60"),
-            entry("hanime.scraper.cache-max-size", "1000")
+            entry("watcher.periodic-scan-interval", "30")
     );
 
     @PostConstruct

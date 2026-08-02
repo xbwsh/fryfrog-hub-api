@@ -4,7 +4,6 @@ import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
-import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
@@ -17,7 +16,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
@@ -37,13 +35,10 @@ public class VideoService {
     private final VideoScanService scanService;
     private final VideoScrapeService scrapeService;
     private final VideoOrganizeService organizeService;
-    private final VideoAssetService assetService;
     private final VideoPipelineService pipelineService;
-    private final HanimeScraperService hanimeScraperService;
     private final MediaLibraryService mediaLibraryService;
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
-    private final TransactionTemplate transactionTemplate;
 
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
@@ -166,58 +161,6 @@ public class VideoService {
     public Video rescrapeVideo(Long videoId, Long tmdbId, String mediaType) {
         unbindTmdb(videoId);
         return scrapeService.scrapeAndBindTmdb(videoId, tmdbId, mediaType);
-    }
-
-    // ==================== Hanime ====================
-
-    public Video scrapeAndBindHanime(Long videoId, String hanimeId) {
-        return transactionTemplate.execute(status -> doScrapeAndBindHanime(videoId, hanimeId));
-    }
-
-    @Transactional
-    Video doScrapeAndBindHanime(Long videoId, String hanimeId) {
-        Video video = getVideoById(videoId);
-        HanimeMetadata metadata = hanimeScraperService.scrape(hanimeId);
-
-        if (metadata == null) {
-            throw new ResourceNotFoundException("Hanime metadata", "hanimeId", hanimeId);
-        }
-
-        if (metadata.getTitle() != null && !metadata.getTitle().isBlank()) {
-            video.setTitle(metadata.getTitle());
-        }
-        if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
-            video.setOverview(metadata.getDescription());
-        }
-        if (metadata.getStudio() != null && !metadata.getStudio().isBlank()) {
-            video.setStudio(metadata.getStudio());
-        }
-        if (metadata.getSubtitle() != null && !metadata.getSubtitle().isBlank()) {
-            video.setSubtitle(metadata.getSubtitle());
-        }
-        if (metadata.getViewCount() != null) {
-            video.setViewCount(metadata.getViewCount());
-        }
-        if (metadata.getTags() != null && !metadata.getTags().isEmpty()) {
-            video.setTags(String.join(",", metadata.getTags()));
-        }
-        if (metadata.getCoverUrl() != null && !metadata.getCoverUrl().isBlank()) {
-            video.setPosterUrl(metadata.getCoverUrl());
-        }
-
-        video.setHanimeId(hanimeId);
-        video.setMetadataSource("hanime");
-        video.setMetadataUpdatedAt(java.time.LocalDateTime.now());
-        video.setIsAdult(true); // Hanime 内容始终为成人内容
-
-        Video saved = repository.save(video);
-        assetService.generateNfoAndCovers(saved);
-        log.info("[Video] Bound Hanime metadata to video: {} -> hanimeId={}", saved.getTitle(), hanimeId);
-        return saved;
-    }
-
-    public HanimeMetadata scrapeHanimeOnly(String hanimeId) {
-        return hanimeScraperService.scrape(hanimeId);
     }
 
     // ==================== 成人标记同步 ====================

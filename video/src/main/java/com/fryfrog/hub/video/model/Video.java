@@ -108,9 +108,6 @@ public class Video extends BaseEntity {
     @Schema(description = "简介来源", example = "tmdb")
     private String metadataSource;
 
-    @Schema(description = "Hanime ID", example = "123456")
-    private String hanimeId;
-
     @Schema(description = "标签（逗号分隔）", example = "无码,步兵")
     @Column(columnDefinition = "TEXT")
     private String tags;
