@@ -7,7 +7,9 @@ import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.video.dto.HanimeMetadata;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.repository.VideoRepository;
+import com.fryfrog.hub.video.repository.VideoSeriesRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -31,6 +33,7 @@ import java.util.stream.Collectors;
 public class VideoService {
 
     private final VideoRepository repository;
+    private final VideoSeriesRepository seriesRepository;
     private final VideoScanService scanService;
     private final VideoScrapeService scrapeService;
     private final VideoOrganizeService organizeService;
@@ -217,13 +220,55 @@ public class VideoService {
         return hanimeScraperService.scrape(hanimeId);
     }
 
+    // ==================== 成人标记同步 ====================
+
+    /**
+     * 同步资源库内所有视频及其所属系列的成人标记
+     * @param libraryId 资源库 ID
+     * @param adult 是否标记为成人
+     * @return 更新的记录数（视频 + 系列）
+     */
+    @Transactional
+    public int syncAdultByLibrary(Long libraryId, boolean adult) {
+        List<Video> videos = repository.findByLibraryId(libraryId);
+        if (videos.isEmpty()) {
+            log.info("[Adult] No videos in library {} to sync, adult={}", libraryId, adult);
+            return 0;
+        }
+
+        Set<VideoSeries> affectedSeries = new HashSet<>();
+        int updatedVideos = 0;
+        for (Video video : videos) {
+            if (!Boolean.valueOf(adult).equals(video.getIsAdult())) {
+                video.setIsAdult(adult);
+                updatedVideos++;
+            }
+            if (video.getSeries() != null) {
+                affectedSeries.add(video.getSeries());
+            }
+        }
+        if (updatedVideos > 0) {
+            repository.saveAll(videos);
+        }
+
+        int updatedSeries = 0;
+        for (VideoSeries series : affectedSeries) {
+            if (!Boolean.valueOf(adult).equals(series.getIsAdult())) {
+                series.setIsAdult(adult);
+                seriesRepository.save(series);
+                updatedSeries++;
+            }
+        }
+
+        log.info("[Adult] Synced library {} adult={}: {} videos, {} series", libraryId, adult, updatedVideos, updatedSeries);
+        return updatedVideos + updatedSeries;
+    }
+
     // ==================== 扫描/刮削/整理 ====================
 
     public void scanDirectory(String directoryPath) {
         scanDirectory(directoryPath, null);
-    }
-
-    public void scanDirectory(String directoryPath, Long libraryId) {
+    }    public void scanDirectory(String directoryPath, Long libraryId) {
         scanService.scanAndSave(directoryPath, libraryId);
     }
 

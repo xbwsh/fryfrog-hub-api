@@ -57,7 +57,18 @@ public class MediaLibraryController {
     public ResponseEntity<ApiResponse<MediaLibrary>> update(
             @PathVariable Long id,
             @RequestBody MediaLibrary library) {
-        return ResponseEntity.ok(ApiResponse.success(service.updateLibrary(id, library)));
+        MediaLibrary existing = service.getLibraryById(id);
+        boolean oldAdult = Boolean.TRUE.equals(existing.getIsAdult());
+        MediaLibrary saved = service.updateLibrary(id, library);
+        boolean newAdult = Boolean.TRUE.equals(saved.getIsAdult());
+
+        // 成人标记变化时，异步同步库内视频及其所属系列
+        if (oldAdult != newAdult) {
+            log.info("Library '{}' isAdult changed: {} -> {}, syncing videos/series", saved.getName(), oldAdult, newAdult);
+            Thread.startVirtualThread(() -> videoService.syncAdultByLibrary(id, newAdult));
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(saved));
     }
 
     @DeleteMapping("/{id}")
