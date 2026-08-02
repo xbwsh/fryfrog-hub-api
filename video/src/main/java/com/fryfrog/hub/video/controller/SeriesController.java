@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
+import com.fryfrog.hub.video.dto.LibrarySeriesGroupDTO;
 import com.fryfrog.hub.video.dto.SeriesDTO;
 import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.VideoDTO;
@@ -107,6 +108,12 @@ public class SeriesController {
 
         return ResponseEntity.ok(ApiResponse.success(
                 PageResponse.of(allItems, page, size, total)));
+    }
+
+    @GetMapping("/grouped-by-library")
+    @Operation(summary = "按资源库分组获取系列", description = "返回按资源库分组的系列和独立视频列表")
+    public ResponseEntity<ApiResponse<List<LibrarySeriesGroupDTO>>> getSeriesGroupedByLibrary() {
+        return ResponseEntity.ok(ApiResponse.success(seriesService.getSeriesGroupedByLibrary()));
     }
 
     @GetMapping("/{id}")

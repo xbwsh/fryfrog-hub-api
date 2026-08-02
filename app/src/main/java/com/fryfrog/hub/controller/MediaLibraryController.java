@@ -3,9 +3,6 @@ package com.fryfrog.hub.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
-import com.fryfrog.hub.comic.service.ComicMetadataService;
-import com.fryfrog.hub.ebook.service.EbookService;
-import com.fryfrog.hub.music.service.MusicMetadataService;
 import com.fryfrog.hub.video.service.VideoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -29,18 +26,10 @@ public class MediaLibraryController {
 
     private final MediaLibraryService service;
     private final VideoService videoService;
-    private final MusicMetadataService musicMetadataService;
-    private final ComicMetadataService comicMetadataService;
-    private final EbookService ebookService;
 
-    public MediaLibraryController(MediaLibraryService service,
-                                  VideoService videoService, MusicMetadataService musicMetadataService,
-                                  ComicMetadataService comicMetadataService, EbookService ebookService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService) {
         this.service = service;
         this.videoService = videoService;
-        this.musicMetadataService = musicMetadataService;
-        this.comicMetadataService = comicMetadataService;
-        this.ebookService = ebookService;
     }
 
     // ── CRUD ──
@@ -87,7 +76,7 @@ public class MediaLibraryController {
     // ── 扫描 ──
 
     @PostMapping("/scan")
-    @Operation(summary = "扫描所有启用的资源库", description = "按类型分发到对应模块扫描（异步执行）")
+    @Operation(summary = "扫描所有启用的资源库", description = "扫描视频资源库（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scanAll() {
         log.info("Starting full library scan...");
 
@@ -112,7 +101,7 @@ public class MediaLibraryController {
     }
 
     @PostMapping("/{id}/scan")
-    @Operation(summary = "扫描指定资源库", description = "根据资源库类型分发到对应模块扫描（异步执行）")
+    @Operation(summary = "扫描指定资源库", description = "根据资源库类型扫描视频资源（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scanById(
             @Parameter(description = "资源库ID") @PathVariable Long id) {
         MediaLibrary library = service.getLibraryById(id);
@@ -141,18 +130,11 @@ public class MediaLibraryController {
     private void scanLibrary(MediaLibrary library, Map<String, String> scanResult) {
         String key = library.getType().toLowerCase() + ":" + library.getId();
         try {
-            switch (library.getType().toUpperCase()) {
-                case "VIDEO" -> videoService.scanDirectory(library.getPath(), library.getId());
-                case "MUSIC" -> musicMetadataService.scanDirectory(library.getPath());
-                case "COMIC" -> comicMetadataService.scanDirectory(library.getPath());
-                case "EBOOK" -> {
-                    ebookService.scanDirectory(library.getPath());
-                    ebookService.organizeAll();
-                }
-                default -> {
-                    scanResult.put(key, "skip: unknown type " + library.getType());
-                    return;
-                }
+            if ("VIDEO".equalsIgnoreCase(library.getType())) {
+                videoService.scanDirectory(library.getPath(), library.getId());
+            } else {
+                scanResult.put(key, "skip: unsupported type " + library.getType());
+                return;
             }
             scanResult.put(key, "ok");
             log.info("Scanned library '{}' ({}): {}", library.getName(), library.getType(), library.getPath());
@@ -185,8 +167,7 @@ public class MediaLibraryController {
 
         // Docker 环境优先暴露媒体挂载路径
         String[] mediaPaths = {
-                "/data/media/music", "/data/media/video", "/data/media/comic", "/data/media/ebook",
-                "/data/media", "/data"
+                "/data/media/video", "/data/media", "/data"
         };
         for (String p : mediaPaths) {
             File dir = new File(p);

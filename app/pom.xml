@@ -17,19 +17,7 @@
     <dependencies>
         <dependency>
             <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-music</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-comic</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fryfrog</groupId>
             <artifactId>fryfrog-hub-video</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-ebook</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

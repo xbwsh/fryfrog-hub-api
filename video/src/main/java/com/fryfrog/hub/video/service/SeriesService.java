@@ -1,6 +1,9 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.video.dto.LibrarySeriesGroupDTO;
+import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
@@ -209,6 +212,88 @@ public class SeriesService {
 
     public void saveSeries(VideoSeries series) {
         seriesRepository.save(series);
+    }
+
+    public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary() {
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
+                .sorted(Comparator.comparingInt(lib -> lib.getSortOrder() != null ? lib.getSortOrder() : 0))
+                .toList();
+
+        List<VideoSeries> allSeries = getAllSeries();
+        List<Video> allStandalone = videoRepository.findBySeriesIsNullOrderByTitleAsc();
+
+        Map<Long, List<VideoSeries>> seriesByLibrary = new LinkedHashMap<>();
+        Map<Long, List<Video>> standaloneByLibrary = new LinkedHashMap<>();
+        List<VideoSeries> unassignedSeries = new ArrayList<>();
+        List<Video> unassignedStandalone = new ArrayList<>();
+
+        for (VideoSeries series : allSeries) {
+            Set<Long> libraryIds = series.getVideos().stream()
+                    .map(Video::getLibraryId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+
+            boolean added = false;
+            for (Long libId : libraryIds) {
+                if (enabledIds.contains(libId)) {
+                    seriesByLibrary.computeIfAbsent(libId, k -> new ArrayList<>()).add(series);
+                    added = true;
+                }
+            }
+            if (!added) {
+                unassignedSeries.add(series);
+            }
+        }
+
+        for (Video video : allStandalone) {
+            if (video.getLibraryId() != null && enabledIds.contains(video.getLibraryId())) {
+                standaloneByLibrary.computeIfAbsent(video.getLibraryId(), k -> new ArrayList<>()).add(video);
+            } else {
+                unassignedStandalone.add(video);
+            }
+        }
+
+        List<LibrarySeriesGroupDTO> result = new ArrayList<>();
+
+        for (MediaLibrary lib : libraries) {
+            List<VideoSeries> libSeries = seriesByLibrary.getOrDefault(lib.getId(), List.of());
+            List<Video> libStandalone = standaloneByLibrary.getOrDefault(lib.getId(), List.of());
+
+            List<SeriesListDTO> seriesDTOs = libSeries.stream()
+                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos()))
+                    .toList();
+            List<SeriesListDTO> standaloneDTOs = libStandalone.stream()
+                    .map(SeriesListDTO::fromStandaloneVideo)
+                    .toList();
+
+            if (!seriesDTOs.isEmpty() || !standaloneDTOs.isEmpty()) {
+                result.add(LibrarySeriesGroupDTO.fromLibrary(lib, seriesDTOs, standaloneDTOs));
+            }
+        }
+
+        if (!unassignedSeries.isEmpty() || !unassignedStandalone.isEmpty()) {
+            List<SeriesListDTO> unassignedSeriesDTOs = unassignedSeries.stream()
+                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos()))
+                    .toList();
+            List<SeriesListDTO> unassignedStandaloneDTOs = unassignedStandalone.stream()
+                    .map(SeriesListDTO::fromStandaloneVideo)
+                    .toList();
+
+            result.add(LibrarySeriesGroupDTO.builder()
+                    .libraryId(null)
+                    .libraryName("未分配")
+                    .libraryPath(null)
+                    .subType(null)
+                    .series(unassignedSeriesDTOs)
+                    .standaloneVideos(unassignedStandaloneDTOs)
+                    .seriesCount(unassignedSeriesDTOs.size())
+                    .standaloneCount(unassignedStandaloneDTOs.size())
+                    .build());
+        }
+
+        return result;
     }
 
     public int cleanupDuplicateSeries() {

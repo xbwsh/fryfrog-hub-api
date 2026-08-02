@@ -25,7 +25,7 @@ public class LogController {
     private String logDir;
 
     private static final Set<String> ALLOWED_FILES = Set.of(
-            "app.log", "music.log", "comic.log", "ebook.log", "video.log"
+            "app.log", "video.log"
     );
 
     @GetMapping

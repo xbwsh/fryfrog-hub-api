@@ -1,6 +1,6 @@
 # Fryfrog Hub API
 
-统一媒体后端 API 服务，支持音乐、漫画、电子书、视频的元数据管理和流媒体播放。
+视频媒体后端 API 服务，支持视频元数据管理和流媒体播放。
 
 ## Default Behavior
 
@@ -13,10 +13,7 @@
 - Java 21 + Spring Boot 3.2.5
 - Spring Data JPA + **PostgreSQL**
 - 虚拟线程已启用：`spring.threads.virtual.enabled: true`
-- FFmpeg + ProcessBuilder（音频/视频转码）
-- jaudiotagger（音乐元数据）
-- Thumbnails4j（漫画缩略图）
-- Apache Tika（漫画/电子书元数据）
+- FFmpeg + ProcessBuilder（视频转码）
 - TMDB API（视频元数据刮削）
 - Springdoc OpenAPI（Swagger 文档）
 
@@ -25,9 +22,6 @@
 ```
 fryfrog-hub-api/
 ├── common/          # 共享实体（BaseEntity）、DTO（ApiResponse）、工具类
-├── music/           # 音乐 API（jaudiotagger + FFmpeg）
-├── comic/           # 漫画 API（Thumbnails4j + Tika）
-├── ebook/           # 电子书 API（Tika）
 ├── video/           # 视频 API（FFmpeg + TMDB 刮削）
 ├── app/             # Spring Boot 启动模块 + 全局配置/控制器
 └── pom.xml          # Parent POM
@@ -48,13 +42,13 @@ mvn clean install -DskipTests
 mvn spring-boot:run -pl app
 
 # 运行单个模块测试
-mvn test -pl music
+mvn test -pl video
 
 # 运行单个测试类
-mvn test -pl music -Dtest=MusicControllerStreamingTest
+mvn test -pl video -Dtest=VideoControllerTest
 
 # 运行单个测试方法
-mvn test -pl music -Dtest=MusicControllerStreamingTest#streamTrack_returnsAudioContent
+mvn test -pl video -Dtest=VideoControllerTest#testMethod
 ```
 
 ## Testing
@@ -62,7 +56,6 @@ mvn test -pl music -Dtest=MusicControllerStreamingTest#streamTrack_returnsAudioC
 - 单元测试：JUnit 5 + Mockito
 - 测试必须标注 `@ActiveProfiles("test")`
 - 测试配置：`src/test/resources/application-test.yml`
-- 测试很少：目前只有 music 模块有 1 个测试类
 
 ```bash
 # 运行所有测试
@@ -86,7 +79,7 @@ mvn verify
 - 端口：`20058`（`SERVER_PORT` 环境变量可覆盖）
 - 数据库：PostgreSQL，通过环境变量配置（开发用 `.env`，Docker 用环境变量）
 - 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认 `1234`
-- 媒体路径：`MUSIC_ROOT_PATHS`、`VIDEO_ROOT_PATHS`、`COMIC_ROOT_PATHS`、`EBOOK_ROOT_PATHS`
+- 媒体路径：`VIDEO_ROOT_PATHS`
 - `.env` 为开发环境配置，已加入 `.gitignore`
 - `.env.example` 为配置模板，已提交到仓库
 
@@ -103,7 +96,7 @@ mvn verify
 ## Environment
 
 - 必须：JDK 21、Maven 3.9+
-- 可选：FFmpeg（音频/视频功能需要，Docker 镜像已内置）
+- 可选：FFmpeg（视频功能需要，Docker 镜像已内置）
 - IDE：推荐 IntelliJ IDEA，导入为 Maven 项目
 
 ## CI/CD

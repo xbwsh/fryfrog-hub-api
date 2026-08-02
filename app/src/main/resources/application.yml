@@ -32,18 +32,9 @@ auth:
   enabled: ${AUTH_ENABLED:true}
   password: ${AUTH_PASSWORD:1234}
 
-music:
-  root-paths: ${MUSIC_ROOT_PATHS:}
-
-comic:
-  root-paths: ${COMIC_ROOT_PATHS:}
-
 video:
   root-paths: ${VIDEO_ROOT_PATHS:}
   ffmpeg-path: ${FFMPEG_PATH:}
-
-ebook:
-  root-paths: ${EBOOK_ROOT_PATHS:}
 
 hanime:
   base-url: ${HANIME_BASE_URL:https://hanime1.me}
