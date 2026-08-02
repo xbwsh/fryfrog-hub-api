@@ -13,14 +13,11 @@ import com.fryfrog.hub.ebook.dto.EbookDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressDTO;
 import com.fryfrog.hub.ebook.dto.EbookReadingProgressRequest;
 import com.fryfrog.hub.ebook.dto.EbookSeries;
-import com.fryfrog.hub.ebook.dto.OnlineChapterDTO;
 import com.fryfrog.hub.ebook.model.Ebook;
 import com.fryfrog.hub.ebook.model.EbookReadingProgress;
-import com.fryfrog.hub.ebook.model.SourceType;
 import com.fryfrog.hub.ebook.service.EbookMetadataScrapeService;
 import com.fryfrog.hub.ebook.service.EbookBangumiScrapeService;
 import com.fryfrog.hub.ebook.service.EbookReadingProgressService;
-import com.fryfrog.hub.ebook.service.OnlineBookService;
 import com.fryfrog.hub.ebook.service.OpenLibraryService;
 import com.fryfrog.hub.ebook.service.EbookService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -56,7 +53,6 @@ public class EbookController {
     private final EbookReadingProgressService readingProgressService;
     private final EbookMetadataScrapeService scrapeService;
     private final EbookBangumiScrapeService bangumiScrapeService;
-    private final OnlineBookService onlineBookService;
     private final OpenLibraryService openLibraryService;
     private final ScrapeProgressService scrapeProgressService;
     private final MediaSeriesCharacterRepository mediaCharacterRepository;
@@ -202,7 +198,7 @@ public class EbookController {
     public ResponseEntity<ApiResponse<List<MediaSeriesCharacter>>> getCharacters(
             @Parameter(description = "电子书ID") @PathVariable Long id) {
         Ebook ebook = service.getEbookEntityById(id);
-        if (ebook.getSourceType() == SourceType.ONLINE || ebook.getSeriesRef() == null) {
+        if (ebook.getSeriesRef() == null) {
             return ResponseEntity.ok(ApiResponse.success(List.of()));
         }
         List<MediaSeriesCharacter> characters =
@@ -245,41 +241,12 @@ public class EbookController {
         return MediaType.IMAGE_JPEG;
     }
 
-    @GetMapping("/{id:\\d+}/read/online")
-    @Operation(summary = "在线阅读（在线书籍）", description = "获取在线书籍的章节内容")
-    public ResponseEntity<String> readOnlineBook(
-            @Parameter(description = "电子书ID") @PathVariable Long id,
-            @Parameter(description = "章节URL") @RequestParam String chapterUrl) {
-        Ebook ebook = service.getEbookEntityById(id);
-        if (ebook.getSourceType() != SourceType.ONLINE) {
-            throw new IllegalArgumentException("该书籍不是在线书籍");
-        }
-        log.info("阅读在线书籍: id={}, chapterUrl={}", id, chapterUrl);
-        String content = onlineBookService.getChapterContent(chapterUrl, ebook.getBookSourceId());
-        return ResponseEntity.ok().contentType(MediaType.TEXT_HTML).body(content);
-    }
-
     @GetMapping("/{id:\\d+}/read")
-    @Operation(summary = "在线阅读", description = "返回电子书内容。支持本地书籍和在线书籍")
+    @Operation(summary = "在线阅读", description = "返回电子书内容")
     public ResponseEntity<String> readEbook(
             @Parameter(description = "电子书ID") @PathVariable Long id,
-            @Parameter(description = "章节序号（本地书籍，从1开始）") @RequestParam(defaultValue = "0") int chapter,
-            @Parameter(description = "章节URL（在线书籍）") @RequestParam(required = false) String chapterUrl) {
+            @Parameter(description = "章节序号（从1开始）") @RequestParam(defaultValue = "0") int chapter) {
         Ebook ebook = service.getEbookEntityById(id);
-
-        // 在线书籍
-        if (ebook.getSourceType() == SourceType.ONLINE) {
-            if (chapterUrl == null || chapterUrl.isEmpty()) {
-                List<OnlineChapterDTO> chapters = onlineBookService.getChapters(ebook.getOnlineUrl(), ebook.getBookSourceId());
-                if (chapters.isEmpty()) {
-                    throw new IllegalArgumentException("该书籍没有可用章节");
-                }
-                chapterUrl = chapters.get(0).getChapterUrl();
-            }
-            log.info("阅读在线书籍: id={}, chapterUrl={}", id, chapterUrl);
-            String content = onlineBookService.getChapterContent(chapterUrl, ebook.getBookSourceId());
-            return ResponseEntity.ok().contentType(MediaType.TEXT_HTML).body(content);
-        }
 
         // 本地书籍
         if (chapter > 0) {
@@ -343,19 +310,6 @@ public class EbookController {
         } catch (Exception e) {
             throw new RuntimeException("Failed to read epub image: " + e.getMessage(), e);
         }
-    }
-
-    @GetMapping("/{id:\\d+}/chapters/online")
-    @Operation(summary = "获取章节列表（在线书籍）", description = "获取在线书籍的章节目录")
-    public ResponseEntity<ApiResponse<List<OnlineChapterDTO>>> getOnlineChapterList(
-            @Parameter(description = "电子书ID") @PathVariable Long id) {
-        Ebook ebook = service.getEbookEntityById(id);
-        if (ebook.getSourceType() != SourceType.ONLINE) {
-            throw new IllegalArgumentException("该书籍不是在线书籍");
-        }
-        log.info("获取在线书籍章节目录: id={}", id);
-        List<OnlineChapterDTO> chapters = onlineBookService.getChapters(ebook.getOnlineUrl(), ebook.getBookSourceId());
-        return ResponseEntity.ok(ApiResponse.success(chapters));
     }
 
     @GetMapping("/{id:\\d+}/chapters")

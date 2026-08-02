@@ -1,0 +1,37 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------------< com.fryfrog:fryfrog-hub-video >--------------------
+[INFO] Building fryfrog-hub-video 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- dependency:3.6.1:tree (default-cli) @ fryfrog-hub-video ---
+[INFO] com.fryfrog:fryfrog-hub-video:jar:0.1.0-SNAPSHOT
+[INFO] \- org.bytedeco:ffmpeg-platform:jar:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:javacpp-platform:jar:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:android-arm64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:android-x86_64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:ios-arm64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:ios-x86_64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:linux-arm64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:linux-ppc64le:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:linux-x86_64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:macosx-arm64:1.5.10:compile
+[INFO]    |  +- org.bytedeco:javacpp:jar:macosx-x86_64:1.5.10:compile
+[INFO]    |  \- org.bytedeco:javacpp:jar:windows-x86_64:1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:android-arm64:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:android-x86_64:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:linux-x86_64:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:linux-arm64:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:linux-ppc64le:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:macosx-arm64:6.1.1-1.5.10:compile
+[INFO]    +- org.bytedeco:ffmpeg:jar:macosx-x86_64:6.1.1-1.5.10:compile
+[INFO]    \- org.bytedeco:ffmpeg:jar:windows-x86_64:6.1.1-1.5.10:compile
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.595 s
+[INFO] Finished at: 2026-07-20T22:09:40+08:00
+[INFO] ------------------------------------------------------------------------
