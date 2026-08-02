@@ -49,7 +49,7 @@ public class MediaLibrary extends BaseEntity {
     private String description;
 
     public enum Type {
-        MUSIC, COMIC, VIDEO, EBOOK
+        VIDEO
     }
 
     public enum VideoSubType {

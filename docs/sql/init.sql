@@ -1,97 +1,138 @@
 -- Fryfrog Hub Database Schema
--- Database: MySQL 8.0+
-
-CREATE DATABASE IF NOT EXISTS fryfrog_hub
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
-USE fryfrog_hub;
+-- Database: PostgreSQL
 
 -- =====================================================
--- 音乐曲目表
+-- 媒体资源库表
 -- =====================================================
-CREATE TABLE IF NOT EXISTS music_tracks (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-
-    -- 基本信息
-    title VARCHAR(255) NOT NULL COMMENT '歌曲标题',
-    artist VARCHAR(255) COMMENT '艺术家',
-    album VARCHAR(255) COMMENT '专辑名称',
-    album_artist VARCHAR(255) COMMENT '专辑艺术家',
-
-    -- 曲目信息
-    track_number INT COMMENT '曲目编号',
-    disc_number INT COMMENT '碟片编号',
-    `year` INT COMMENT '发行年份',
-    genre VARCHAR(100) COMMENT '音乐流派',
-
-    -- 文件信息
-    file_path VARCHAR(1024) NOT NULL COMMENT '文件完整路径',
-    file_name VARCHAR(512) NOT NULL COMMENT '文件名',
-    file_size BIGINT COMMENT '文件大小（字节）',
-
-    -- 音频信息
-    duration_seconds BIGINT COMMENT '时长（秒）',
-    bitrate_kbps INT COMMENT '比特率（kbps）',
-    format VARCHAR(50) COMMENT '音频格式，如 FLAC 16 bits',
-
-    -- 媒体信息
-    cover_art_path VARCHAR(1024) COMMENT '封面图片缓存路径',
-    lyrics TEXT COMMENT '歌词文本',
-
-    -- 用户数据
-    favorite TINYINT(1) DEFAULT 0 COMMENT '是否收藏（0=否，1=是）',
-
-    -- 时间戳
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-
-    -- 索引
-    UNIQUE INDEX uk_file_path (file_path(255)),
-    INDEX idx_title (title),
-    INDEX idx_artist (artist),
-    INDEX idx_album (album),
-    INDEX idx_favorite (favorite),
-    INDEX idx_created_at (created_at)
-
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='音乐曲目表';
+CREATE TABLE IF NOT EXISTS media_libraries (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    path VARCHAR(1024) NOT NULL,
+    type VARCHAR(20) NOT NULL,
+    sub_type VARCHAR(20),
+    enabled BOOLEAN DEFAULT TRUE,
+    enable_scraping BOOLEAN DEFAULT TRUE,
+    is_adult BOOLEAN DEFAULT FALSE,
+    sort_order INTEGER DEFAULT 0,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =====================================================
--- 未来扩展：播放历史表（可选）
+-- 视频系列表
 -- =====================================================
--- CREATE TABLE IF NOT EXISTS play_history (
---     id BIGINT AUTO_INCREMENT PRIMARY KEY,
---     track_id BIGINT NOT NULL COMMENT '曲目ID',
---     played_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '播放时间',
---     play_duration INT COMMENT '播放时长（秒）',
---     play_count INT DEFAULT 1 COMMENT '播放次数',
---
---     INDEX idx_track_id (track_id),
---     INDEX idx_played_at (played_at),
---     FOREIGN KEY (track_id) REFERENCES music_tracks(id) ON DELETE CASCADE
--- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='播放历史表';
+CREATE TABLE IF NOT EXISTS video_series (
+    id BIGSERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    original_title VARCHAR(255),
+    overview TEXT,
+    media_type VARCHAR(20),
+    tmdb_id BIGINT,
+    imdb_id VARCHAR(50),
+    rating DOUBLE PRECISION,
+    year INTEGER,
+    poster_url TEXT,
+    backdrop_url TEXT,
+    poster_local_path VARCHAR(1024),
+    backdrop_local_path VARCHAR(1024),
+    metadata_source VARCHAR(50),
+    status VARCHAR(50),
+    is_adult BOOLEAN DEFAULT FALSE,
+    number_of_seasons INTEGER,
+    season_number INTEGER DEFAULT 1,
+    total_episodes INTEGER,
+    metadata_dir VARCHAR(1024),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_series_tmdb_id ON video_series(tmdb_id);
+CREATE INDEX IF NOT EXISTS idx_series_title ON video_series(title);
 
 -- =====================================================
--- 未来扩展：播放列表表（可选）
+-- 视频表
 -- =====================================================
--- CREATE TABLE IF NOT EXISTS playlists (
---     id BIGINT AUTO_INCREMENT PRIMARY KEY,
---     name VARCHAR(255) NOT NULL COMMENT '播放列表名称',
---     description TEXT COMMENT '播放列表描述',
---     cover_image VARCHAR(1024) COMMENT '封面图片路径',
---     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
---     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
--- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='播放列表表';
---
--- CREATE TABLE IF NOT EXISTS playlist_tracks (
---     id BIGINT AUTO_INCREMENT PRIMARY KEY,
---     playlist_id BIGINT NOT NULL,
---     track_id BIGINT NOT NULL,
---     sort_order INT DEFAULT 0 COMMENT '排序顺序',
---     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
---
---     INDEX idx_playlist_id (playlist_id),
---     INDEX idx_track_id (track_id),
---     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
---     FOREIGN KEY (track_id) REFERENCES music_tracks(id) ON DELETE CASCADE
--- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='播放列表关联表';
+CREATE TABLE IF NOT EXISTS videos (
+    id BIGSERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    original_title VARCHAR(255),
+    overview TEXT,
+    media_type VARCHAR(20),
+    year INTEGER,
+    rating DOUBLE PRECISION,
+    file_path VARCHAR(1024) UNIQUE NOT NULL,
+    file_name VARCHAR(512) NOT NULL,
+    file_size BIGINT,
+    format VARCHAR(50),
+    duration_seconds BIGINT,
+    width INTEGER,
+    height INTEGER,
+    video_codec VARCHAR(50),
+    audio_codec VARCHAR(50),
+    bitrate_kbps INTEGER,
+    cover_art_path VARCHAR(1024),
+    backdrop_local_path VARCHAR(1024),
+    poster_url TEXT,
+    backdrop_url TEXT,
+    favorite BOOLEAN DEFAULT FALSE,
+    is_adult BOOLEAN DEFAULT FALSE,
+    is_series BOOLEAN DEFAULT FALSE,
+    series_name VARCHAR(255),
+    season_number INTEGER,
+    episode_number INTEGER,
+    library_id BIGINT,
+    series_id BIGINT,
+    tmdb_id BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (series_id) REFERENCES video_series(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_series_id ON videos(series_id);
+CREATE INDEX IF NOT EXISTS idx_video_library_id ON videos(library_id);
+CREATE INDEX IF NOT EXISTS idx_video_title ON videos(title);
+CREATE INDEX IF NOT EXISTS idx_video_favorite ON videos(favorite);
+
+-- =====================================================
+-- 视频演员表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS video_actors (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    role VARCHAR(255),
+    thumb_url TEXT,
+    profile_path VARCHAR(1024),
+    video_id BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_actor_video_id ON video_actors(video_id);
+
+-- =====================================================
+-- 观看进度表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS watch_progress (
+    id BIGSERIAL PRIMARY KEY,
+    video_id BIGINT UNIQUE NOT NULL,
+    position_seconds DOUBLE PRECISION DEFAULT 0,
+    duration_seconds DOUBLE PRECISION,
+    completed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+);
+
+-- =====================================================
+-- 系统设置表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS system_setting (
+    id BIGSERIAL PRIMARY KEY,
+    setting_key VARCHAR(255) UNIQUE NOT NULL,
+    setting_value TEXT,
+    description VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

@@ -34,10 +34,7 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - ./db:/data
-      # - /your/music/path:/data/media/music
       # - /your/video/path:/data/media/video
-      # - /your/comic/path:/data/media/comic
-      # - /your/ebook/path:/data/media/ebook
 
 volumes:
   pgdata:

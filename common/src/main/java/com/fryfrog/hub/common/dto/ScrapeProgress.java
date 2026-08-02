@@ -11,7 +11,7 @@ import java.util.List;
 @Schema(description = "刮削进度信息")
 public class ScrapeProgress {
 
-    @Schema(description = "模块名称", example = "comic")
+    @Schema(description = "模块名称", example = "video")
     private String module;
 
     @Schema(description = "是否正在刮削")
