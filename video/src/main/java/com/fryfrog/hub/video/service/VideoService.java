@@ -39,6 +39,7 @@ public class VideoService {
     private final MediaLibraryService mediaLibraryService;
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
+    private final VideoAssetService assetService;
 
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
@@ -234,6 +235,57 @@ public class VideoService {
     public Map<String, Object> organizeVideos(String path) {
         List<Video> videos = scanService.findByPath(path);
         return organizeService.batchOrganize(videos);
+    }
+
+    /**
+     * 补充刮削：为指定媒体库中已有 TMDB ID 的视频补充演员头像和资产
+     * 不删除已有的绑定，只补充缺失的内容
+     */
+    public Map<String, Object> supplementScrapeByLibrary(Long libraryId, boolean force) {
+        List<Video> videos;
+        if (libraryId != null) {
+            var library = mediaLibraryService.getLibraryById(libraryId);
+            videos = repository.findAll().stream()
+                    .filter(v -> v.getTmdbId() != null && v.getMediaType() != null)
+                    .filter(v -> v.getFilePath().startsWith(library.getPath()))
+                    .toList();
+        } else {
+            videos = repository.findAll().stream()
+                    .filter(v -> v.getTmdbId() != null && v.getMediaType() != null)
+                    .toList();
+        }
+
+        int actorsCount = 0;
+        int assetsCount = 0;
+        int failedCount = 0;
+
+        for (Video video : videos) {
+            try {
+                // 补充演员头像
+                assetService.saveActors(video, video.getMediaType(), video.getTmdbId(), null);
+                actorsCount++;
+            } catch (Exception e) {
+                log.warn("[Supplement] Failed to save actors for {}: {}", video.getTitle(), e.getMessage());
+            }
+            try {
+                // 补充 NFO 和封面
+                assetService.generateNfoAndCovers(video, force);
+                assetsCount++;
+            } catch (Exception e) {
+                log.warn("[Supplement] Failed to generate assets for {}: {}", video.getTitle(), e.getMessage());
+                failedCount++;
+            }
+        }
+
+        log.info("[Supplement] Completed: {} videos processed, {} actors saved, {} assets generated, {} failed",
+                videos.size(), actorsCount, assetsCount, failedCount);
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("total", videos.size());
+        result.put("actorsSaved", actorsCount);
+        result.put("assetsGenerated", assetsCount);
+        result.put("failed", failedCount);
+        return result;
     }
 
 }

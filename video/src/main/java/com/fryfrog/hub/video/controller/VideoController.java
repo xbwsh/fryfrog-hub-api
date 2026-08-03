@@ -296,6 +296,15 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
+    @PostMapping("/scrape/supplement/{libraryId}")
+    @Operation(summary = "补充刮削资源库", description = "为指定资源库中已有 TMDB ID 的视频补充演员头像、NFO、封面等资产")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> supplementScrape(
+            @Parameter(description = "资源库ID") @PathVariable Long libraryId,
+            @Parameter(description = "是否强制重新下载") @RequestParam(defaultValue = "false") boolean force) {
+        Map<String, Object> result = service.supplementScrapeByLibrary(libraryId, force);
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
     @GetMapping("/scrape/progress")
     @Operation(summary = "刮削进度", description = "返回当前视频刮削任务的进度")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
