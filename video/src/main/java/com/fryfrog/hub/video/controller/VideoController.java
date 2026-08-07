@@ -574,9 +574,10 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id,
             @Parameter(description = "转码质量", example = "1080p") @RequestParam(defaultValue = "1080p") String quality,
             @Parameter(description = "最大码率", example = "8M") @RequestParam(required = false) String maxBitrate,
+            @Parameter(description = "需要烧录到视频流的字幕文件名（浏览器不支持的字幕格式，如 ASS/PGS/VobSub）") @RequestParam(required = false) String subtitle,
             jakarta.servlet.http.HttpServletResponse response) throws Exception {
 
-        log.debug("[Transcode] Request: id={}, quality={}, maxBitrate={}", id, quality, maxBitrate);
+        log.debug("[Transcode] Request: id={}, quality={}, maxBitrate={}, subtitle={}", id, quality, maxBitrate, subtitle);
 
         if (!transcodingService.isAvailable()) {
             log.warn("[Transcode] FFmpeg not available");
@@ -593,7 +594,20 @@ public class VideoController {
             return;
         }
 
-        log.debug("[Transcode] Starting transcode: {} -> {} @ {}", videoFile.getAbsolutePath(), quality, maxBitrate);
+        // 解析字幕文件（仅限视频目录下的外挂字幕），带路径穿越校验
+        String subtitlePath = null;
+        if (subtitle != null && !subtitle.isBlank()) {
+            Path videoDir = Paths.get(video.getFilePath()).getParent();
+            Path subPath = videoDir.resolve(subtitle).normalize();
+            if (!subPath.startsWith(videoDir) || !Files.isRegularFile(subPath)) {
+                log.warn("[Transcode] Invalid subtitle: {}", subtitle);
+                response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid subtitle");
+                return;
+            }
+            subtitlePath = subPath.toString();
+        }
+
+        log.debug("[Transcode] Starting transcode: {} -> {} @ {} (subtitle={})", videoFile.getAbsolutePath(), quality, maxBitrate, subtitlePath != null ? "yes" : "no");
 
         response.setContentType("video/mp4");
         response.setHeader("Accept-Ranges", "none");
@@ -602,7 +616,7 @@ public class VideoController {
         response.setHeader("X-Accel-Buffering", "no");
 
         try {
-            TranscodingService.TranscodeResult result = transcodingService.transcode(videoFile.getAbsolutePath(), quality, maxBitrate);
+            TranscodingService.TranscodeResult result = transcodingService.transcode(videoFile.getAbsolutePath(), quality, maxBitrate, subtitlePath);
             log.debug("[Transcode] FFmpeg process started, streaming...");
             try {
                 var os = response.getOutputStream();

@@ -84,7 +84,7 @@ public class TranscodingService {
     /**
      * 获取转码后的视频流
      */
-    public TranscodeResult transcode(String inputPath, String quality, String maxBitrate) throws IOException {
+    public TranscodeResult transcode(String inputPath, String quality, String maxBitrate, String subtitlePath) throws IOException {
         int width = getWidthForQuality(quality);
         String bitrate = maxBitrate != null ? maxBitrate : getDefaultBitrate(quality);
         String bufsize = parseBitrate(bitrate) * 2 + "k";
@@ -92,8 +92,8 @@ public class TranscodingService {
         // 先探测时长
         double duration = probeDuration(inputPath);
 
-        List<String> command = buildTranscodeCommand(inputPath, width, bitrate, bufsize, duration);
-        log.debug("Transcoding {} -> {} @ {} (bufsize={}, duration={}s)", inputPath, quality, bitrate, bufsize, duration);
+        List<String> command = buildTranscodeCommand(inputPath, width, bitrate, bufsize, duration, subtitlePath);
+        log.debug("Transcoding {} -> {} @ {} (bufsize={}, duration={}s, subtitle={})", inputPath, quality, bitrate, bufsize, duration, subtitlePath != null ? "yes" : "no");
         log.debug("FFmpeg command: {}", String.join(" ", command));
 
         ProcessBuilder pb = new ProcessBuilder(command);
@@ -177,7 +177,7 @@ public class TranscodingService {
         return 8000;
     }
 
-    private List<String> buildTranscodeCommand(String inputPath, int width, String bitrate, String bufsize, double duration) {
+    private List<String> buildTranscodeCommand(String inputPath, int width, String bitrate, String bufsize, double duration, String subtitlePath) {
         List<String> cmd = new ArrayList<>();
         cmd.add(ffmpegPath);
         cmd.add("-hide_banner");
@@ -193,9 +193,14 @@ public class TranscodingService {
         cmd.add("-i");
         cmd.add(inputPath);
 
-        // 视频滤镜：缩放，-2 保持宽高比
+        // 视频滤镜：缩放 + 可选字幕烧录，-2 保持宽高比
+        String filter = "scale=" + width + ":-2";
+        if (subtitlePath != null && !subtitlePath.isBlank()) {
+            String filterName = isBitmapSubtitle(subtitlePath) ? "subtitle" : "subtitles";
+            filter += "," + filterName + "=" + escapeFilterPath(subtitlePath);
+        }
         cmd.add("-vf");
-        cmd.add("scale=" + width + ":-2");
+        cmd.add(filter);
 
         // 视频编码（libx264 几乎在所有 FFmpeg 发行版中可用）
         cmd.add("-c:v");
@@ -227,6 +232,23 @@ public class TranscodingService {
         cmd.add("pipe:1");
 
         return cmd;
+    }
+
+    /**
+     * 滤镜参数中的路径需要转义特殊字符（Windows 盘符冒号、单引号等）
+     */
+    private String escapeFilterPath(String path) {
+        return path.replace("\\", "/")
+                .replace(":", "\\:")
+                .replace("'", "\\'");
+    }
+
+    /**
+     * 图形字幕（PGS/VobSub）需用 subtitle 滤镜，文本字幕（SRT/ASS/VTT）用 subtitles 滤镜
+     */
+    private boolean isBitmapSubtitle(String path) {
+        String lower = path.toLowerCase();
+        return lower.endsWith(".sup") || lower.endsWith(".sub") || lower.endsWith(".idx");
     }
 
     private int getWidthForQuality(String quality) {
