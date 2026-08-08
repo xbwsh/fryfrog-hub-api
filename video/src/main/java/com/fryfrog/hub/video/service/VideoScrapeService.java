@@ -67,11 +67,15 @@ public class VideoScrapeService {
                 ? repository.findWithTmdbIdButNoAdultFlagByLibrary(libraryId)
                 : repository.findWithTmdbIdButNoAdultFlag();
 
+        String module = "adult:" + (libraryId != null ? libraryId : "all");
         if (videos.isEmpty()) {
+            scrapeProgressService.start(module, 0);
+            scrapeProgressService.finish(module);
             return 0;
         }
 
         log.info("[Scrape] Found {} videos needing isAdult flag update", videos.size());
+        scrapeProgressService.start(module, videos.size());
         int updated = 0;
 
         for (Video video : videos) {
@@ -107,8 +111,10 @@ public class VideoScrapeService {
             } catch (Exception e) {
                 log.debug("[Scrape] Failed to check isAdult for {}: {}", video.getTitle(), e.getMessage());
             }
+            scrapeProgressService.advance(module, video.getTitle(), true);
         }
 
+        scrapeProgressService.finish(module);
         log.info("[Scrape] isAdult update completed: {}/{} videos updated", updated, videos.size());
         return updated;
     }

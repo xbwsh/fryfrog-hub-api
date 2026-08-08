@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
@@ -40,6 +41,7 @@ public class VideoService {
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
     private final VideoAssetService assetService;
+    private final ScrapeProgressService progressService;
 
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
@@ -255,17 +257,22 @@ public class VideoService {
                     .toList();
         }
 
+        String module = "supplement:" + (libraryId != null ? libraryId : "all");
+        progressService.start(module, videos.size());
+
         int actorsCount = 0;
         int assetsCount = 0;
         int failedCount = 0;
 
         for (Video video : videos) {
+            boolean ok = true;
             try {
                 // 补充演员头像
                 assetService.saveActors(video, video.getMediaType(), video.getTmdbId(), null);
                 actorsCount++;
             } catch (Exception e) {
                 log.warn("[Supplement] Failed to save actors for {}: {}", video.getTitle(), e.getMessage());
+                ok = false;
             }
             try {
                 // 补充 NFO 和封面
@@ -274,9 +281,12 @@ public class VideoService {
             } catch (Exception e) {
                 log.warn("[Supplement] Failed to generate assets for {}: {}", video.getTitle(), e.getMessage());
                 failedCount++;
+                ok = false;
             }
+            progressService.advance(module, video.getTitle(), ok);
         }
 
+        progressService.finish(module);
         log.info("[Supplement] Completed: {} videos processed, {} actors saved, {} assets generated, {} failed",
                 videos.size(), actorsCount, assetsCount, failedCount);
 
