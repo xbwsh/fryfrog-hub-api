@@ -168,7 +168,7 @@ public class SeriesService {
     public List<VideoSeries> getFavoriteSeries() {
         List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
         return seriesRepository.findAll().stream()
-                .filter(VideoSeries::getFavorite)
+                .filter(series -> Boolean.TRUE.equals(series.getFavorite()))
                 .filter(series -> series.getVideos().isEmpty() ||
                         series.getVideos().stream().anyMatch(v ->
                                 v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
