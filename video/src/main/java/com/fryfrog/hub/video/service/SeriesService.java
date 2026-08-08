@@ -71,6 +71,7 @@ public class SeriesService {
         series.setRating(detail.getVoteAverage());
         series.setPosterUrl(tmdbService.getPosterUrl(detail.getPosterPath()));
         series.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
+        series.setLogoImageUrl(tmdbService.getTvLogoUrl(tmdbId));
         series.setMetadataSource("tmdb");
         series.setTotalEpisodes(detail.getNumberOfEpisodes());
         series.setNumberOfSeasons(detail.getNumberOfSeasons());
