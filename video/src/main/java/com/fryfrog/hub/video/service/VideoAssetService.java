@@ -89,7 +89,9 @@ public class VideoAssetService {
 
     /**
      * 为单个视频生成 NFO 和封面
+     * 事务内访问懒加载关联（actorEntities/series），避免 LazyInitializationException
      */
+    @Transactional
     public void generateNfoAndCovers(Video video, boolean force) {
         // 生成 NFO
         try {

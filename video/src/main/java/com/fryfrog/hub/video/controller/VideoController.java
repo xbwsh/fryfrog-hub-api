@@ -46,7 +46,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -407,6 +409,124 @@ public class VideoController {
         return ResponseEntity.ok()
                 .contentType(MediaType.IMAGE_JPEG)
                 .body(new FileSystemResource(fanartPath.toFile()));
+    }
+
+    /**
+     * 截帧候选缓存目录：视频同目录下 .frames-{videoId}/
+     */
+    private Path getFramesCacheDir(Video video) {
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        return videoDir.resolve(".frames-" + video.getId());
+    }
+
+    @GetMapping("/{id:\\d+}/frames")
+    @Operation(summary = "生成截帧候选列表", description = "截取视频多个位置的关键帧作为封面候选，返回候选列表供前端预览选择")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> generateFrameCandidates(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        Path cacheDir = getFramesCacheDir(video);
+        try {
+            // 清理旧候选
+            if (Files.exists(cacheDir)) {
+                try (var walk = Files.walk(cacheDir)) {
+                    walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                        try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                    });
+                }
+            }
+            Files.createDirectories(cacheDir);
+
+            double duration = transcodingService.getDurationSeconds(video.getFilePath());
+            // 6 个采样位置（避开片头片尾）
+            double[] ratios = {0.12, 0.28, 0.44, 0.60, 0.76, 0.88};
+
+            List<Map<String, Object>> candidates = new ArrayList<>();
+            for (int i = 0; i < ratios.length; i++) {
+                double pos = duration > 0 ? duration * ratios[i] : 30 + i * 30;
+                Path framePath = cacheDir.resolve("frame-" + i + ".jpg");
+                if (transcodingService.captureFrameAt(video.getFilePath(), framePath.toString(), 640, 360, pos)) {
+                    Map<String, Object> item = new java.util.LinkedHashMap<>();
+                    item.put("index", i);
+                    item.put("position", Math.round(pos));
+                    item.put("url", "/api/v1/video/" + id + "/frames/" + i);
+                    candidates.add(item);
+                }
+            }
+
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("videoId", id);
+            result.put("total", candidates.size());
+            result.put("candidates", candidates);
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to generate frame candidates for video {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("截帧候选生成失败: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{id:\\d+}/frames/{index:\\d+}")
+    @Operation(summary = "获取候选帧图片", description = "返回指定索引的候选帧图片（预览用）")
+    public ResponseEntity<Resource> getFrameCandidate(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @Parameter(description = "候选帧索引") @PathVariable int index) {
+        Video video = service.getVideoById(id);
+        Path framePath = getFramesCacheDir(video).resolve("frame-" + index + ".jpg");
+        if (!Files.exists(framePath)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_JPEG)
+                .body(new FileSystemResource(framePath.toFile()));
+    }
+
+    @PostMapping("/{id:\\d+}/frames/select")
+    @Operation(summary = "选定截帧作为封面", description = "将指定候选帧设置为视频的竖屏封面或横屏背景图")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> selectFrame(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @RequestBody com.fryfrog.hub.video.dto.FrameSelectRequest request) {
+        Video video = service.getVideoById(id);
+        Path cacheDir = getFramesCacheDir(video);
+        Path framePath = cacheDir.resolve("frame-" + request.getIndex() + ".jpg");
+        if (!Files.exists(framePath)) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("候选帧不存在，请先调用生成接口"));
+        }
+
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        String baseName = nfoService.getBaseName(video.getFileName());
+        boolean isPoster = "poster".equalsIgnoreCase(request.getType());
+        String outputName = isPoster ? baseName + "-frame-v3.jpg" : baseName + "-fanart-frame-v3.jpg";
+        Path outputPath = videoDir.resolve(outputName);
+
+        try {
+            // 从候选帧对应的原始时间点重新截取目标尺寸
+            double duration = transcodingService.getDurationSeconds(video.getFilePath());
+            double[] ratios = {0.12, 0.28, 0.44, 0.60, 0.76, 0.88};
+            double pos = duration > 0 ? duration * ratios[request.getIndex()] : 30 + request.getIndex() * 30;
+            boolean ok = transcodingService.captureFrameAt(
+                    video.getFilePath(), outputPath.toString(),
+                    isPoster ? 300 : 1920, isPoster ? 450 : 1080, pos);
+            if (!ok) {
+                // 兜底：直接复制候选帧
+                Files.copy(framePath, outputPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            // 记录本地路径
+            if (isPoster) {
+                video.setCoverArtPath(outputPath.toString());
+            } else {
+                video.setBackdropLocalPath(outputPath.toString());
+            }
+            videoRepository.save(video);
+
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("videoId", id);
+            result.put("type", isPoster ? "poster" : "fanart");
+            result.put("path", outputPath.toString());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to select frame for video {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("封面设置失败: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/{id:\\d+}/nfo")

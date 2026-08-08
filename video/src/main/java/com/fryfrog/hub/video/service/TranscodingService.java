@@ -134,6 +134,13 @@ public class TranscodingService {
     }
 
     /**
+     * 公开探测视频时长（秒），供外部计算采样位置
+     */
+    public double getDurationSeconds(String inputPath) {
+        return probeDuration(inputPath);
+    }
+
+    /**
      * 使用 ffprobe 探测视频时长
      */
     private double probeDuration(String inputPath) {
@@ -204,7 +211,7 @@ public class TranscodingService {
                 for (int i = 0; i < positions.length; i++) {
                     double pos = duration > 0 ? duration * positions[i] : 30 + i * 30;
                     Path tmp = tempDir.resolve("frame-" + i + ".jpg");
-                    if (captureFrame(inputPath, tmp.toString(), width, height, pos)) {
+                    if (captureFrameAt(inputPath, tmp.toString(), width, height, pos)) {
                         candidates.add(tmp);
                     }
                 }
@@ -230,8 +237,8 @@ public class TranscodingService {
         return false;
     }
 
-    /** 在指定时间点截取一帧到目标文件 */
-    private boolean captureFrame(String inputPath, String outputPath, int width, int height, double position) {
+    /** 在指定时间点截取一帧到目标文件（指定输出尺寸，crop 裁切） */
+    public boolean captureFrameAt(String inputPath, String outputPath, int width, int height, double position) {
         try {
             List<String> command = new ArrayList<>();
             command.add(ffmpegPath);
