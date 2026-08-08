@@ -537,16 +537,23 @@ public class VideoScrapeService {
 
         log.info("[Bind] Found {} videos in series '{}'", seriesVideos.size(), title);
 
+        String module = "bind:" + videoId;
+        scrapeProgressService.start(module, seriesVideos.size());
+        scrapeProgressService.stage(module, "bind");
+
         List<Video> results = new ArrayList<>();
         for (Video v : seriesVideos) {
             try {
                 Video bound = scrapeAndBindTmdb(v.getId(), tmdbId, mediaType, isAdult);
                 results.add(bound);
+                scrapeProgressService.advance(module, v.getTitle(), true);
             } catch (Exception e) {
                 log.warn("[Bind] Failed to bind video id={}: {}", v.getId(), e.getMessage());
                 results.add(v);
+                scrapeProgressService.advance(module, v.getTitle(), false);
             }
         }
+        scrapeProgressService.finish(module);
         return results;
     }
 
@@ -787,15 +794,21 @@ public class VideoScrapeService {
                 .toList();
 
         List<Video> results2 = new ArrayList<>();
+        String module = "bind:" + videoId;
+        scrapeProgressService.start(module, toBind.size());
+        scrapeProgressService.stage(module, "bind");
         for (Video v : toBind) {
             try {
                 Video bound = scrapeAndBindTmdb(v.getId(), bestMatch.getId(), bestMatch.getMediaType(), isAdult);
                 results2.add(bound);
+                scrapeProgressService.advance(module, v.getTitle(), true);
             } catch (Exception e) {
                 log.warn("[Scrape] Failed to rescrape video {}: {}", v.getTitle(), e.getMessage());
                 results2.add(v);
+                scrapeProgressService.advance(module, v.getTitle(), false);
             }
         }
+        scrapeProgressService.finish(module);
         return results2;
     }
 

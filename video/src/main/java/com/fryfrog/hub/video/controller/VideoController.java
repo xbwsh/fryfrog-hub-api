@@ -225,35 +225,46 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/tmdb/bind")
-    @Operation(summary = "绑定TMDB元数据", description = "绑定整个系列（同标题的所有视频）到指定TMDB条目，并重命名文件")
+    @Operation(summary = "绑定TMDB元数据", description = "绑定整个系列（同标题的所有视频）到指定TMDB条目，并重命名文件（异步执行，进度见 scrape/progress?module=bind:{id}）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> bindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestBody VideoBindRequest request) {
         log.info("[Bind] Binding video id={} to TMDB {} ({})", id, request.getTmdbId(), request.getMediaType());
 
-        // 暂停 periodic-scan，防止并发冲突
+        // 暂停 periodic-scan，防止并发冲突；异步执行，避免前端长时间无响应
         scanScheduler.setBusy(true);
-        try {
-            // 1. 绑定整个系列（isAdult 由 doScrapeAndBind 自动从 TMDB 判断）
-            List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
+        Thread.startVirtualThread(() -> {
+            try {
+                // 1. 绑定整个系列（isAdult 由 doScrapeAndBind 自动从 TMDB 判断）
+                List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
 
-            // 2. 重命名文件 + 移动到元数据目录
-            Map<String, Object> organizeResult = organizeService.batchOrganize(boundVideos);
+                // 2. 重命名文件 + 移动到元数据目录
+                String module = "bind:" + id;
+                scrapeProgressService.stage(module, "organize");
+                organizeService.batchOrganize(boundVideos);
 
-            // 3. 生成 NFO + 下载封面（强制覆盖）
-            assetService.batchGenerateAssets(boundVideos, true);
+                // 3. 生成 NFO + 下载封面（强制覆盖）
+                scrapeProgressService.stage(module, "assets");
+                assetService.batchGenerateAssets(boundVideos, true);
 
-            // 4. 清理空的 series 记录
-            seriesService.cleanupEmptySeries();
+                // 4. 清理空的 series 记录
+                seriesService.cleanupEmptySeries();
 
-            Map<String, Object> result = new java.util.HashMap<>();
-            result.put("total", boundVideos.size());
-            result.put("organize", organizeResult);
-            result.put("videos", boundVideos.stream().map(this::toDTO).toList());
-            return ResponseEntity.ok(ApiResponse.success(result));
-        } finally {
-            scanScheduler.setBusy(false);
-        }
+                scrapeProgressService.stage(module, "done");
+                scrapeProgressService.finish(module);
+            } catch (Exception e) {
+                log.error("[Bind] Failed to bind video id={}: {}", id, e.getMessage(), e);
+                scrapeProgressService.stage("bind:" + id, "error");
+                scrapeProgressService.finish("bind:" + id);
+            } finally {
+                scanScheduler.setBusy(false);
+            }
+        });
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("status", "started");
+        result.put("videoId", id);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/{id:\\d+}/tmdb/unbind")
@@ -276,28 +287,39 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/tmdb/refresh")
-    @Operation(summary = "刷新TMDB元数据", description = "重新搜索TMDB并绑定，同时重命名文件")
+    @Operation(summary = "刷新TMDB元数据", description = "重新搜索TMDB并绑定，同时重命名文件（异步执行，进度见 scrape/progress?module=bind:{id}）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
-        // 暂停 periodic-scan，防止并发冲突
+        // 暂停 periodic-scan，防止并发冲突；异步执行，避免前端长时间无响应
         scanScheduler.setBusy(true);
-        try {
-            List<Video> results = service.rescrapeVideo(id);
+        Thread.startVirtualThread(() -> {
+            try {
+                String module = "bind:" + id;
+                List<Video> results = service.rescrapeVideo(id);
 
-            // 重命名文件
-            Map<String, Object> organizeResult = organizeService.batchOrganize(results);
+                // 重命名文件
+                scrapeProgressService.stage(module, "organize");
+                organizeService.batchOrganize(results);
 
-            // 生成 NFO + 下载封面（强制覆盖）
-            assetService.batchGenerateAssets(results, true);
+                // 生成 NFO + 下载封面（强制覆盖）
+                scrapeProgressService.stage(module, "assets");
+                assetService.batchGenerateAssets(results, true);
 
-            Map<String, Object> result = new java.util.HashMap<>();
-            result.put("total", results.size());
-            result.put("organize", organizeResult);
-            result.put("videos", results.stream().map(this::toDTO).toList());
-            return ResponseEntity.ok(ApiResponse.success(result));
-        } finally {
-            scanScheduler.setBusy(false);
-        }
+                scrapeProgressService.stage(module, "done");
+                scrapeProgressService.finish(module);
+            } catch (Exception e) {
+                log.error("[Refresh] Failed to refresh video id={}: {}", id, e.getMessage(), e);
+                scrapeProgressService.stage("bind:" + id, "error");
+                scrapeProgressService.finish("bind:" + id);
+            } finally {
+                scanScheduler.setBusy(false);
+            }
+        });
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("status", "started");
+        result.put("videoId", id);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/tmdb/rescrape-library/{libraryId}")
