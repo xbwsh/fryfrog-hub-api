@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.video.service.VideoPipelineService;
 import com.fryfrog.hub.video.service.VideoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -29,11 +30,13 @@ public class MediaLibraryController {
     private final MediaLibraryService service;
     private final VideoService videoService;
     private final ScrapeProgressService progressService;
+    private final VideoPipelineService pipelineService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService) {
         this.service = service;
         this.videoService = videoService;
         this.progressService = progressService;
+        this.pipelineService = pipelineService;
     }
 
     // ── CRUD ──
@@ -159,7 +162,8 @@ public class MediaLibraryController {
         String key = library.getType().toLowerCase() + ":" + library.getId();
         try {
             if ("VIDEO".equalsIgnoreCase(library.getType())) {
-                videoService.scanDirectory(library.getPath(), library.getId());
+                // 完整流水线：扫描 → 刮削 → 整理 → 资产生成（enableScraping=false 时自动降级为仅扫描）
+                pipelineService.runFullPipeline(library.getPath(), library.getId());
             } else {
                 scanResult.put(key, "skip: unsupported type " + library.getType());
                 return;
