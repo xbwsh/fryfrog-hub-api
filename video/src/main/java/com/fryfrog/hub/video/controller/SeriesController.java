@@ -139,6 +139,29 @@ public class SeriesController {
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
+    @GetMapping("/favorites")
+    @Operation(summary = "获取收藏系列列表", description = "返回已收藏的系列列表")
+    public ResponseEntity<ApiResponse<List<SeriesListDTO>>> getFavoriteSeries() {
+        List<SeriesListDTO> result = seriesService.getFavoriteSeries().stream()
+                .map(s -> SeriesListDTO.fromEntity(s, s.getVideos()))
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @PutMapping("/{id}/favorite")
+    @Operation(summary = "设置系列收藏状态", description = "设置系列的收藏状态")
+    public ResponseEntity<ApiResponse<SeriesDTO>> setSeriesFavorite(
+            @Parameter(description = "系列ID") @PathVariable Long id,
+            @Parameter(description = "收藏状态") @RequestParam boolean status) {
+        VideoSeries series = seriesService.setFavorite(id, status);
+        List<Long> videoIds = series.getVideos().stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        List<VideoDTO> episodes = series.getVideos().stream()
+                .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes)));
+    }
+
     @PutMapping("/{id}/metadata")
     @Operation(summary = "编辑系列元数据", description = "手动修改系列的标题、简介、评分、上映日期、类型等元数据（只更新传入的非空字段）")
     public ResponseEntity<ApiResponse<SeriesDTO>> updateSeriesMetadata(

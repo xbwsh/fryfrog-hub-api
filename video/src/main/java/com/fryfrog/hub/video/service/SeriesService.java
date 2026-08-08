@@ -152,6 +152,33 @@ public class SeriesService {
         return seriesRepository.findById(id);
     }
 
+    /**
+     * 设置系列收藏状态
+     */
+    public VideoSeries setFavorite(Long id, boolean status) {
+        VideoSeries series = getSeriesById(id)
+                .orElseThrow(() -> new RuntimeException("Series not found: " + id));
+        series.setFavorite(status);
+        return seriesRepository.save(series);
+    }
+
+    /**
+     * 收藏的系列列表（按启用资源库过滤）
+     */
+    public List<VideoSeries> getFavoriteSeries() {
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        return seriesRepository.findAll().stream()
+                .filter(VideoSeries::getFavorite)
+                .filter(series -> series.getVideos().isEmpty() ||
+                        series.getVideos().stream().anyMatch(v ->
+                                v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
+                .toList();
+    }
+
+    public long countFavoriteSeries() {
+        return getFavoriteSeries().size();
+    }
+
     @Transactional
     public void removeVideoFromSeries(Video video) {
         if (video.getSeries() != null) {

@@ -53,6 +53,9 @@ public class SeriesListDTO {
     @Schema(description = "是否为成人内容")
     private Boolean isAdult;
 
+    @Schema(description = "是否收藏")
+    private Boolean favorite;
+
     @Schema(description = "是否包含成人内容的集（用于隐私模式过滤）")
     private Boolean hasAdultEpisodes;
 
@@ -72,6 +75,7 @@ public class SeriesListDTO {
         dto.setTotalEpisodes(series.getTotalEpisodes());
         dto.setEpisodeCount(series.getEpisodeCount());
         dto.setIsAdult(series.getIsAdult());
+        dto.setFavorite(series.getFavorite());
         dto.setHasAdultEpisodes(episodes.stream().anyMatch(v -> Boolean.TRUE.equals(v.getIsAdult())));
         return dto;
     }
@@ -91,6 +95,7 @@ public class SeriesListDTO {
         dto.setTotalEpisodes(1);
         dto.setEpisodeCount(1);
         dto.setIsAdult(video.getIsAdult());
+        dto.setFavorite(video.getFavorite());
         dto.setHasAdultEpisodes(Boolean.TRUE.equals(video.getIsAdult()));
         return dto;
     }
