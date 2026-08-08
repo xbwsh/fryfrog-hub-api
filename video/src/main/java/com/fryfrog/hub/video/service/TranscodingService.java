@@ -6,10 +6,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
 import java.io.*;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -180,7 +185,8 @@ public class TranscodingService {
 
     /**
      * 从视频中截取一帧保存为 JPG，可指定输出尺寸（竖屏海报或横屏背景图）。
-     * 取视频 15% 处的一帧（避开片头黑屏），失败时返回 false。
+     * 采样视频多个位置各截一帧，按内容复杂度（梯度能量）选出画面最丰富的帧，
+     * 避免截到空镜/纯色画面。失败时返回 false。
      */
     public boolean extractFrame(String inputPath, String outputPath, int width, int height) {
         if (!ffmpegAvailable) {
@@ -189,8 +195,44 @@ public class TranscodingService {
         }
         try {
             double duration = probeDuration(inputPath);
-            double position = duration > 0 ? duration * 0.15 : 10;
+            // 在 12%~85% 区间均匀采样多个位置（避开片头片尾的标题/黑屏）
+            double[] positions = {0.12, 0.28, 0.44, 0.60, 0.76, 0.85};
 
+            List<Path> candidates = new ArrayList<>();
+            Path tempDir = Files.createTempDirectory("fryfrog-frame");
+            try {
+                for (int i = 0; i < positions.length; i++) {
+                    double pos = duration > 0 ? duration * positions[i] : 30 + i * 30;
+                    Path tmp = tempDir.resolve("frame-" + i + ".jpg");
+                    if (captureFrame(inputPath, tmp.toString(), width, height, pos)) {
+                        candidates.add(tmp);
+                    }
+                }
+
+                if (candidates.isEmpty()) {
+                    log.debug("Frame extraction failed for all positions: {}", inputPath);
+                    return false;
+                }
+
+                // 选出内容最丰富的一帧（梯度能量最高），复制到输出路径
+                Path best = candidates.stream()
+                        .max(Comparator.comparingDouble(this::contentScore))
+                        .orElse(candidates.getFirst());
+                Files.copy(best, Paths.get(outputPath), StandardCopyOption.REPLACE_EXISTING);
+                log.debug("Extracted frame: {} -> {} ({} candidates)", inputPath, outputPath, candidates.size());
+                return Files.exists(Paths.get(outputPath));
+            } finally {
+                deleteRecursively(tempDir);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract frame from {}: {}", inputPath, e.getMessage());
+        }
+        return false;
+    }
+
+    /** 在指定时间点截取一帧到目标文件 */
+    private boolean captureFrame(String inputPath, String outputPath, int width, int height, double position) {
+        try {
             List<String> command = new ArrayList<>();
             command.add(ffmpegPath);
             command.add("-hide_banner");
@@ -230,14 +272,59 @@ public class TranscodingService {
             }
 
             if (p.exitValue() == 0 && Files.exists(Paths.get(outputPath))) {
-                log.debug("Extracted frame: {} -> {}", inputPath, outputPath);
                 return true;
             }
-            log.debug("Frame extraction failed (exit={}): {} {}", p.exitValue(), inputPath, output);
+            log.debug("Frame capture failed (exit={}) at {}: {} {}", p.exitValue(), position, inputPath, output);
         } catch (Exception e) {
-            log.warn("Failed to extract frame from {}: {}", inputPath, e.getMessage());
+            log.debug("Failed to capture frame at {}: {}", position, e.getMessage());
         }
         return false;
+    }
+
+    /**
+     * 帧内容复杂度评分：缩略到 64x64 灰度图，计算相邻像素梯度能量之和。
+     * 空镜/纯色画面梯度低，人物/场景轮廓和纹理多则梯度高。
+     */
+    private double contentScore(Path imagePath) {
+        try {
+            BufferedImage img = ImageIO.read(imagePath.toFile());
+            if (img == null) return 0;
+
+            int size = 64;
+            int[][] gray = new int[size][size];
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    int rgb = img.getRGB(x * img.getWidth() / size, y * img.getHeight() / size);
+                    int r = (rgb >> 16) & 0xFF;
+                    int g = (rgb >> 8) & 0xFF;
+                    int b = rgb & 0xFF;
+                    gray[y][x] = (r * 299 + g * 587 + b * 114) / 1000;
+                }
+            }
+
+            double energy = 0;
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    if (x > 0) energy += Math.abs(gray[y][x] - gray[y][x - 1]);
+                    if (y > 0) energy += Math.abs(gray[y][x] - gray[y - 1][x]);
+                }
+            }
+            return energy;
+        } catch (Exception e) {
+            log.debug("Failed to score frame {}: {}", imagePath, e.getMessage());
+            return 0;
+        }
+    }
+
+    private void deleteRecursively(java.nio.file.Path dir) {
+        if (dir == null || !Files.exists(dir)) return;
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (Exception ignored) {}
+            });
+        } catch (Exception ignored) {}
     }
 
     private int parseBitrate(String bitrate) {

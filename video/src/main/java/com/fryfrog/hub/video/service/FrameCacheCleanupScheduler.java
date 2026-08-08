@@ -14,8 +14,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * 定时清理任务：每天凌晨删除旧的 pad 版截帧缓存（-frame.jpg / -fanart-frame.jpg）。
- * v2 的 crop 无黑边缓存（-frame-v2.jpg）不受影响，删除后下次请求会按需重新生成 v2。
+ * 定时清理任务：每天凌晨删除旧的截帧缓存版本。
+ * 清理 -frame.jpg / -frame-v2.jpg（及 fanart 对应版本），保留当前 v3 缓存。
+ * v3 生成后旧版本不再被读取，删除可释放磁盘空间。
  */
 @Service
 @RequiredArgsConstructor
@@ -49,9 +50,12 @@ public class FrameCacheCleanupScheduler {
         if (videoDir == null) return 0;
 
         String baseName = nfoService.getBaseName(video.getFileName());
+        // 旧版本缓存（v1 pad 版、v2 crop 版），v3 为当前版本不清理
         Path[] oldCaches = {
                 videoDir.resolve(baseName + "-frame.jpg"),
-                videoDir.resolve(baseName + "-fanart-frame.jpg")
+                videoDir.resolve(baseName + "-frame-v2.jpg"),
+                videoDir.resolve(baseName + "-fanart-frame.jpg"),
+                videoDir.resolve(baseName + "-fanart-frame-v2.jpg")
         };
 
         int removed = 0;

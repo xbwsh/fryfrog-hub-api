@@ -189,8 +189,8 @@ public class VideoController {
             Path videoDir = Paths.get(video.getFilePath()).getParent();
             if (videoDir != null) {
                 String baseName = nfoService.getBaseName(video.getFileName());
-                // v2: crop 裁切无黑边；旧版 pad 生成的 -frame.jpg 缓存不再使用
-                Path framePath = videoDir.resolve(baseName + "-frame-v2.jpg");
+                // v3: 多点采样+内容评分选帧；旧版单帧缓存（-frame.jpg / -frame-v2.jpg）不再使用
+                Path framePath = videoDir.resolve(baseName + "-frame-v3.jpg");
                 if (!Files.exists(framePath)) {
                     transcodingService.extractFrame(video.getFilePath(), framePath.toString());
                 }
@@ -388,8 +388,8 @@ public class VideoController {
             // 兜底：未刮削视频从视频本身截取横屏帧作为背景图（懒生成 + 缓存到视频同目录）
             try {
                 if (videoDir != null) {
-                    // v2: crop 裁切无黑边；旧版 pad 生成的 -fanart-frame.jpg 缓存不再使用
-                    Path framePath = videoDir.resolve(baseName + "-fanart-frame-v2.jpg");
+                    // v3: 多点采样+内容评分选帧；旧版单帧缓存（-fanart-frame.jpg / -v2.jpg）不再使用
+                    Path framePath = videoDir.resolve(baseName + "-fanart-frame-v3.jpg");
                     if (!Files.exists(framePath)) {
                         transcodingService.extractFrame(video.getFilePath(), framePath.toString(), 1920, 1080);
                     }
