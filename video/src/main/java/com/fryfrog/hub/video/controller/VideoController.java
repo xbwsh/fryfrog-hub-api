@@ -419,7 +419,7 @@ public class VideoController {
         return videoDir.resolve(".frames-" + video.getId());
     }
 
-    @GetMapping("/{id:\\d+}/frames")
+    @PostMapping("/{id:\\d+}/frames")
     @Operation(summary = "生成截帧候选列表", description = "截取视频多个位置的关键帧作为封面候选，返回候选列表供前端预览选择")
     public ResponseEntity<ApiResponse<Map<String, Object>>> generateFrameCandidates(
             @Parameter(description = "视频ID") @PathVariable Long id) {
