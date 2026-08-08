@@ -14,12 +14,14 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
+import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +43,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/video/series")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "视频系列管理", description = "视频系列/剧集分组接口")
 public class SeriesController {
 
@@ -49,6 +53,7 @@ public class SeriesController {
     private final NfoService nfoService;
     private final WatchProgressService watchProgressService;
     private final MediaLibraryService mediaLibraryService;
+    private final TranscodingService transcodingService;
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -264,6 +269,60 @@ public class SeriesController {
                     .body(new ByteArrayResource(imageBytes));
         } catch (Exception e) {
             return generatePlaceholder(title, 1920, 1080);
+        }
+    }
+
+    @PostMapping("/{id}/frames/select")
+    @Operation(summary = "从单集截帧设置系列横屏背景图", description = "前端先调单集接口生成候选帧并预览，用户选定某集某帧后，将该帧设为系列横屏背景图")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> selectSeriesFanart(
+            @Parameter(description = "系列ID") @PathVariable Long id,
+            @RequestBody com.fryfrog.hub.video.dto.SeriesFrameSelectRequest request) {
+        if (request.getVideoId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("videoId 不能为空"));
+        }
+
+        VideoSeries series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列不存在: " + id));
+        }
+        Video video = videoService.getVideoById(request.getVideoId());
+        if (video == null || video.getSeries() == null || !video.getSeries().getId().equals(id)) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("该视频不属于此系列"));
+        }
+
+        // 候选帧缓存目录（与单集接口一致：视频同目录 .frames-{videoId}/）
+        Path videoDir = Paths.get(video.getFilePath()).getParent();
+        Path framePath = videoDir.resolve(".frames-" + video.getId()).resolve("frame-" + request.getIndex() + ".jpg");
+        if (!Files.exists(framePath)) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("候选帧不存在，请先调用单集生成接口"));
+        }
+
+        try {
+            // 系列横屏背景图保存到视频同目录（与单集 fanart-frame-v3 命名区分）
+            String baseName = nfoService.getBaseName(video.getFileName());
+            Path outputPath = videoDir.resolve(baseName + "-series-fanart.jpg");
+
+            // 从该时间点重新截取 1920x1080
+            double duration = transcodingService.getDurationSeconds(video.getFilePath());
+            double[] ratios = {0.12, 0.28, 0.44, 0.60, 0.76, 0.88};
+            double pos = duration > 0 ? duration * ratios[request.getIndex()] : 30 + request.getIndex() * 30;
+            boolean ok = transcodingService.captureFrameAt(
+                    video.getFilePath(), outputPath.toString(), 1920, 1080, pos);
+            if (!ok) {
+                Files.copy(framePath, outputPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            series.setBackdropLocalPath(outputPath.toString());
+            seriesService.saveSeries(series);
+
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("seriesId", id);
+            result.put("videoId", request.getVideoId());
+            result.put("path", outputPath.toString());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to set series fanart for {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("系列背景图设置失败: " + e.getMessage()));
         }
     }
 

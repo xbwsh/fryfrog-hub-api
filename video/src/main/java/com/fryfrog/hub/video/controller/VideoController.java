@@ -14,6 +14,7 @@ import com.fryfrog.hub.video.dto.UpdateWatchedRequest;
 import com.fryfrog.hub.video.dto.WatchProgressDTO;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoActor;
+import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
@@ -480,7 +481,7 @@ public class VideoController {
     }
 
     @PostMapping("/{id:\\d+}/frames/select")
-    @Operation(summary = "选定截帧作为封面", description = "将指定候选帧设置为视频的竖屏封面或横屏背景图")
+    @Operation(summary = "选定截帧作为封面", description = "将指定候选帧设置为视频的竖屏封面、横屏背景图，或所属系列的横屏背景图")
     public ResponseEntity<ApiResponse<Map<String, Object>>> selectFrame(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestBody com.fryfrog.hub.video.dto.FrameSelectRequest request) {
@@ -491,10 +492,29 @@ public class VideoController {
             return ResponseEntity.badRequest().body(ApiResponse.error("候选帧不存在，请先调用生成接口"));
         }
 
+        String type = request.getType();
+        boolean isPoster = "poster".equalsIgnoreCase(type);
+        boolean isSeriesFanart = "series_fanart".equalsIgnoreCase(type);
+
+        // 系列横屏背景图：视频必须属于某个系列
+        VideoSeries series = null;
+        if (isSeriesFanart) {
+            series = video.getSeries();
+            if (series == null) {
+                return ResponseEntity.badRequest().body(ApiResponse.error("该视频不属于任何系列，无法设置为系列背景图"));
+            }
+        }
+
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         String baseName = nfoService.getBaseName(video.getFileName());
-        boolean isPoster = "poster".equalsIgnoreCase(request.getType());
-        String outputName = isPoster ? baseName + "-frame-v3.jpg" : baseName + "-fanart-frame-v3.jpg";
+        String outputName;
+        if (isPoster) {
+            outputName = baseName + "-frame-v3.jpg";
+        } else if (isSeriesFanart) {
+            outputName = baseName + "-series-fanart.jpg";
+        } else {
+            outputName = baseName + "-fanart-frame-v3.jpg";
+        }
         Path outputPath = videoDir.resolve(outputName);
 
         try {
@@ -510,17 +530,20 @@ public class VideoController {
                 Files.copy(framePath, outputPath, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            // 记录本地路径
             if (isPoster) {
                 video.setCoverArtPath(outputPath.toString());
+                videoRepository.save(video);
+            } else if (isSeriesFanart) {
+                series.setBackdropLocalPath(outputPath.toString());
+                seriesService.saveSeries(series);
             } else {
                 video.setBackdropLocalPath(outputPath.toString());
+                videoRepository.save(video);
             }
-            videoRepository.save(video);
 
             Map<String, Object> result = new java.util.HashMap<>();
             result.put("videoId", id);
-            result.put("type", isPoster ? "poster" : "fanart");
+            result.put("type", type);
             result.put("path", outputPath.toString());
             return ResponseEntity.ok(ApiResponse.success(result));
         } catch (Exception e) {
