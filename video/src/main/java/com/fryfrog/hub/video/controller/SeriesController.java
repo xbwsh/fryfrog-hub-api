@@ -267,40 +267,6 @@ public class SeriesController {
         }
     }
 
-    @GetMapping("/{id}/logo")
-    @Operation(summary = "获取系列Logo", description = "返回系列的透明字标Logo（PNG），仅 TV 类型有")
-    public ResponseEntity<Resource> getSeriesLogo(
-            @Parameter(description = "系列ID") @PathVariable Long id) {
-        var series = seriesService.getSeriesById(id).orElse(null);
-        if (series == null) {
-            return ResponseEntity.notFound().build();
-        }
-
-        // 优先使用本地 Logo 文件
-        if (series.getLogoLocalPath() != null) {
-            Path localPath = Paths.get(series.getLogoLocalPath());
-            if (Files.exists(localPath)) {
-                return ResponseEntity.ok()
-                        .contentType(MediaType.IMAGE_PNG)
-                        .body(new FileSystemResource(localPath.toFile()));
-            }
-        }
-
-        // 兜底：从远程 URL 下载
-        if (series.getLogoImageUrl() == null) {
-            return ResponseEntity.notFound().build();
-        }
-        try {
-            java.net.URL url = new java.net.URL(series.getLogoImageUrl());
-            byte[] imageBytes = url.openStream().readAllBytes();
-            return ResponseEntity.ok()
-                    .contentType(MediaType.IMAGE_PNG)
-                    .body(new ByteArrayResource(imageBytes));
-        } catch (Exception e) {
-            return ResponseEntity.notFound().build();
-        }
-    }
-
     private ResponseEntity<Resource> generatePlaceholder(String title, int width, int height) {
         try {
             byte[] placeholder = PlaceholderImageGenerator.generate(title, width, height);

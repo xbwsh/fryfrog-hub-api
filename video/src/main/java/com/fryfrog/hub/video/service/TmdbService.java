@@ -4,7 +4,6 @@ import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
-import com.fryfrog.hub.video.dto.TmdbTvImages;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
@@ -295,31 +294,5 @@ public class TmdbService {
     public String getBackdropUrl(String backdropPath) {
         if (backdropPath == null) return null;
         return IMAGE_BASE_URL + "/" + getImageSize() + backdropPath;
-    }
-
-    /**
-     * 获取剧集 Logo（透明字标）URL。取 /tv/{id}/images 的 logos 中宽度最大的一个，无则返回 null。
-     */
-    public String getTvLogoUrl(Long tvId) {
-        if (!isConfigured()) return null;
-        try {
-            String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/images")
-                    .toUriString();
-            ResponseEntity<TmdbTvImages> response = getForEntity(url, TmdbTvImages.class);
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                return null;
-            }
-            List<TmdbTvImages.Logo> logos = response.getBody().getLogos();
-            if (logos == null || logos.isEmpty()) return null;
-
-            return logos.stream()
-                    .filter(l -> l.getFilePath() != null && !l.getFilePath().isBlank())
-                    .max(java.util.Comparator.comparingInt(l -> l.getWidth() != null ? l.getWidth() : 0))
-                    .map(l -> getPosterUrl(l.getFilePath()))
-                    .orElse(null);
-        } catch (Exception e) {
-            log.debug("Failed to get TV logo for {}: {}", tvId, e.getMessage());
-            return null;
-        }
     }
 }

@@ -146,7 +146,7 @@ public class VideoAssetService {
      * @param force true 时无视已有文件，强制重新下载
      */
     public void downloadSeriesCovers(VideoSeries series, Path episodeMetadataDir, boolean force) {
-        if (series.getPosterUrl() == null && series.getBackdropUrl() == null && series.getLogoImageUrl() == null) return;
+        if (series.getPosterUrl() == null && series.getBackdropUrl() == null) return;
 
         Path seasonDir = episodeMetadataDir.getParent();
         if (seasonDir == null) return;
@@ -180,18 +180,6 @@ public class VideoAssetService {
             }
             if (Files.exists(fanartPath) && (force || series.getBackdropLocalPath() == null)) {
                 series.setBackdropLocalPath(fanartPath.toString());
-                updated = true;
-            }
-        }
-
-        // 下载系列 Logo（透明字标，PNG）
-        if (series.getLogoImageUrl() != null) {
-            Path logoPath = seasonDir.resolve("tvshow-logo.png");
-            if (force || !Files.exists(logoPath)) {
-                downloadCoverImage(series.getLogoImageUrl(), logoPath);
-            }
-            if (Files.exists(logoPath) && (force || series.getLogoLocalPath() == null)) {
-                series.setLogoLocalPath(logoPath.toString());
                 updated = true;
             }
         }

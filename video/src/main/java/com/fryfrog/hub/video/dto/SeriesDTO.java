@@ -30,9 +30,6 @@ public class SeriesDTO {
     @Schema(description = "背景图URL")
     private String fanartUrl;
 
-    @Schema(description = "Logo字标URL（透明PNG，TV类型有；前端有值时可替换剧名文字）")
-    private String logoUrl;
-
     @Schema(description = "原始标题")
     private String originalTitle;
 
@@ -99,8 +96,6 @@ public class SeriesDTO {
         dto.setTitle(series.getTitle());
         dto.setCoverUrl("/api/v1/video/series/" + series.getId() + "/cover");
         dto.setFanartUrl("/api/v1/video/series/" + series.getId() + "/fanart");
-        dto.setLogoUrl(series.getLogoLocalPath() != null
-                ? "/api/v1/video/series/" + series.getId() + "/logo" : null);
         dto.setOriginalTitle(series.getOriginalTitle());
         dto.setOverview(series.getOverview());
         dto.setMediaType(series.getMediaType());
