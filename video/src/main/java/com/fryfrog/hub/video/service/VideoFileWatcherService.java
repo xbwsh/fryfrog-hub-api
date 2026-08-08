@@ -29,10 +29,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class VideoFileWatcherService extends AbstractFileWatcherService {
 
-    private static final Set<String> VIDEO_EXTENSIONS = Set.of(
-            "mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v"
-    );
-
     private final VideoPipelineService pipelineService;
     private final MediaLibraryService mediaLibraryService;
     private final VideoRepository videoRepository;
@@ -72,7 +68,8 @@ public class VideoFileWatcherService extends AbstractFileWatcherService {
 
     @Override
     protected Set<String> getWatchedExtensions() {
-        return VIDEO_EXTENSIONS;
+        // 与扫描器共用同一份格式列表，避免两处维护导致不一致
+        return VideoScanService.SUPPORTED_FORMATS;
     }
 
     @Override
