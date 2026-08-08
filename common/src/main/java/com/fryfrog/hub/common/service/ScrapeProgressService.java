@@ -53,6 +53,20 @@ public class ScrapeProgressService {
         progress.setUpdatedAt(LocalDateTime.now());
     }
 
+    /**
+     * 轻量进度更新：只更新计数和当前项，不记录明细（用于扫描等大批量场景，避免内存膨胀）
+     */
+    public void advance(String module, String currentItem, boolean success) {
+        ScrapeProgress progress = getProgress(module);
+        if (success) {
+            progress.setCompleted(progress.getCompleted() + 1);
+        } else {
+            progress.setFailed(progress.getFailed() + 1);
+        }
+        progress.setCurrentItem(currentItem);
+        progress.setUpdatedAt(LocalDateTime.now());
+    }
+
     public void finish(String module) {
         ScrapeProgress progress = getProgress(module);
         progress.setRunning(false);

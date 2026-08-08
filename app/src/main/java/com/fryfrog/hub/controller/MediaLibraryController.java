@@ -1,8 +1,10 @@
 package com.fryfrog.hub.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.video.service.VideoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -26,10 +28,12 @@ public class MediaLibraryController {
 
     private final MediaLibraryService service;
     private final VideoService videoService;
+    private final ScrapeProgressService progressService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService) {
         this.service = service;
         this.videoService = videoService;
+        this.progressService = progressService;
     }
 
     // ── CRUD ──
@@ -136,6 +140,19 @@ public class MediaLibraryController {
         });
 
         return ResponseEntity.ok(ApiResponse.success("扫描任务已启动", result));
+    }
+
+    @GetMapping("/scan/progress")
+    @Operation(summary = "获取扫描进度", description = "返回指定资源库的扫描进度，不传 libraryId 时返回全部资源库的进度")
+    public ResponseEntity<ApiResponse<List<ScrapeProgress>>> getScanProgress(
+            @Parameter(description = "资源库ID，可选") @RequestParam(required = false) Long libraryId) {
+        if (libraryId != null) {
+            return ResponseEntity.ok(ApiResponse.success(List.of(progressService.getProgress("scan:" + libraryId))));
+        }
+        List<ScrapeProgress> progressList = service.getEnabledLibraries().stream()
+                .map(lib -> progressService.getProgress("scan:" + lib.getId()))
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(progressList));
     }
 
     private void scanLibrary(MediaLibrary library, Map<String, String> scanResult) {

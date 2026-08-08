@@ -2,6 +2,7 @@ package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.TitleCleaner;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
@@ -28,9 +29,28 @@ public class VideoScanService {
     private final VideoActorRepository actorRepository;
     private final SeriesService seriesService;
     private final NfoService nfoService;
+    private final ScrapeProgressService progressService;
     private final MediaLibraryService mediaLibraryService;
 
-    static final Set<String> SUPPORTED_FORMATS = Set.of("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm", "m4v");
+    /**
+     * 支持的视频格式（主流媒体服务器通用列表，覆盖 Kodi/Jellyfin/Plex 等常见格式）
+     */
+    static final Set<String> SUPPORTED_FORMATS = Set.of(
+            // 现代通用容器
+            "mp4", "mkv", "webm", "m4v", "mov", "avi",
+            // MPEG 系
+            "mpg", "mpeg", "mpe", "m2v", "m1v", "mpv", "vob", "dat",
+            // TS/录像系
+            "ts", "m2ts", "mts", "m2t", "tp", "trp", "wtv", "dvr-ms",
+            // 流媒体/Flash/Windows Media
+            "flv", "f4v", "swf", "asf", "wmv",
+            // RealMedia
+            "rm", "rmvb",
+            // 移动端
+            "3gp", "3g2",
+            // 其他/专业
+            "ogv", "ogm", "mxf", "divx", "nsv", "h264", "hevc"
+    );
 
     // ==================== 集数解析正则 ====================
 
@@ -49,6 +69,8 @@ public class VideoScanService {
         log.debug("[Scan] Start scanning directory: {} (libraryId={})", directoryPath, libraryId);
         long startTime = System.currentTimeMillis();
 
+        String module = "scan:" + (libraryId != null ? libraryId : "all");
+
         // Phase 1: 清理无效记录 + 回填原始文件名
         backfillOriginalFileName();
         cleanupInvalidRecords();
@@ -57,10 +79,13 @@ public class VideoScanService {
         // Phase 2: 扫描文件系统（无锁）
         List<Path> videoFiles = collectVideoFiles(directoryPath);
         if (videoFiles.isEmpty()) {
+            progressService.start(module, 0);
+            progressService.finish(module);
             log.debug("[Scan] No video files found in: {}", directoryPath);
             return Collections.emptyList();
         }
         log.debug("[Scan] Found {} video files", videoFiles.size());
+        progressService.start(module, videoFiles.size());
 
         // Phase 3: 批量提取元数据（无锁，内存操作）
         List<Video> videos = new ArrayList<>();
@@ -72,8 +97,10 @@ public class VideoScanService {
                 }
                 Video video = extractMetadata(path, libraryId);
                 videos.add(video);
+                progressService.advance(module, path.getFileName().toString(), true);
             } catch (Exception e) {
                 log.warn("[Scan] Failed to extract metadata from {}: {}", path.getFileName(), e.getMessage());
+                progressService.advance(module, path.getFileName().toString(), false);
             }
         }
 
@@ -84,6 +111,7 @@ public class VideoScanService {
         // Phase 5: 自动分组系列
         autoGroupSeries();
 
+        progressService.finish(module);
         long elapsed = System.currentTimeMillis() - startTime;
         log.debug("[Scan] Scan complete: {} videos in {}ms (dir={})", videos.size(), elapsed, directoryPath);
         return videos;
