@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -165,6 +167,67 @@ public class TranscodingService {
             log.debug("Failed to probe duration: {}", e.getMessage());
         }
         return 0;
+    }
+
+    /**
+     * 从视频中截取一帧保存为 JPG（用于未刮削视频的封面）。
+     * 取视频 15% 处的一帧（避开片头黑屏），失败时返回 false。
+     */
+    public boolean extractFrame(String inputPath, String outputPath) {
+        if (!ffmpegAvailable) {
+            log.debug("FFmpeg not available, skip frame extraction");
+            return false;
+        }
+        try {
+            double duration = probeDuration(inputPath);
+            double position = duration > 0 ? duration * 0.15 : 10;
+
+            List<String> command = new ArrayList<>();
+            command.add(ffmpegPath);
+            command.add("-hide_banner");
+            command.add("-loglevel");
+            command.add("error");
+            command.add("-ss");
+            command.add(String.valueOf(position));
+            command.add("-i");
+            command.add(inputPath);
+            command.add("-frames:v");
+            command.add("1");
+            command.add("-vf");
+            command.add("scale=300:450:force_original_aspect_ratio=decrease,pad=300:450:(ow-iw)/2:(oh-ih)/2:black");
+            command.add("-q:v");
+            command.add("2");
+            command.add("-y");
+            command.add(outputPath);
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            if (libraryDir != null) {
+                pb.environment().put(getLibraryPathEnv(), libraryDir);
+            }
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes()).trim();
+            }
+
+            boolean finished = p.waitFor(15, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                log.warn("Frame extraction timed out: {}", inputPath);
+                return false;
+            }
+
+            if (p.exitValue() == 0 && Files.exists(Paths.get(outputPath))) {
+                log.debug("Extracted frame: {} -> {}", inputPath, outputPath);
+                return true;
+            }
+            log.debug("Frame extraction failed (exit={}): {} {}", p.exitValue(), inputPath, output);
+        } catch (Exception e) {
+            log.warn("Failed to extract frame from {}: {}", inputPath, e.getMessage());
+        }
+        return false;
     }
 
     private int parseBitrate(String bitrate) {

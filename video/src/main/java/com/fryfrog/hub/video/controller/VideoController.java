@@ -184,6 +184,25 @@ public class VideoController {
                     .body(new FileSystemResource(posterPath.toFile()));
         }
 
+        // 兜底：未刮削视频从视频本身截帧作为封面（懒生成 + 缓存到视频同目录）
+        try {
+            Path videoDir = Paths.get(video.getFilePath()).getParent();
+            if (videoDir != null) {
+                String baseName = nfoService.getBaseName(video.getFileName());
+                Path framePath = videoDir.resolve(baseName + "-frame.jpg");
+                if (!Files.exists(framePath)) {
+                    transcodingService.extractFrame(video.getFilePath(), framePath.toString());
+                }
+                if (Files.exists(framePath)) {
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new FileSystemResource(framePath.toFile()));
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Frame extraction failed for video {}: {}", id, e.getMessage());
+        }
+
         try {
             byte[] placeholder = PlaceholderImageGenerator.generate(video.getTitle(), 300, 450);
             return ResponseEntity.ok()
