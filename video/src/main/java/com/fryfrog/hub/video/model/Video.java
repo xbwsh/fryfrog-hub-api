@@ -42,6 +42,9 @@ public class Video extends BaseEntity {
     @Column(name = "\"year\"")
     private Integer year;
 
+    @Schema(description = "上映日期（精确到日）", example = "2023-01-22")
+    private String releaseDate;
+
     @Schema(description = "时长（分钟）", example = "173")
     private Integer durationMinutes;
 

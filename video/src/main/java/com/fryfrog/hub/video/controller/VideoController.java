@@ -83,6 +83,33 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
     }
 
+    @PutMapping("/{id:\\d+}/metadata")
+    @Operation(summary = "编辑视频元数据", description = "手动修改视频的标题、简介、评分、上映日期、类型等元数据（只更新传入的非空字段）")
+    public ResponseEntity<ApiResponse<VideoDTO>> updateVideoMetadata(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @RequestBody com.fryfrog.hub.video.dto.VideoMetadataUpdateRequest request) {
+        Video video = service.getVideoById(id);
+        boolean updated = false;
+
+        if (request.getTitle() != null) { video.setTitle(request.getTitle()); updated = true; }
+        if (request.getOverview() != null) { video.setOverview(request.getOverview()); updated = true; }
+        if (request.getRating() != null) { video.setRating(request.getRating()); updated = true; }
+        if (request.getYear() != null) { video.setYear(request.getYear()); updated = true; }
+        if (request.getReleaseDate() != null) { video.setReleaseDate(request.getReleaseDate()); updated = true; }
+        if (request.getGenre() != null) { video.setGenre(request.getGenre()); updated = true; }
+        if (request.getDirector() != null) { video.setDirector(request.getDirector()); updated = true; }
+        if (request.getActors() != null) { video.setActors(request.getActors()); updated = true; }
+        if (request.getOriginalTitle() != null) { video.setOriginalTitle(request.getOriginalTitle()); updated = true; }
+        if (request.getTags() != null) { video.setTags(request.getTags()); updated = true; }
+
+        if (updated) {
+            video.setMetadataSource("manual");
+            videoRepository.save(video);
+            log.info("[Metadata] Updated video id={}: manual metadata applied", id);
+        }
+        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+    }
+
     @GetMapping("/search/title")
     @Operation(summary = "按标题搜索", description = "根据标题关键词模糊搜索视频")
     public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> searchByTitle(
@@ -231,6 +258,10 @@ public class VideoController {
             @RequestBody VideoBindRequest request) {
         log.info("[Bind] Binding video id={} to TMDB {} ({})", id, request.getTmdbId(), request.getMediaType());
 
+        String module = "bind:" + id;
+        // 在异步线程启动前先注册进度模块，避免前端轮询竞态拿到空对象误判完成
+        scrapeProgressService.start(module, 1);
+
         // 暂停 periodic-scan，防止并发冲突；异步执行，避免前端长时间无响应
         scanScheduler.setBusy(true);
         Thread.startVirtualThread(() -> {
@@ -239,7 +270,6 @@ public class VideoController {
                 List<Video> boundVideos = service.bindSeries(id, request.getTmdbId(), request.getMediaType(), false);
 
                 // 2. 重命名文件 + 移动到元数据目录
-                String module = "bind:" + id;
                 scrapeProgressService.stage(module, "organize");
                 organizeService.batchOrganize(boundVideos);
 
@@ -254,8 +284,8 @@ public class VideoController {
                 scrapeProgressService.finish(module);
             } catch (Exception e) {
                 log.error("[Bind] Failed to bind video id={}: {}", id, e.getMessage(), e);
-                scrapeProgressService.stage("bind:" + id, "error");
-                scrapeProgressService.finish("bind:" + id);
+                scrapeProgressService.stage(module, "error");
+                scrapeProgressService.finish(module);
             } finally {
                 scanScheduler.setBusy(false);
             }
@@ -290,11 +320,14 @@ public class VideoController {
     @Operation(summary = "刷新TMDB元数据", description = "重新搜索TMDB并绑定，同时重命名文件（异步执行，进度见 scrape/progress?module=bind:{id}）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
+        String module = "bind:" + id;
+        // 在异步线程启动前先注册进度模块，避免前端轮询竞态拿到空对象误判完成
+        scrapeProgressService.start(module, 1);
+
         // 暂停 periodic-scan，防止并发冲突；异步执行，避免前端长时间无响应
         scanScheduler.setBusy(true);
         Thread.startVirtualThread(() -> {
             try {
-                String module = "bind:" + id;
                 List<Video> results = service.rescrapeVideo(id);
 
                 // 重命名文件
@@ -309,8 +342,8 @@ public class VideoController {
                 scrapeProgressService.finish(module);
             } catch (Exception e) {
                 log.error("[Refresh] Failed to refresh video id={}: {}", id, e.getMessage(), e);
-                scrapeProgressService.stage("bind:" + id, "error");
-                scrapeProgressService.finish("bind:" + id);
+                scrapeProgressService.stage(module, "error");
+                scrapeProgressService.finish(module);
             } finally {
                 scanScheduler.setBusy(false);
             }

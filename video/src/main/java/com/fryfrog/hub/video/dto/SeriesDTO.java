@@ -48,6 +48,9 @@ public class SeriesDTO {
     @Schema(description = "年份")
     private Integer year;
 
+    @Schema(description = "上映日期（精确到日）", example = "2022-04-09")
+    private String releaseDate;
+
     @Schema(description = "海报URL")
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterUrl;
@@ -102,6 +105,7 @@ public class SeriesDTO {
         dto.setTmdbId(series.getTmdbId());
         dto.setRating(series.getRating());
         dto.setYear(series.getYear());
+        dto.setReleaseDate(series.getReleaseDate());
         dto.setPosterUrl(series.getPosterUrl());
         dto.setBackdropUrl(series.getBackdropUrl());
         dto.setSeasonNumber(series.getSeasonNumber());

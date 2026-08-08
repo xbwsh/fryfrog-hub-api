@@ -67,6 +67,7 @@ public class SeriesService {
         series.setOriginalTitle(detail.getOriginalName());
         series.setOverview(detail.getOverview());
         series.setYear(detail.getYear());
+        series.setReleaseDate(detail.getFirstAirDate());
         series.setMediaType("tv");
         series.setRating(detail.getVoteAverage());
         series.setPosterUrl(tmdbService.getPosterUrl(detail.getPosterPath()));

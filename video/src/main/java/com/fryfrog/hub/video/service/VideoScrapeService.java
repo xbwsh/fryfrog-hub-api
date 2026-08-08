@@ -861,6 +861,7 @@ public class VideoScrapeService {
         video.setOriginalTitle(detail.getOriginalTitle());
         video.setOverview(detail.getOverview());
         video.setYear(detail.getYear());
+        video.setReleaseDate(detail.getReleaseDate());
         video.setDirector(detail.getDirector());
         video.setActors(detail.getActors());
         video.setGenre(detail.getGenres());
@@ -892,6 +893,7 @@ public class VideoScrapeService {
         video.setOriginalTitle(detail.getOriginalName());
         video.setOverview(detail.getOverview());
         video.setYear(detail.getYear());
+        video.setReleaseDate(detail.getFirstAirDate());
         video.setDirector(detail.getDirector());
         video.setActors(detail.getActors());
         video.setGenre(detail.getGenres());

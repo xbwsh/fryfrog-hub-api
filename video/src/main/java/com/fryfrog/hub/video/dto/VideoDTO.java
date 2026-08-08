@@ -40,6 +40,9 @@ public class VideoDTO {
     @Schema(description = "发行年份", example = "2023")
     private Integer year;
 
+    @Schema(description = "上映日期（精确到日）", example = "2023-01-22")
+    private String releaseDate;
+
     @Schema(description = "时长（分钟）", example = "173")
     private Integer durationMinutes;
 
@@ -158,6 +161,7 @@ public class VideoDTO {
         dto.setActors(video.getActors());
         dto.setGenre(video.getGenre());
         dto.setYear(video.getYear());
+        dto.setReleaseDate(video.getReleaseDate());
         dto.setDurationMinutes(video.getDurationMinutes());
         dto.setOverview(video.getOverview());
         dto.setFileName(video.getFileName());

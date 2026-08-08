@@ -47,6 +47,9 @@ public class VideoSeries extends BaseEntity {
     @Schema(description = "年份")
     private Integer year;
 
+    @Schema(description = "上映日期（精确到日）", example = "2022-04-09")
+    private String releaseDate;
+
     @Schema(description = "海报URL（TMDB）")
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String posterUrl;

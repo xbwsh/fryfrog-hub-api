@@ -121,6 +121,38 @@ public class SeriesController {
         return ResponseEntity.ok(ApiResponse.success(seriesService.getSeriesGroupedByLibrary()));
     }
 
+    @PutMapping("/{id}/metadata")
+    @Operation(summary = "编辑系列元数据", description = "手动修改系列的标题、简介、评分、上映日期、类型等元数据（只更新传入的非空字段）")
+    public ResponseEntity<ApiResponse<SeriesDTO>> updateSeriesMetadata(
+            @Parameter(description = "系列ID") @PathVariable Long id,
+            @RequestBody com.fryfrog.hub.video.dto.SeriesMetadataUpdateRequest request) {
+        VideoSeries series = seriesService.getSeriesById(id)
+                .orElseThrow(() -> new RuntimeException("Series not found: " + id));
+        boolean updated = false;
+
+        if (request.getTitle() != null) { series.setTitle(request.getTitle()); updated = true; }
+        if (request.getOverview() != null) { series.setOverview(request.getOverview()); updated = true; }
+        if (request.getRating() != null) { series.setRating(request.getRating()); updated = true; }
+        if (request.getYear() != null) { series.setYear(request.getYear()); updated = true; }
+        if (request.getReleaseDate() != null) { series.setReleaseDate(request.getReleaseDate()); updated = true; }
+        if (request.getOriginalTitle() != null) { series.setOriginalTitle(request.getOriginalTitle()); updated = true; }
+        if (request.getStatus() != null) { series.setStatus(request.getStatus()); updated = true; }
+
+        if (updated) {
+            series.setMetadataSource("manual");
+            seriesService.saveSeries(series);
+            log.info("[Metadata] Updated series id={}: manual metadata applied", id);
+        }
+
+        // 返回完整系列详情（含剧集）
+        List<Long> videoIds = series.getVideos().stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        List<VideoDTO> episodes = series.getVideos().stream()
+                .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes)));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "获取系列详情", description = "根据ID获取系列详情，包含所有剧集。也支持独立视频ID。可通过type参数指定查询类型（series/standalone），避免ID冲突时查错。")
     public ResponseEntity<ApiResponse<SeriesDTO>> getSeriesById(

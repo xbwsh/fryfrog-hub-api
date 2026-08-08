@@ -38,6 +38,9 @@ public class SeriesListDTO {
     @Schema(description = "年份")
     private Integer year;
 
+    @Schema(description = "上映日期（精确到日）", example = "2022-04-09")
+    private String releaseDate;
+
     @Schema(description = "总季数")
     private Integer numberOfSeasons;
 
@@ -64,6 +67,7 @@ public class SeriesListDTO {
         dto.setMediaType(series.getMediaType());
         dto.setRating(series.getRating());
         dto.setYear(series.getYear());
+        dto.setReleaseDate(series.getReleaseDate());
         dto.setNumberOfSeasons(series.getNumberOfSeasons());
         dto.setTotalEpisodes(series.getTotalEpisodes());
         dto.setEpisodeCount(series.getEpisodeCount());
