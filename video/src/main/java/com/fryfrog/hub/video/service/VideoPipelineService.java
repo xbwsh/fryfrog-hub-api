@@ -1,6 +1,7 @@
 package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +28,14 @@ public class VideoPipelineService {
     private final VideoAssetService assetService;
     private final VideoRepository videoRepository;
     private final MediaLibraryService mediaLibraryService;
+    private final ScrapeProgressService progressService;
 
     private volatile ExecutorService pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+    /** 流水线进度模块前缀 */
+    public static String progressModule(Long libraryId) {
+        return "pipeline:" + (libraryId != null ? libraryId : "all");
+    }
 
     /**
      * 检查媒体库是否启用刮削整理
@@ -51,10 +58,16 @@ public class VideoPipelineService {
         log.info("[Pipeline] Starting full pipeline for: {} (libraryId={})", directoryPath, libraryId);
         long startTime = System.currentTimeMillis();
 
+        String module = progressModule(libraryId);
+        progressService.start(module, 100);
+        progressService.stage(module, "scan");
+
         // Phase 1-2: 扫描 + 批量入库（始终执行）
         List<Video> videos = scanService.scanAndSave(directoryPath, libraryId);
         if (videos.isEmpty()) {
             log.info("[Pipeline] No videos found, pipeline complete");
+            progressService.stage(module, "done");
+            progressService.finish(module);
             return;
         }
 
@@ -62,12 +75,15 @@ public class VideoPipelineService {
         boolean scrapingEnabled = isScrapingEnabled(libraryId);
         if (!scrapingEnabled) {
             log.info("[Pipeline] Scraping/organizing disabled for library {}, scan-only mode", libraryId);
+            progressService.stage(module, "done");
+            progressService.finish(module);
             long elapsed = System.currentTimeMillis() - startTime;
             log.info("[Pipeline] Pipeline complete (scan-only): {} videos in {}ms", videos.size(), elapsed);
             return;
         }
 
         // Phase 3: TMDB 刮削
+        progressService.stage(module, "scrape");
         scrapeService.batchScrapeAndBind(videos);
 
         // 重新获取视频列表（刮削后 tmdbId 等字段已更新）
@@ -78,6 +94,7 @@ public class VideoPipelineService {
         }
 
         // Phase 4: 保存演员
+        progressService.stage(module, "actors");
         for (Video video : videos) {
             if (video.getTmdbId() != null && video.getMediaType() != null) {
                 try {
@@ -92,6 +109,7 @@ public class VideoPipelineService {
         organizeService.batchOrganize(videos);
 
         // Phase 6: 资产生成
+        progressService.stage(module, "assets");
         assetService.batchGenerateAssets(videos);
 
         // Phase 7: 清理空目录
@@ -101,6 +119,8 @@ public class VideoPipelineService {
             log.debug("[Pipeline] Failed to cleanup empty dirs: {}", e.getMessage());
         }
 
+        progressService.stage(module, "done");
+        progressService.finish(module);
         long elapsed = System.currentTimeMillis() - startTime;
         log.info("[Pipeline] Full pipeline complete: {} videos in {}ms", videos.size(), elapsed);
     }

@@ -14,6 +14,9 @@ public class ScrapeProgress {
     @Schema(description = "模块名称", example = "video")
     private String module;
 
+    @Schema(description = "当前阶段", example = "scrape")
+    private String stage;
+
     @Schema(description = "是否正在刮削")
     private boolean running;
 

@@ -1,6 +1,7 @@
 package com.fryfrog.hub.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PipelineProgressDTO;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
@@ -156,6 +157,21 @@ public class MediaLibraryController {
                 .map(lib -> progressService.getProgress("scan:" + lib.getId()))
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(progressList));
+    }
+
+    @GetMapping("/{id}/pipeline-progress")
+    @Operation(summary = "获取流水线聚合进度", description = "返回指定资源库扫描+刮削+资产生成的整体进度，前端进度条用")
+    public ResponseEntity<ApiResponse<PipelineProgressDTO>> getPipelineProgress(
+            @Parameter(description = "资源库ID") @PathVariable Long id) {
+        MediaLibrary library = service.getLibraryById(id);
+        boolean scrapingEnabled = library.getEnableScraping() == null || library.getEnableScraping();
+
+        ScrapeProgress pipeline = progressService.getProgress(VideoPipelineService.progressModule(id));
+        ScrapeProgress scan = progressService.getProgress("scan:" + id);
+        ScrapeProgress scrape = progressService.getProgress("video");
+
+        return ResponseEntity.ok(ApiResponse.success(
+                PipelineProgressDTO.of(id, pipeline, scan, scrape, scrapingEnabled)));
     }
 
     private void scanLibrary(MediaLibrary library, Map<String, String> scanResult) {
