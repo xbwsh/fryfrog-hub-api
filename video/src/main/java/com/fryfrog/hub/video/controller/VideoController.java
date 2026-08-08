@@ -189,7 +189,8 @@ public class VideoController {
             Path videoDir = Paths.get(video.getFilePath()).getParent();
             if (videoDir != null) {
                 String baseName = nfoService.getBaseName(video.getFileName());
-                Path framePath = videoDir.resolve(baseName + "-frame.jpg");
+                // v2: crop 裁切无黑边；旧版 pad 生成的 -frame.jpg 缓存不再使用
+                Path framePath = videoDir.resolve(baseName + "-frame-v2.jpg");
                 if (!Files.exists(framePath)) {
                     transcodingService.extractFrame(video.getFilePath(), framePath.toString());
                 }
@@ -305,29 +306,32 @@ public class VideoController {
     }
 
     @PostMapping("/scrape/adult-only")
-    @Operation(summary = "补全成人分级信息", description = "对有 TMDB ID 但未设置 isAdult 的视频，从 TMDB 获取成人分级标记")
+    @Operation(summary = "补全成人分级信息", description = "对有 TMDB ID 但未设置 isAdult 的视频，从 TMDB 获取成人分级标记（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scrapeAdultOnly(
             @Parameter(description = "资源库ID（可选，不传则处理所有）") @RequestParam(required = false) Long libraryId) {
-        int updated = scrapeService.scrapeAdultOnly(libraryId);
+        Thread.startVirtualThread(() -> scrapeService.scrapeAdultOnly(libraryId));
         Map<String, Object> result = new java.util.HashMap<>();
-        result.put("updated", updated);
-        result.put("message", "Updated " + updated + " videos with isAdult flag");
+        result.put("status", "started");
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/scrape/supplement/{libraryId}")
-    @Operation(summary = "补充刮削资源库", description = "为指定资源库中已有 TMDB ID 的视频补充演员头像、NFO、封面等资产")
+    @Operation(summary = "补充刮削资源库", description = "为指定资源库中已有 TMDB ID 的视频补充演员头像、NFO、封面等资产（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> supplementScrape(
             @Parameter(description = "资源库ID") @PathVariable Long libraryId,
             @Parameter(description = "是否强制重新下载") @RequestParam(defaultValue = "false") boolean force) {
-        Map<String, Object> result = service.supplementScrapeByLibrary(libraryId, force);
+        Thread.startVirtualThread(() -> service.supplementScrapeByLibrary(libraryId, force));
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("status", "started");
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/scrape/progress")
-    @Operation(summary = "刮削进度", description = "返回当前视频刮削任务的进度")
-    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress() {
-        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress("video")));
+    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/supplement:{libraryId}/adult:{libraryId}，默认 video")
+    public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress(
+            @Parameter(description = "进度模块名，如 supplement:4、adult:4") @RequestParam(required = false) String module) {
+        String key = module != null && !module.isBlank() ? module : "video";
+        return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress(key)));
     }
 
     @PostMapping("/{id:\\d+}/nfo")
@@ -381,6 +385,23 @@ public class VideoController {
             fanartPath = nfoService.getFanartPath(video);
         }
         if (!Files.exists(fanartPath)) {
+            // 兜底：未刮削视频从视频本身截取横屏帧作为背景图（懒生成 + 缓存到视频同目录）
+            try {
+                if (videoDir != null) {
+                    // v2: crop 裁切无黑边；旧版 pad 生成的 -fanart-frame.jpg 缓存不再使用
+                    Path framePath = videoDir.resolve(baseName + "-fanart-frame-v2.jpg");
+                    if (!Files.exists(framePath)) {
+                        transcodingService.extractFrame(video.getFilePath(), framePath.toString(), 1920, 1080);
+                    }
+                    if (Files.exists(framePath)) {
+                        return ResponseEntity.ok()
+                                .contentType(MediaType.IMAGE_JPEG)
+                                .body(new FileSystemResource(framePath.toFile()));
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Fanart frame extraction failed for video {}: {}", id, e.getMessage());
+            }
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()

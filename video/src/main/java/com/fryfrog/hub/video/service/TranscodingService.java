@@ -172,8 +172,17 @@ public class TranscodingService {
     /**
      * 从视频中截取一帧保存为 JPG（用于未刮削视频的封面）。
      * 取视频 15% 处的一帧（避开片头黑屏），失败时返回 false。
+     * 默认竖屏尺寸 300x450。
      */
     public boolean extractFrame(String inputPath, String outputPath) {
+        return extractFrame(inputPath, outputPath, 300, 450);
+    }
+
+    /**
+     * 从视频中截取一帧保存为 JPG，可指定输出尺寸（竖屏海报或横屏背景图）。
+     * 取视频 15% 处的一帧（避开片头黑屏），失败时返回 false。
+     */
+    public boolean extractFrame(String inputPath, String outputPath, int width, int height) {
         if (!ffmpegAvailable) {
             log.debug("FFmpeg not available, skip frame extraction");
             return false;
@@ -194,7 +203,8 @@ public class TranscodingService {
             command.add("-frames:v");
             command.add("1");
             command.add("-vf");
-            command.add("scale=300:450:force_original_aspect_ratio=decrease,pad=300:450:(ow-iw)/2:(oh-ih)/2:black");
+            command.add("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d"
+                    .formatted(width, height, width, height));
             command.add("-q:v");
             command.add("2");
             command.add("-y");
