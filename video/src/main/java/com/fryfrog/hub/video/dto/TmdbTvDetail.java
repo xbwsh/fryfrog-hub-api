@@ -61,6 +61,25 @@ public class TmdbTvDetail {
     @JsonProperty("credits")
     private Credits credits;
 
+    @JsonProperty("next_episode_to_air")
+    private NextEpisode nextEpisodeToAir;
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class NextEpisode {
+        @JsonProperty("air_date")
+        private String airDate;
+
+        @JsonProperty("season_number")
+        private Integer seasonNumber;
+
+        @JsonProperty("episode_number")
+        private Integer episodeNumber;
+
+        @JsonProperty("name")
+        private String name;
+    }
+
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Credits {

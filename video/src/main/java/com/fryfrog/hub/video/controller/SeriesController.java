@@ -121,6 +121,24 @@ public class SeriesController {
         return ResponseEntity.ok(ApiResponse.success(seriesService.getSeriesGroupedByLibrary()));
     }
 
+    @GetMapping("/calendar")
+    @Operation(summary = "追更日历", description = "返回在播且有下一集播出日期的系列，按日期升序（前端可按日期渲染日历）")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getUpcomingCalendar() {
+        List<Map<String, Object>> result = seriesService.getUpcomingCalendar().stream()
+                .map(series -> {
+                    Map<String, Object> item = new java.util.LinkedHashMap<>();
+                    item.put("seriesId", series.getId());
+                    item.put("title", series.getTitle());
+                    item.put("coverUrl", "/api/v1/video/series/" + series.getId() + "/cover");
+                    item.put("fanartUrl", "/api/v1/video/series/" + series.getId() + "/fanart");
+                    item.put("nextEpisodeDate", series.getNextEpisodeDate());
+                    item.put("nextEpisodeNumber", series.getNextEpisodeNumber());
+                    return item;
+                })
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
     @PutMapping("/{id}/metadata")
     @Operation(summary = "编辑系列元数据", description = "手动修改系列的标题、简介、评分、上映日期、类型等元数据（只更新传入的非空字段）")
     public ResponseEntity<ApiResponse<SeriesDTO>> updateSeriesMetadata(

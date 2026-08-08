@@ -77,6 +77,18 @@ public class SeriesService {
         series.setNumberOfSeasons(detail.getNumberOfSeasons());
         series.setStatus(detail.getStatus());
 
+        // 下一集信息（追更日历用）
+        var next = detail.getNextEpisodeToAir();
+        if (next != null) {
+            series.setNextEpisodeDate(next.getAirDate());
+            if (next.getSeasonNumber() != null && next.getEpisodeNumber() != null) {
+                series.setNextEpisodeNumber(String.format("S%02dE%02d", next.getSeasonNumber(), next.getEpisodeNumber()));
+            }
+        } else {
+            series.setNextEpisodeDate(null);
+            series.setNextEpisodeNumber(null);
+        }
+
         return seriesRepository.save(series);
     }
 
@@ -99,6 +111,32 @@ public class SeriesService {
                 .filter(series -> series.getVideos().isEmpty() ||
                         series.getVideos().stream().anyMatch(v ->
                                 v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
+                .toList();
+    }
+
+    /**
+     * 追更日历：返回在播（Returning Series）且有下一集播出日期的系列，按日期升序
+     */
+    public List<VideoSeries> getUpcomingCalendar() {
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        java.time.LocalDate today = java.time.LocalDate.now();
+
+        return seriesRepository.findAll().stream()
+                .filter(series -> series.getVideos().isEmpty() ||
+                        series.getVideos().stream().anyMatch(v ->
+                                v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
+                .filter(series -> series.getNextEpisodeDate() != null)
+                .filter(series -> "tv".equalsIgnoreCase(series.getMediaType()))
+                .filter(series -> {
+                    try {
+                        return java.time.LocalDate.parse(series.getNextEpisodeDate()).isAfter(today.minusDays(1));
+                    } catch (Exception e) {
+                        return false;
+                    }
+                })
+                .sorted(Comparator.comparing(
+                        s -> s.getNextEpisodeDate() != null ? s.getNextEpisodeDate() : "",
+                        Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
     }
 
@@ -212,6 +250,29 @@ public class SeriesService {
     }
 
     public void saveSeries(VideoSeries series) {
+        seriesRepository.save(series);
+    }
+
+    /**
+     * 仅刷新系列的下一集信息（追更日历用），不重写其他元数据
+     */
+    public void refreshNextEpisode(Long seriesId) {
+        VideoSeries series = seriesRepository.findById(seriesId).orElse(null);
+        if (series == null || series.getTmdbId() == null) return;
+
+        TmdbTvDetail detail = tmdbService.getTvDetail(series.getTmdbId());
+        if (detail == null) return;
+
+        var next = detail.getNextEpisodeToAir();
+        if (next != null) {
+            series.setNextEpisodeDate(next.getAirDate());
+            if (next.getSeasonNumber() != null && next.getEpisodeNumber() != null) {
+                series.setNextEpisodeNumber(String.format("S%02dE%02d", next.getSeasonNumber(), next.getEpisodeNumber()));
+            }
+        } else {
+            series.setNextEpisodeDate(null);
+            series.setNextEpisodeNumber(null);
+        }
         seriesRepository.save(series);
     }
 

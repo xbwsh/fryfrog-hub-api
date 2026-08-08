@@ -82,6 +82,12 @@ public class VideoSeries extends BaseEntity {
     @Schema(description = "总集数")
     private Integer totalEpisodes;
 
+    @Schema(description = "下一集播出日期（追更日历用）", example = "2026-08-15")
+    private String nextEpisodeDate;
+
+    @Schema(description = "下一集编号（如 S02E05）", example = "S02E05")
+    private String nextEpisodeNumber;
+
     @Schema(description = "元数据目录路径")
     private String metadataDir;
 
