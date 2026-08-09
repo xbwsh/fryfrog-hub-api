@@ -3,6 +3,7 @@ package com.fryfrog.hub.video.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
@@ -74,6 +75,7 @@ public class VideoController {
     private final SeriesService seriesService;
     private final PeriodicScanScheduler scanScheduler;
     private final VideoScrapeService scrapeService;
+    private final MediaLibraryService mediaLibraryService;
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
@@ -381,6 +383,49 @@ public class VideoController {
         Thread.startVirtualThread(() -> service.supplementScrapeByLibrary(libraryId, force));
         Map<String, Object> result = new java.util.HashMap<>();
         result.put("status", "started");
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @PostMapping("/refresh-all-movie-actors")
+    @Operation(summary = "批量刷新所有电影演员", description = "异步刷新所有独立电影的演员信息（仅处理启用刮削的媒体库）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllMovieActors() {
+        // 获取启用刮削的媒体库 ID
+        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
+                .map(lib -> lib.getId())
+                .toList();
+
+        // 获取所有独立电影（不属于系列的视频）
+        List<Video> allMovies = videoRepository.findBySeriesIsNullOrderByTitleAsc();
+        List<Video> moviesWithTmdb = allMovies.stream()
+                .filter(v -> v.getTmdbId() != null && "movie".equalsIgnoreCase(v.getMediaType()))
+                .filter(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId()))
+                .toList();
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totalMovies", moviesWithTmdb.size());
+        result.put("status", "submitted");
+        result.put("message", "批量刷新电影演员任务已提交，正在后台执行");
+
+        // 异步执行批量刷新
+        Thread.startVirtualThread(() -> {
+            int completed = 0;
+            int failed = 0;
+
+            for (Video movie : moviesWithTmdb) {
+                try {
+                    assetService.saveActors(movie, movie.getMediaType(), movie.getTmdbId(), null);
+                    completed++;
+                    log.info("[Batch] Completed movie {}/{}: {}", completed, moviesWithTmdb.size(), movie.getTitle());
+                } catch (Exception e) {
+                    failed++;
+                    log.warn("[Batch] Failed movie {}: {}", movie.getTitle(), e.getMessage());
+                }
+            }
+
+            log.info("[Batch] Movie actors refresh done: {} completed, {} failed", completed, failed);
+        });
+
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
