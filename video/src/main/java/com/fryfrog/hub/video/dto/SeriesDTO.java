@@ -147,6 +147,7 @@ public class SeriesDTO {
         dto.setTitle(video.getTitle());
         dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
         dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
+        dto.setLogoUrl(video.getLogoApiUrl());
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setOverview(video.getOverview());
         dto.setMediaType(video.getMediaType());

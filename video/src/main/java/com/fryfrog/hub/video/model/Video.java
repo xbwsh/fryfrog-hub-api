@@ -99,6 +99,13 @@ public class Video extends BaseEntity {
     @Schema(description = "背景图片URL")
     private String backdropUrl;
 
+    @Schema(description = "Logo URL（TMDB，仅远程下载源）")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String logoUrl;
+
+    @Schema(description = "Logo 本地路径")
+    private String logoLocalPath;
+
     @Schema(description = "豆瓣/IMDB ID", example = "tt1454468")
     private String imdbId;
 
@@ -161,4 +168,12 @@ public class Video extends BaseEntity {
     @OneToOne(mappedBy = "video", cascade = CascadeType.REMOVE, orphanRemoval = true)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private WatchProgress watchProgress;
+
+    @com.fasterxml.jackson.annotation.JsonGetter("logoUrl")
+    public String getLogoApiUrl() {
+        if (getId() == null) return null;
+        if (logoLocalPath == null) return null;
+        if (!java.nio.file.Files.exists(java.nio.file.Paths.get(logoLocalPath))) return null;
+        return "/api/v1/video/" + getId() + "/logo";
+    }
 }

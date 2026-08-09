@@ -870,6 +870,7 @@ public class VideoScrapeService {
         video.setVoteCount(detail.getVoteCount());
         video.setPosterUrl(tmdbService.getPosterUrl(detail.getPosterPath()));
         video.setBackdropUrl(tmdbService.getBackdropUrl(detail.getBackdropPath()));
+        video.setLogoUrl(tmdbService.getMovieLogoUrl(detail.getId()));
         if (detail.getRuntime() != null) {
             video.setDurationMinutes(detail.getRuntime());
         }

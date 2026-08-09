@@ -49,7 +49,7 @@ public class TmdbService {
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
     private final Cache<Long, TmdbTvDetail> tvDetailCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
-    private final Cache<Long, TmdbTvImages> tvImagesCache = Caffeine.newBuilder()
+    private final Cache<String, TmdbTvImages> imagesCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
 
     public TmdbService(RestTemplate restTemplate) {
@@ -336,16 +336,25 @@ public class TmdbService {
      * include_image_language=null 必须是字面字符串 "null"，TMDB 才会返回所有语言的图片。
      */
     public TmdbTvImages getTvImages(Long tvId) {
+        return getImages("tv", tvId);
+    }
+
+    public TmdbTvImages getMovieImages(Long movieId) {
+        return getImages("movie", movieId);
+    }
+
+    private TmdbTvImages getImages(String mediaType, Long id) {
         if (!isConfigured()) {
             throw new IllegalStateException("TMDB API key not configured");
         }
 
-        TmdbTvImages cached = tvImagesCache.getIfPresent(tvId);
+        String cacheKey = mediaType + ":" + id;
+        TmdbTvImages cached = imagesCache.getIfPresent(cacheKey);
         if (cached != null) {
             return cached;
         }
 
-        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/images")
+        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/" + mediaType + "/" + id + "/images")
                 .queryParam("include_image_language", "null")
                 .toUriString();
 
@@ -354,11 +363,11 @@ public class TmdbService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 TmdbTvImages images = response.getBody();
-                tvImagesCache.put(tvId, images);
+                imagesCache.put(cacheKey, images);
                 return images;
             }
         } catch (Exception e) {
-            log.warn("Failed to get TV images from TMDB: tvId={}: {}", tvId, e.getMessage());
+            log.warn("Failed to get {} images from TMDB: {}: {}", mediaType, id, e.getMessage());
         }
         return null;
     }
@@ -368,7 +377,15 @@ public class TmdbService {
      * SVG 格式只能使用 original 尺寸，其他格式用配置尺寸。
      */
     public String getTvLogoUrl(Long tvId) {
-        TmdbTvImages images = getTvImages(tvId);
+        return getLogoUrl("tv", tvId);
+    }
+
+    public String getMovieLogoUrl(Long movieId) {
+        return getLogoUrl("movie", movieId);
+    }
+
+    private String getLogoUrl(String mediaType, Long id) {
+        TmdbTvImages images = getImages(mediaType, id);
         if (images == null || images.getLogos() == null || images.getLogos().isEmpty()) {
             return null;
         }

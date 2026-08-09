@@ -133,6 +133,62 @@ public class VideoAssetService {
                 log.debug("[Asset] Failed to download series covers for {}: {}", video.getTitle(), e.getMessage());
             }
         }
+
+        // 下载电影字标 logo（存到电影元数据目录）
+        if ("movie".equalsIgnoreCase(video.getMediaType())) {
+            try {
+                downloadMovieLogo(video, force);
+            } catch (Exception e) {
+                log.debug("[Asset] Failed to download movie logo for {}: {}", video.getTitle(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 下载电影字标 logo（查 TMDB → 下载到电影元数据目录 → 记录本地路径）
+     * @return true 表示成功下载并记录了本地路径；false 表示无 logo 或下载失败
+     */
+    public boolean downloadMovieLogo(Video video) {
+        return downloadMovieLogo(video, false);
+    }
+
+    /**
+     * 下载电影字标 logo（查 TMDB → 下载到电影元数据目录 → 记录本地路径）
+     * @param force true 时无视已有文件，强制重新下载
+     * @return true 表示成功下载并记录了本地路径；false 表示无 logo 或下载失败
+     */
+    public boolean downloadMovieLogo(Video video, boolean force) {
+        if (video.getTmdbId() == null) return false;
+
+        try {
+            video.setLogoUrl(tmdbService.getMovieLogoUrl(video.getTmdbId()));
+        } catch (Exception e) {
+            log.warn("[Asset] Failed to get movie logo from TMDB for {}: {}", video.getTitle(), e.getMessage());
+            return false;
+        }
+        if (video.getLogoUrl() == null) {
+            return false;
+        }
+
+        Path metadataDir = nfoService.getMetadataDir(video);
+        try {
+            Files.createDirectories(metadataDir);
+        } catch (IOException e) {
+            log.warn("[Asset] Failed to create metadata dir {}: {}", metadataDir, e.getMessage());
+            return false;
+        }
+
+        Path logoPath = metadataDir.resolve("movie-logo" + extensionOf(video.getLogoUrl()));
+        if (force || !Files.exists(logoPath)) {
+            downloadCoverImage(video.getLogoUrl(), logoPath);
+        }
+        if (Files.exists(logoPath)) {
+            video.setLogoLocalPath(logoPath.toString());
+            videoRepository.save(video);
+            log.info("[Asset] Downloaded movie logo: {}", video.getTitle());
+            return true;
+        }
+        return false;
     }
 
     /**

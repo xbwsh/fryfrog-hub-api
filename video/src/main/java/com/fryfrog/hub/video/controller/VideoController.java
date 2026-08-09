@@ -22,6 +22,7 @@ import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
+import com.fryfrog.hub.video.service.TmdbService;
 import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoAssetService;
 import com.fryfrog.hub.video.service.VideoOrganizeService;
@@ -76,6 +77,7 @@ public class VideoController {
     private final PeriodicScanScheduler scanScheduler;
     private final VideoScrapeService scrapeService;
     private final MediaLibraryService mediaLibraryService;
+    private final TmdbService tmdbService;
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
@@ -387,8 +389,7 @@ public class VideoController {
     }
 
     @PostMapping("/refresh-all-movie-actors")
-    @Operation(summary = "批量刷新所有电影演员", description = "异步刷新所有独立电影的演员信息（仅处理启用刮削的媒体库）")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllMovieActors() {
+    @Operation(summary = "批量刷新所有电影演员", description = "异步刷新所有独立电影的演员信息（仅处理启用刮削的媒体库）")    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllMovieActors() {
         // 获取启用刮削的媒体库 ID
         List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
@@ -429,10 +430,68 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
+    @PostMapping("/{id:\\d+}/refresh-logo")
+    @Operation(summary = "补全电影Logo", description = "为已绑定 TMDB 的电影从 TMDB 获取并下载字标 logo（本地已有则跳过）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshMovieLogo(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        if (video.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("视频没有 TMDB ID，无法获取 logo"));
+        }
+
+        try {
+            boolean downloaded = assetService.downloadMovieLogo(video);
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
+            result.put("videoId", id);
+            result.put("title", video.getTitle());
+            result.put("downloaded", downloaded);
+            result.put("logoUrl", video.getLogoApiUrl());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to refresh logo for {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("补全 logo 失败: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/refresh-all-movie-logos")
+    @Operation(summary = "批量补全所有电影Logo", description = "异步为所有已绑定 TMDB 的独立电影从 TMDB 获取并下载字标 logo，进度查询见 scrape/progress?module=logo:movie")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllMovieLogos() {
+        List<Video> allMovies = videoRepository.findBySeriesIsNullOrderByTitleAsc();
+        List<Video> moviesWithTmdb = allMovies.stream()
+                .filter(v -> v.getTmdbId() != null && "movie".equalsIgnoreCase(v.getMediaType()))
+                .toList();
+
+        String module = "logo:movie";
+        scrapeProgressService.start(module, moviesWithTmdb.size());
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totalMovies", moviesWithTmdb.size());
+        result.put("status", "submitted");
+        result.put("message", "批量补全电影 logo 任务已提交，正在后台执行");
+        result.put("module", module);
+
+        Thread.startVirtualThread(() -> {
+            for (Video movie : moviesWithTmdb) {
+                try {
+                    boolean ok = assetService.downloadMovieLogo(movie);
+                    scrapeProgressService.advance(module, movie.getTitle(), ok);
+                    log.info("[LogoBatch] Movie: {}", movie.getTitle());
+                } catch (Exception e) {
+                    scrapeProgressService.advance(module, movie.getTitle(), false);
+                    log.warn("[LogoBatch] Failed movie {}: {}", movie.getTitle(), e.getMessage());
+                }
+            }
+            scrapeProgressService.finish(module);
+            log.info("[LogoBatch] Movie logos done for {} movies", moviesWithTmdb.size());
+        });
+
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
     @GetMapping("/scrape/progress")
-    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/supplement:{libraryId}/adult:{libraryId}，默认 video")
+    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/supplement:{libraryId}/adult:{libraryId}/logo:series/logo:movie，默认 video")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress(
-            @Parameter(description = "进度模块名，如 supplement:4、adult:4") @RequestParam(required = false) String module) {
+            @Parameter(description = "进度模块名，如 supplement:4、adult:4、logo:series、logo:movie") @RequestParam(required = false) String module) {
         String key = module != null && !module.isBlank() ? module : "video";
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress(key)));
     }
@@ -510,6 +569,53 @@ public class VideoController {
         return ResponseEntity.ok()
                 .contentType(MediaType.IMAGE_JPEG)
                 .body(new FileSystemResource(fanartPath.toFile()));
+    }
+
+    @GetMapping("/{id:\\d+}/logo")
+    @Operation(summary = "获取电影Logo", description = "返回电影的字标 logo 图片（本地优先，远程 TMDB 兜底）")
+    public ResponseEntity<Resource> getMovieLogo(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+
+        // 优先使用本地 logo 文件
+        if (video.getLogoLocalPath() != null) {
+            Path stored = Paths.get(video.getLogoLocalPath());
+            if (Files.exists(stored)) {
+                return ResponseEntity.ok()
+                        .contentType(logoMediaType(stored.getFileName().toString()))
+                        .body(new FileSystemResource(stored.toFile()));
+            }
+        }
+
+        // 兜底：从 TMDB 远程下载
+        String logoUrl = video.getLogoUrl();
+        if (logoUrl == null && video.getTmdbId() != null) {
+            logoUrl = tmdbService.getMovieLogoUrl(video.getTmdbId());
+        }
+        if (logoUrl == null) {
+            return ResponseEntity.notFound().build();
+        }
+        try {
+            java.net.URL url = new java.net.URL(logoUrl);
+            byte[] imageBytes = url.openStream().readAllBytes();
+            return ResponseEntity.ok()
+                    .contentType(logoMediaType(logoUrl))
+                    .body(new ByteArrayResource(imageBytes));
+        } catch (Exception e) {
+            log.debug("Failed to download movie logo from TMDB: {}", e.getMessage());
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    private MediaType logoMediaType(String fileName) {
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".svg")) {
+            return MediaType.parseMediaType("image/svg+xml");
+        }
+        if (lower.endsWith(".png")) {
+            return MediaType.IMAGE_PNG;
+        }
+        return MediaType.IMAGE_JPEG;
     }
 
     /**

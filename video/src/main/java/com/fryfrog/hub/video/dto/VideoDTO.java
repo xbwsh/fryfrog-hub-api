@@ -22,6 +22,9 @@ public class VideoDTO {
     @Schema(description = "背景图URL")
     private String fanartUrl;
 
+    @Schema(description = "字标Logo URL")
+    private String logoUrl;
+
     @Schema(description = "流播放URL")
     private String streamUrl;
 
@@ -155,6 +158,7 @@ public class VideoDTO {
         dto.setTitle(video.getTitle());
         dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
         dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
+        dto.setLogoUrl(video.getLogoApiUrl());
         dto.setStreamUrl("/api/v1/video/" + video.getId() + "/stream");
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setDirector(video.getDirector());

@@ -91,6 +91,7 @@ public class SeriesListDTO {
         dto.setTitle(video.getTitle());
         dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
         dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
+        dto.setLogoUrl(video.getLogoApiUrl());
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setMediaType(video.getMediaType());
         dto.setRating(video.getRating());

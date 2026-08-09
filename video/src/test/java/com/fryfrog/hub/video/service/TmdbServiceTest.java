@@ -98,4 +98,25 @@ class TmdbServiceTest {
 
         assertThat(service.getTvLogoUrl(100L)).isNull();
     }
+
+    @Test
+    void getMovieLogoUrl_usesMovieEndpointAndReturnsUrl() {
+        TmdbTvImages images = new TmdbTvImages();
+        images.setLogos(List.of(
+                logo("/movie-ja-logo.png", ".png", "ja", 6)));
+        stubImages(images);
+
+        String url = service.getMovieLogoUrl(200L);
+
+        assertThat(url).isEqualTo("https://image.tmdb.org/t/p/w500/movie-ja-logo.png");
+    }
+
+    @Test
+    void getMovieLogoUrl_returnsNullWhenNoLogos() {
+        TmdbTvImages images = new TmdbTvImages();
+        images.setLogos(List.of());
+        stubImages(images);
+
+        assertThat(service.getMovieLogoUrl(200L)).isNull();
+    }
 }
