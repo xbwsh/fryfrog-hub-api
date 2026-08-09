@@ -427,21 +427,27 @@ public class VideoAssetService {
         if (videoDir == null) return null;
 
         if ("tv".equalsIgnoreCase(mediaType)) {
-            Path seasonDir = findSeasonDir(videoDir);
-            if (seasonDir != null) {
-                return seasonDir.resolve("actors");
+            // 电视剧：演员图片存储到系列根目录（剧名目录），而不是每季目录
+            Path seriesDir = findSeriesDir(videoDir);
+            if (seriesDir != null) {
+                return seriesDir.resolve("actors");
             }
         }
         return videoDir.resolve("actors");
     }
 
-    private Path findSeasonDir(Path episodeOrVideoDir) {
+    /**
+     * 查找系列根目录（剧名目录）
+     * 从视频目录向上查找，直到找到包含季目录的父目录
+     */
+    private Path findSeriesDir(Path episodeOrVideoDir) {
         Path current = episodeOrVideoDir;
         while (current != null) {
             if (current.getFileName() == null) break;
             String name = current.getFileName().toString();
+            // 找到季目录，返回其父目录作为系列目录
             if (java.util.regex.Pattern.matches("第 \\d+ 季", name)) {
-                return current;
+                return current.getParent();
             }
             current = current.getParent();
         }
