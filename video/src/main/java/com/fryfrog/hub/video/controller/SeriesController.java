@@ -474,6 +474,7 @@ public class SeriesController {
             result.put("refreshedSeasonPosters", refreshResult.getOrDefault("seasonPosters", 0));
             result.put("refreshedEpisodeCovers", refreshResult.getOrDefault("episodeCovers", 0));
             result.put("refreshedActors", refreshResult.getOrDefault("actors", 0));
+            result.put("cleanedOldActorsDirs", refreshResult.getOrDefault("cleanedOldActorsDirs", 0));
             result.put("totalSeasons", series.getNumberOfSeasons());
             result.put("totalEpisodes", series.getEpisodeCount());
             return ResponseEntity.ok(ApiResponse.success(result));

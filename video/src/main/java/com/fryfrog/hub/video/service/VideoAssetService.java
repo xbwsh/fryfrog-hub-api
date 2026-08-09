@@ -245,6 +245,7 @@ public class VideoAssetService {
         result.put("seasonPosters", 0);
         result.put("episodeCovers", 0);
         result.put("actors", 0);
+        result.put("cleanedOldActorsDirs", 0);
 
         if (series.getTmdbId() == null) {
             log.warn("[Asset] Cannot refresh season assets: no tmdbId for series {}", series.getTitle());
@@ -290,6 +291,18 @@ public class VideoAssetService {
                 }
             } catch (Exception e) {
                 log.warn("[Asset] Failed to refresh season {} poster: {}", seasonNumber, e.getMessage());
+            }
+
+            // 清理旧的每季 actors 目录（演员图片已移到系列根目录）
+            Path oldSeasonActorsDir = seasonDir.resolve("actors");
+            if (Files.exists(oldSeasonActorsDir)) {
+                try {
+                    deleteDirectory(oldSeasonActorsDir);
+                    result.merge("cleanedOldActorsDirs", 1, Integer::sum);
+                    log.info("[Asset] Cleaned old season actors dir: {}", oldSeasonActorsDir);
+                } catch (Exception e) {
+                    log.debug("[Asset] Failed to clean old season actors dir {}: {}", oldSeasonActorsDir, e.getMessage());
+                }
             }
 
             // 2. 刷新每集封面和演员
@@ -452,6 +465,23 @@ public class VideoAssetService {
             current = current.getParent();
         }
         return null;
+    }
+
+    /**
+     * 递归删除目录及其内容
+     */
+    private void deleteDirectory(Path dir) throws IOException {
+        if (Files.exists(dir)) {
+            Files.walk(dir)
+                    .sorted(java.util.Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException e) {
+                            log.debug("[Asset] Failed to delete: {}", path);
+                        }
+                    });
+        }
     }
 
     private void downloadCoverImage(String imageUrl, Path targetPath) {
