@@ -454,7 +454,7 @@ public class SeriesController {
     }
 
     @PostMapping("/{id}/refresh-season-covers")
-    @Operation(summary = "刷新季海报", description = "重新下载该系列所有季的海报（从 TMDB 获取季级别海报）")
+    @Operation(summary = "刷新季资源", description = "重新下载该系列所有季的资源（季海报、每集封面、演员信息）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshSeasonCovers(
             @Parameter(description = "系列ID") @PathVariable Long id) {
         VideoSeries series = seriesService.getSeriesById(id).orElse(null);
@@ -463,20 +463,23 @@ public class SeriesController {
         }
 
         if (series.getTmdbId() == null) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法获取季海报"));
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法获取资源"));
         }
 
         try {
-            int refreshed = videoAssetService.refreshSeasonCovers(series);
-            Map<String, Object> result = new java.util.HashMap<>();
+            Map<String, Integer> refreshResult = videoAssetService.refreshSeasonAssets(series);
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
             result.put("seriesId", id);
             result.put("seriesTitle", series.getTitle());
-            result.put("refreshedCount", refreshed);
+            result.put("refreshedSeasonPosters", refreshResult.getOrDefault("seasonPosters", 0));
+            result.put("refreshedEpisodeCovers", refreshResult.getOrDefault("episodeCovers", 0));
+            result.put("refreshedActors", refreshResult.getOrDefault("actors", 0));
             result.put("totalSeasons", series.getNumberOfSeasons());
+            result.put("totalEpisodes", series.getEpisodeCount());
             return ResponseEntity.ok(ApiResponse.success(result));
         } catch (Exception e) {
-            log.warn("Failed to refresh season covers for {}: {}", id, e.getMessage());
-            return ResponseEntity.internalServerError().body(ApiResponse.error("刷新季海报失败: " + e.getMessage()));
+            log.warn("Failed to refresh season assets for {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("刷新季资源失败: " + e.getMessage()));
         }
     }
 

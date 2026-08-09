@@ -236,16 +236,21 @@ public class VideoAssetService {
     }
 
     /**
-     * 刷新系列所有季的海报（强制重新下载）
-     * 用于修复之前下载错误的季海报
+     * 刷新系列所有季的资源（强制重新下载）
+     * 包括：季海报、每集封面（still_path）、演员信息
+     * 用于修复之前下载错误或缺失的资源
      */
-    public int refreshSeasonCovers(VideoSeries series) {
+    public Map<String, Integer> refreshSeasonAssets(VideoSeries series) {
+        Map<String, Integer> result = new java.util.LinkedHashMap<>();
+        result.put("seasonPosters", 0);
+        result.put("episodeCovers", 0);
+        result.put("actors", 0);
+
         if (series.getTmdbId() == null) {
-            log.warn("[Asset] Cannot refresh season covers: no tmdbId for series {}", series.getTitle());
-            return 0;
+            log.warn("[Asset] Cannot refresh season assets: no tmdbId for series {}", series.getTitle());
+            return result;
         }
 
-        int refreshed = 0;
         // 按季分组视频
         Map<Integer, List<Video>> seasonGroups = new java.util.LinkedHashMap<>();
         for (Video video : series.getVideos()) {
@@ -271,27 +276,58 @@ public class VideoAssetService {
                 continue;
             }
 
-            // 从 TMDB 获取季海报
+            // 1. 刷新季海报
             try {
                 var seasonDetail = tmdbService.getTvSeasonDetail(series.getTmdbId(), seasonNumber);
                 if (seasonDetail != null && seasonDetail.getPosterPath() != null) {
                     String posterUrl = tmdbService.getPosterUrl(seasonDetail.getPosterPath());
                     Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
-                    // 强制重新下载
                     downloadCoverImage(posterUrl, posterPath);
                     if (Files.exists(posterPath)) {
-                        refreshed++;
+                        result.merge("seasonPosters", 1, Integer::sum);
                         log.info("[Asset] Refreshed season {} poster for series: {}", seasonNumber, series.getTitle());
                     }
-                } else {
-                    log.debug("[Asset] No season {} poster on TMDB for series: {}", seasonNumber, series.getTitle());
                 }
             } catch (Exception e) {
                 log.warn("[Asset] Failed to refresh season {} poster: {}", seasonNumber, e.getMessage());
             }
+
+            // 2. 刷新每集封面和演员
+            for (Video video : videos) {
+                try {
+                    // 刷新集封面（从 TMDB 获取 still_path）
+                    if (video.getEpisodeNumber() != null) {
+                        var episodeDetail = tmdbService.getTvEpisodeDetail(
+                                series.getTmdbId(), seasonNumber, video.getEpisodeNumber());
+                        if (episodeDetail != null && episodeDetail.getStillPath() != null) {
+                            String stillUrl = tmdbService.getBackdropUrl(episodeDetail.getStillPath());
+                            video.setBackdropUrl(stillUrl);
+                            // 下载集封面
+                            Path fanartPath = nfoService.getFanartPath(video);
+                            downloadCoverImage(stillUrl, fanartPath);
+                            if (Files.exists(fanartPath)) {
+                                video.setBackdropLocalPath(fanartPath.toString());
+                                result.merge("episodeCovers", 1, Integer::sum);
+                            }
+                        }
+                    }
+
+                    // 刷新演员信息
+                    try {
+                        saveActors(video, video.getMediaType(), series.getTmdbId(), null);
+                        result.merge("actors", 1, Integer::sum);
+                    } catch (Exception e) {
+                        log.debug("[Asset] Failed to refresh actors for {}: {}", video.getTitle(), e.getMessage());
+                    }
+
+                    videoRepository.save(video);
+                } catch (Exception e) {
+                    log.warn("[Asset] Failed to refresh assets for episode {}: {}", video.getTitle(), e.getMessage());
+                }
+            }
         }
 
-        return refreshed;
+        return result;
     }
 
     /**
