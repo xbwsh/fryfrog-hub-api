@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 视频资产服务：负责 NFO 生成、封面下载、演员图片下载。
@@ -232,6 +233,65 @@ public class VideoAssetService {
         }
 
         return null;
+    }
+
+    /**
+     * 刷新系列所有季的海报（强制重新下载）
+     * 用于修复之前下载错误的季海报
+     */
+    public int refreshSeasonCovers(VideoSeries series) {
+        if (series.getTmdbId() == null) {
+            log.warn("[Asset] Cannot refresh season covers: no tmdbId for series {}", series.getTitle());
+            return 0;
+        }
+
+        int refreshed = 0;
+        // 按季分组视频
+        Map<Integer, List<Video>> seasonGroups = new java.util.LinkedHashMap<>();
+        for (Video video : series.getVideos()) {
+            int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
+            seasonGroups.computeIfAbsent(season, k -> new java.util.ArrayList<>()).add(video);
+        }
+
+        for (var entry : seasonGroups.entrySet()) {
+            int seasonNumber = entry.getKey();
+            List<Video> videos = entry.getValue();
+            if (videos.isEmpty()) continue;
+
+            // 获取该季任意一集的元数据目录
+            Video sampleVideo = videos.get(0);
+            Path metadataDir = nfoService.getMetadataDir(sampleVideo);
+            Path seasonDir = metadataDir.getParent();
+            if (seasonDir == null) continue;
+
+            try {
+                Files.createDirectories(seasonDir);
+            } catch (IOException e) {
+                log.warn("[Asset] Failed to create season dir: {}", seasonDir);
+                continue;
+            }
+
+            // 从 TMDB 获取季海报
+            try {
+                var seasonDetail = tmdbService.getTvSeasonDetail(series.getTmdbId(), seasonNumber);
+                if (seasonDetail != null && seasonDetail.getPosterPath() != null) {
+                    String posterUrl = tmdbService.getPosterUrl(seasonDetail.getPosterPath());
+                    Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
+                    // 强制重新下载
+                    downloadCoverImage(posterUrl, posterPath);
+                    if (Files.exists(posterPath)) {
+                        refreshed++;
+                        log.info("[Asset] Refreshed season {} poster for series: {}", seasonNumber, series.getTitle());
+                    }
+                } else {
+                    log.debug("[Asset] No season {} poster on TMDB for series: {}", seasonNumber, series.getTitle());
+                }
+            } catch (Exception e) {
+                log.warn("[Asset] Failed to refresh season {} poster: {}", seasonNumber, e.getMessage());
+            }
+        }
+
+        return refreshed;
     }
 
     /**

@@ -18,6 +18,7 @@ import com.fryfrog.hub.video.service.TmdbService;
 import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
+import com.fryfrog.hub.video.service.VideoAssetService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,6 +57,7 @@ public class SeriesController {
     private final MediaLibraryService mediaLibraryService;
     private final TranscodingService transcodingService;
     private final TmdbService tmdbService;
+    private final VideoAssetService videoAssetService;
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -448,6 +450,33 @@ public class SeriesController {
         } catch (Exception e) {
             log.warn("Failed to set series fanart for {}: {}", id, e.getMessage());
             return ResponseEntity.internalServerError().body(ApiResponse.error("系列背景图设置失败: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{id}/refresh-season-covers")
+    @Operation(summary = "刷新季海报", description = "重新下载该系列所有季的海报（从 TMDB 获取季级别海报）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshSeasonCovers(
+            @Parameter(description = "系列ID") @PathVariable Long id) {
+        VideoSeries series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列不存在: " + id));
+        }
+
+        if (series.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法获取季海报"));
+        }
+
+        try {
+            int refreshed = videoAssetService.refreshSeasonCovers(series);
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put("seriesId", id);
+            result.put("seriesTitle", series.getTitle());
+            result.put("refreshedCount", refreshed);
+            result.put("totalSeasons", series.getNumberOfSeasons());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to refresh season covers for {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("刷新季海报失败: " + e.getMessage()));
         }
     }
 
