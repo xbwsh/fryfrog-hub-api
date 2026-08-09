@@ -542,9 +542,9 @@ public class VideoController {
     }
 
     @GetMapping("/scrape/progress")
-    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/actors/logo:all/resolution，默认 video")
+    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/actors/logo:all/resolution/season-covers，默认 video")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress(
-            @Parameter(description = "进度模块名，如 actors、logo:all、resolution") @RequestParam(required = false) String module) {
+            @Parameter(description = "进度模块名，如 actors、logo:all、resolution、season-covers") @RequestParam(required = false) String module) {
         String key = module != null && !module.isBlank() ? module : "video";
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress(key)));
     }

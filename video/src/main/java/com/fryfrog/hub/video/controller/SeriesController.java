@@ -58,6 +58,7 @@ public class SeriesController {
     private final TranscodingService transcodingService;
     private final TmdbService tmdbService;
     private final VideoAssetService videoAssetService;
+    private final com.fryfrog.hub.common.service.ScrapeProgressService scrapeProgressService;
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -606,7 +607,7 @@ public class SeriesController {
     }
 
     @PostMapping("/refresh-all-season-covers")
-    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息（仅处理启用刮削的媒体库）")
+    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息（仅处理启用刮削的媒体库），进度查询见 scrape/progress?module=season-covers")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllSeasonCovers() {
         // 获取启用刮削的媒体库 ID
         List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
@@ -622,10 +623,14 @@ public class SeriesController {
                         .anyMatch(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId())))
                 .toList();
 
+        String module = "season-covers";
+        scrapeProgressService.start(module, seriesWithTmdb.size());
+
         Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("totalSeries", seriesWithTmdb.size());
         result.put("status", "submitted");
         result.put("message", "批量刷新任务已提交，正在后台执行");
+        result.put("module", module);
 
         // 异步执行批量刷新
         Thread.startVirtualThread(() -> {
@@ -642,13 +647,16 @@ public class SeriesController {
                     Map<String, Integer> refreshResult = videoAssetService.refreshSeasonAssets(series);
                     refreshResult.forEach((key, value) -> totals.merge(key, value, Integer::sum));
                     completed++;
+                    scrapeProgressService.advance(module, series.getTitle(), true);
                     log.info("[Batch] Completed series {}/{}: {}", completed, seriesWithTmdb.size(), series.getTitle());
                 } catch (Exception e) {
                     failed++;
+                    scrapeProgressService.advance(module, series.getTitle(), false);
                     log.warn("[Batch] Failed series {}: {}", series.getTitle(), e.getMessage());
                 }
             }
 
+            scrapeProgressService.finish(module);
             log.info("[Batch] All done: {} completed, {} failed, results: {}", completed, failed, totals);
         });
 
