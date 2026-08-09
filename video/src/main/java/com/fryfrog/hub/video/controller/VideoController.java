@@ -367,64 +367,50 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success("Rescrape started for library " + libraryId));
     }
 
-    @PostMapping("/scrape/adult-only")
-    @Operation(summary = "补全成人分级信息", description = "对有 TMDB ID 但未设置 isAdult 的视频，从 TMDB 获取成人分级标记（异步执行）")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> scrapeAdultOnly(
-            @Parameter(description = "资源库ID（可选，不传则处理所有）") @RequestParam(required = false) Long libraryId) {
-        Thread.startVirtualThread(() -> scrapeService.scrapeAdultOnly(libraryId));
-        Map<String, Object> result = new java.util.HashMap<>();
-        result.put("status", "started");
-        return ResponseEntity.ok(ApiResponse.success(result));
-    }
-
-    @PostMapping("/scrape/supplement/{libraryId}")
-    @Operation(summary = "补充刮削资源库", description = "为指定资源库中已有 TMDB ID 的视频补充演员头像、NFO、封面等资产（异步执行）")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> supplementScrape(
-            @Parameter(description = "资源库ID") @PathVariable Long libraryId,
-            @Parameter(description = "是否强制重新下载") @RequestParam(defaultValue = "false") boolean force) {
-        Thread.startVirtualThread(() -> service.supplementScrapeByLibrary(libraryId, force));
-        Map<String, Object> result = new java.util.HashMap<>();
-        result.put("status", "started");
-        return ResponseEntity.ok(ApiResponse.success(result));
-    }
-
-    @PostMapping("/refresh-all-movie-actors")
-    @Operation(summary = "批量刷新所有电影演员", description = "异步刷新所有独立电影的演员信息（仅处理启用刮削的媒体库）")    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllMovieActors() {
+    @PostMapping("/refresh-all-actors")
+    @Operation(summary = "批量刷新演员", description = "异步刷新所有开启刮削媒体库中已绑定 TMDB 的视频的演员信息（含电影和剧集），进度查询见 scrape/progress?module=actors")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllActors() {
         // 获取启用刮削的媒体库 ID
         List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
                 .map(lib -> lib.getId())
                 .toList();
 
-        // 获取所有独立电影（不属于系列的视频）
-        List<Video> allMovies = videoRepository.findBySeriesIsNullOrderByTitleAsc();
-        List<Video> moviesWithTmdb = allMovies.stream()
-                .filter(v -> v.getTmdbId() != null && "movie".equalsIgnoreCase(v.getMediaType()))
+        // 所有开启刮削媒体库中已绑定 TMDB 的视频（电影 + 剧集）
+        List<Video> videosWithTmdb = videoRepository.findAll().stream()
+                .filter(v -> v.getTmdbId() != null && v.getMediaType() != null)
                 .filter(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId()))
                 .toList();
 
+        String module = "actors";
+        scrapeProgressService.start(module, videosWithTmdb.size());
+
         Map<String, Object> result = new java.util.LinkedHashMap<>();
-        result.put("totalMovies", moviesWithTmdb.size());
+        result.put("totalVideos", videosWithTmdb.size());
         result.put("status", "submitted");
-        result.put("message", "批量刷新电影演员任务已提交，正在后台执行");
+        result.put("message", "批量刷新演员任务已提交，正在后台执行");
+        result.put("module", module);
 
         // 异步执行批量刷新
         Thread.startVirtualThread(() -> {
             int completed = 0;
             int failed = 0;
 
-            for (Video movie : moviesWithTmdb) {
+            for (Video video : videosWithTmdb) {
                 try {
-                    assetService.saveActors(movie, movie.getMediaType(), movie.getTmdbId(), null);
+                    assetService.saveActors(video, video.getMediaType(), video.getTmdbId(), null);
                     completed++;
-                    log.info("[Batch] Completed movie {}/{}: {}", completed, moviesWithTmdb.size(), movie.getTitle());
+                    scrapeProgressService.advance(module, video.getTitle(), true);
+                    log.info("[Batch] Completed {}/{}: {}", completed, videosWithTmdb.size(), video.getTitle());
                 } catch (Exception e) {
                     failed++;
-                    log.warn("[Batch] Failed movie {}: {}", movie.getTitle(), e.getMessage());
+                    scrapeProgressService.advance(module, video.getTitle(), false);
+                    log.warn("[Batch] Failed video {}: {}", video.getTitle(), e.getMessage());
                 }
             }
 
-            log.info("[Batch] Movie actors refresh done: {} completed, {} failed", completed, failed);
+            scrapeProgressService.finish(module);
+            log.info("[Batch] Actors refresh done: {} completed, {} failed", completed, failed);
         });
 
         return ResponseEntity.ok(ApiResponse.success(result));
@@ -453,24 +439,50 @@ public class VideoController {
         }
     }
 
-    @PostMapping("/refresh-all-movie-logos")
-    @Operation(summary = "批量补全所有电影Logo", description = "异步为所有已绑定 TMDB 的独立电影从 TMDB 获取并下载字标 logo，进度查询见 scrape/progress?module=logo:movie")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllMovieLogos() {
-        List<Video> allMovies = videoRepository.findBySeriesIsNullOrderByTitleAsc();
-        List<Video> moviesWithTmdb = allMovies.stream()
-                .filter(v -> v.getTmdbId() != null && "movie".equalsIgnoreCase(v.getMediaType()))
+    @PostMapping("/refresh-all-logos")
+    @Operation(summary = "批量补全所有Logo", description = "异步为所有开启刮削媒体库中已绑定 TMDB 的系列和电影从 TMDB 获取并下载字标 logo，进度查询见 scrape/progress?module=logo:all")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllLogos() {
+        // 获取启用刮削的媒体库 ID
+        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
+                .map(lib -> lib.getId())
                 .toList();
 
-        String module = "logo:movie";
-        scrapeProgressService.start(module, moviesWithTmdb.size());
+        // 开启刮削媒体库中已绑定 TMDB 的系列
+        List<com.fryfrog.hub.video.model.VideoSeries> seriesWithTmdb = seriesService.getAllSeries().stream()
+                .filter(s -> s.getTmdbId() != null)
+                .filter(s -> s.getVideos().stream()
+                        .anyMatch(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId())))
+                .toList();
+        // 开启刮削媒体库中已绑定 TMDB 的独立电影
+        List<Video> moviesWithTmdb = videoRepository.findBySeriesIsNullOrderByTitleAsc().stream()
+                .filter(v -> v.getTmdbId() != null && "movie".equalsIgnoreCase(v.getMediaType()))
+                .filter(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId()))
+                .toList();
+
+        int total = seriesWithTmdb.size() + moviesWithTmdb.size();
+        String module = "logo:all";
+        scrapeProgressService.start(module, total);
 
         Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totalSeries", seriesWithTmdb.size());
         result.put("totalMovies", moviesWithTmdb.size());
+        result.put("total", total);
         result.put("status", "submitted");
-        result.put("message", "批量补全电影 logo 任务已提交，正在后台执行");
+        result.put("message", "批量补全 logo 任务已提交，正在后台执行");
         result.put("module", module);
 
         Thread.startVirtualThread(() -> {
+            for (com.fryfrog.hub.video.model.VideoSeries series : seriesWithTmdb) {
+                try {
+                    boolean ok = assetService.downloadSeriesLogo(series);
+                    scrapeProgressService.advance(module, series.getTitle(), ok);
+                    log.info("[LogoBatch] Series: {}", series.getTitle());
+                } catch (Exception e) {
+                    scrapeProgressService.advance(module, series.getTitle(), false);
+                    log.warn("[LogoBatch] Failed series {}: {}", series.getTitle(), e.getMessage());
+                }
+            }
             for (Video movie : moviesWithTmdb) {
                 try {
                     boolean ok = assetService.downloadMovieLogo(movie);
@@ -482,7 +494,7 @@ public class VideoController {
                 }
             }
             scrapeProgressService.finish(module);
-            log.info("[LogoBatch] Movie logos done for {} movies", moviesWithTmdb.size());
+            log.info("[LogoBatch] All done: {} series, {} movies", seriesWithTmdb.size(), moviesWithTmdb.size());
         });
 
         return ResponseEntity.ok(ApiResponse.success(result));
@@ -530,9 +542,9 @@ public class VideoController {
     }
 
     @GetMapping("/scrape/progress")
-    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/supplement:{libraryId}/adult:{libraryId}/logo:series/logo:movie/resolution，默认 video")
+    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/actors/logo:all/resolution，默认 video")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress(
-            @Parameter(description = "进度模块名，如 supplement:4、adult:4、logo:series、logo:movie、resolution") @RequestParam(required = false) String module) {
+            @Parameter(description = "进度模块名，如 actors、logo:all、resolution") @RequestParam(required = false) String module) {
         String key = module != null && !module.isBlank() ? module : "video";
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress(key)));
     }

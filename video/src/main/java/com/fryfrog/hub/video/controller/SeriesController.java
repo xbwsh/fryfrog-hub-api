@@ -58,7 +58,6 @@ public class SeriesController {
     private final TranscodingService transcodingService;
     private final TmdbService tmdbService;
     private final VideoAssetService videoAssetService;
-    private final com.fryfrog.hub.common.service.ScrapeProgressService scrapeProgressService;
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -604,41 +603,6 @@ public class SeriesController {
             log.warn("Failed to refresh logo for {}: {}", id, e.getMessage());
             return ResponseEntity.internalServerError().body(ApiResponse.error("补全 logo 失败: " + e.getMessage()));
         }
-    }
-
-    @PostMapping("/refresh-all-logos")
-    @Operation(summary = "批量补全所有系列Logo", description = "异步为所有已绑定 TMDB 的系列从 TMDB 获取并下载剧集字标 logo，进度查询见 scrape/progress?module=logo:series")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllLogos() {
-        List<VideoSeries> allSeries = seriesService.getAllSeries();
-        List<VideoSeries> seriesWithTmdb = allSeries.stream()
-                .filter(s -> s.getTmdbId() != null)
-                .toList();
-
-        String module = "logo:series";
-        scrapeProgressService.start(module, seriesWithTmdb.size());
-
-        Map<String, Object> result = new java.util.LinkedHashMap<>();
-        result.put("totalSeries", seriesWithTmdb.size());
-        result.put("status", "submitted");
-        result.put("message", "批量补全 logo 任务已提交，正在后台执行");
-        result.put("module", module);
-
-        Thread.startVirtualThread(() -> {
-            for (VideoSeries series : seriesWithTmdb) {
-                try {
-                    boolean ok = videoAssetService.downloadSeriesLogo(series);
-                    scrapeProgressService.advance(module, series.getTitle(), ok);
-                    log.info("[LogoBatch] Series: {}", series.getTitle());
-                } catch (Exception e) {
-                    scrapeProgressService.advance(module, series.getTitle(), false);
-                    log.warn("[LogoBatch] Failed series {}: {}", series.getTitle(), e.getMessage());
-                }
-            }
-            scrapeProgressService.finish(module);
-            log.info("[LogoBatch] All done for {} series", seriesWithTmdb.size());
-        });
-
-        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/refresh-all-season-covers")
