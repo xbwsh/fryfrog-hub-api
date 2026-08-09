@@ -382,6 +382,41 @@ public class TmdbService {
         return getLogoUrl("movie", movieId);
     }
 
+    /**
+     * 查询电视剧所有字标选项（按投票数降序），供前端选择设置。
+     */
+    public List<com.fryfrog.hub.video.dto.LogoOption> getTvLogoOptions(Long tvId) {
+        return getLogoOptions("tv", tvId);
+    }
+
+    public List<com.fryfrog.hub.video.dto.LogoOption> getMovieLogoOptions(Long movieId) {
+        return getLogoOptions("movie", movieId);
+    }
+
+    private List<com.fryfrog.hub.video.dto.LogoOption> getLogoOptions(String mediaType, Long id) {
+        TmdbTvImages images = getImages(mediaType, id);
+        if (images == null || images.getLogos() == null || images.getLogos().isEmpty()) {
+            return List.of();
+        }
+        return images.getLogos().stream()
+                .sorted(java.util.Comparator.comparingInt(
+                        (com.fryfrog.hub.video.dto.TmdbTvImages.Logo l) ->
+                                l.getVoteCount() != null ? l.getVoteCount() : 0)
+                        .reversed())
+                .map(l -> com.fryfrog.hub.video.dto.LogoOption.from(l, buildLogoUrl(l)))
+                .toList();
+    }
+
+    /**
+     * 根据 file_path 构建 logo 完整 URL（前端选定后按此下载）。
+     */
+    public String getLogoUrlByPath(String filePath) {
+        if (filePath == null || filePath.isBlank()) return null;
+        boolean isSvg = filePath.toLowerCase().endsWith(".svg");
+        String size = isSvg ? "original" : getImageSize();
+        return IMAGE_BASE_URL + "/" + size + filePath;
+    }
+
     private String getLogoUrl(String mediaType, Long id) {
         TmdbTvImages images = getImages(mediaType, id);
         if (images == null || images.getLogos() == null || images.getLogos().isEmpty()) {

@@ -618,6 +618,45 @@ public class VideoController {
         return MediaType.IMAGE_JPEG;
     }
 
+    @GetMapping("/{id:\\d+}/logo-options")
+    @Operation(summary = "查询电影Logo选项", description = "返回该电影在 TMDB 上的所有字标 logo 选项（按投票数降序），供用户选择设置")
+    public ResponseEntity<ApiResponse<List<com.fryfrog.hub.video.dto.LogoOption>>> getMovieLogoOptions(
+            @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        if (video.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("视频没有 TMDB ID，无法查询 logo"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(tmdbService.getMovieLogoOptions(video.getTmdbId())));
+    }
+
+    @PostMapping("/{id:\\d+}/logo")
+    @Operation(summary = "设置电影Logo", description = "从查询到的 logo 选项中选一个设置（body 传 filePath）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> setMovieLogo(
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            @RequestBody com.fryfrog.hub.video.dto.LogoSelectRequest request) {
+        if (request.getFilePath() == null || request.getFilePath().isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("filePath 不能为空"));
+        }
+
+        Video video = service.getVideoById(id);
+        if (video.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("视频没有 TMDB ID，无法设置 logo"));
+        }
+
+        try {
+            boolean downloaded = assetService.downloadMovieLogo(video, request.getFilePath());
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
+            result.put("videoId", id);
+            result.put("title", video.getTitle());
+            result.put("downloaded", downloaded);
+            result.put("logoUrl", video.getLogoApiUrl());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to set logo for video {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("设置 logo 失败: " + e.getMessage()));
+        }
+    }
+
     /**
      * 截帧候选缓存目录：视频同目录下 .frames-{videoId}/
      */

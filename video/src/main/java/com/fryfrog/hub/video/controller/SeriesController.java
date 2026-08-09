@@ -450,6 +450,51 @@ public class SeriesController {
         return MediaType.IMAGE_JPEG;
     }
 
+    @GetMapping("/{id}/logo-options")
+    @Operation(summary = "查询系列Logo选项", description = "返回该系列在 TMDB 上的所有字标 logo 选项（按投票数降序），供用户选择设置")
+    public ResponseEntity<ApiResponse<List<com.fryfrog.hub.video.dto.LogoOption>>> getSeriesLogoOptions(
+            @Parameter(description = "系列ID") @PathVariable Long id) {
+        var series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列不存在: " + id));
+        }
+        if (series.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法查询 logo"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(tmdbService.getTvLogoOptions(series.getTmdbId())));
+    }
+
+    @PostMapping("/{id}/logo")
+    @Operation(summary = "设置系列Logo", description = "从查询到的 logo 选项中选一个设置（body 传 filePath）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> setSeriesLogo(
+            @Parameter(description = "系列ID") @PathVariable Long id,
+            @RequestBody com.fryfrog.hub.video.dto.LogoSelectRequest request) {
+        if (request.getFilePath() == null || request.getFilePath().isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("filePath 不能为空"));
+        }
+
+        VideoSeries series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列不存在: " + id));
+        }
+        if (series.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法设置 logo"));
+        }
+
+        try {
+            boolean downloaded = videoAssetService.downloadSeriesLogo(series, request.getFilePath());
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
+            result.put("seriesId", id);
+            result.put("seriesTitle", series.getTitle());
+            result.put("downloaded", downloaded);
+            result.put("logoUrl", series.getLogoApiUrl());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to set logo for series {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("设置 logo 失败: " + e.getMessage()));
+        }
+    }
+
     @PostMapping("/{id}/frames/select")
     @Operation(summary = "从单集截帧设置系列横屏背景图", description = "前端先调单集接口生成候选帧并预览，用户选定某集某帧后，将该帧设为系列横屏背景图")
     public ResponseEntity<ApiResponse<Map<String, Object>>> selectSeriesFanart(

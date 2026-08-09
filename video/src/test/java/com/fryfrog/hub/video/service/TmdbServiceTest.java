@@ -118,4 +118,40 @@ class TmdbServiceTest {
 
         assertThat(service.getMovieLogoUrl(200L)).isNull();
     }
+
+    @Test
+    void getTvLogoOptions_sortedByVoteCountDesc() {
+        TmdbTvImages images = new TmdbTvImages();
+        images.setLogos(List.of(
+                logo("/low.png", "en", 2),
+                logo("/high.png", "zh", 10),
+                logo("/mid.png", "ja", 5)));
+        stubImages(images);
+
+        var options = service.getTvLogoOptions(100L);
+
+        assertThat(options).hasSize(3);
+        assertThat(options.get(0).getFilePath()).isEqualTo("/high.png");
+        assertThat(options.get(1).getFilePath()).isEqualTo("/mid.png");
+        assertThat(options.get(2).getFilePath()).isEqualTo("/low.png");
+        assertThat(options.get(0).getUrl()).isEqualTo("https://image.tmdb.org/t/p/w500/high.png");
+    }
+
+    @Test
+    void getTvLogoOptions_returnsEmptyWhenNoLogos() {
+        TmdbTvImages images = new TmdbTvImages();
+        images.setLogos(List.of());
+        stubImages(images);
+
+        assertThat(service.getTvLogoOptions(100L)).isEmpty();
+    }
+
+    @Test
+    void getLogoUrlByPath_usesOriginalForSvg() {
+        assertThat(service.getLogoUrlByPath("/logo.svg"))
+                .isEqualTo("https://image.tmdb.org/t/p/original/logo.svg");
+        assertThat(service.getLogoUrlByPath("/logo.png"))
+                .isEqualTo("https://image.tmdb.org/t/p/w500/logo.png");
+        assertThat(service.getLogoUrlByPath(null)).isNull();
+    }
 }

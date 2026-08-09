@@ -160,15 +160,36 @@ public class VideoAssetService {
     public boolean downloadMovieLogo(Video video, boolean force) {
         if (video.getTmdbId() == null) return false;
 
+        String filePath = null;
         try {
-            video.setLogoUrl(tmdbService.getMovieLogoUrl(video.getTmdbId()));
+            String url = tmdbService.getMovieLogoUrl(video.getTmdbId());
+            if (url == null) return false;
+            filePath = extractFilePath(url);
         } catch (Exception e) {
             log.warn("[Asset] Failed to get movie logo from TMDB for {}: {}", video.getTitle(), e.getMessage());
             return false;
         }
-        if (video.getLogoUrl() == null) {
-            return false;
-        }
+        return downloadMovieLogo(video, filePath, force);
+    }
+
+    /**
+     * 下载电影指定 file_path 的字标 logo（前端选择设置用）
+     * @return true 表示成功下载并记录了本地路径；false 表示下载失败
+     */
+    public boolean downloadMovieLogo(Video video, String filePath) {
+        return downloadMovieLogo(video, filePath, true);
+    }
+
+    /**
+     * 下载电影指定 file_path 的字标 logo（前端选择设置用）
+     * @param force true 时无视已有文件，强制重新下载
+     * @return true 表示成功下载并记录了本地路径；false 表示下载失败
+     */
+    public boolean downloadMovieLogo(Video video, String filePath, boolean force) {
+        if (video.getTmdbId() == null || filePath == null || filePath.isBlank()) return false;
+
+        String logoUrl = tmdbService.getLogoUrlByPath(filePath);
+        if (logoUrl == null) return false;
 
         Path metadataDir = nfoService.getMetadataDir(video);
         try {
@@ -178,9 +199,10 @@ public class VideoAssetService {
             return false;
         }
 
-        Path logoPath = metadataDir.resolve("movie-logo" + extensionOf(video.getLogoUrl()));
+        video.setLogoUrl(logoUrl);
+        Path logoPath = metadataDir.resolve("movie-logo" + extensionOf(logoUrl));
         if (force || !Files.exists(logoPath)) {
-            downloadCoverImage(video.getLogoUrl(), logoPath);
+            downloadCoverImage(logoUrl, logoPath);
         }
         if (Files.exists(logoPath)) {
             video.setLogoLocalPath(logoPath.toString());
@@ -299,16 +321,27 @@ public class VideoAssetService {
      */
     public boolean downloadSeriesLogo(VideoSeries series) {
         if (series.getTmdbId() == null) return false;
-
+        String filePath = null;
         try {
-            series.setLogoUrl(tmdbService.getTvLogoUrl(series.getTmdbId()));
+            String url = tmdbService.getTvLogoUrl(series.getTmdbId());
+            if (url == null) return false;
+            filePath = extractFilePath(url);
         } catch (Exception e) {
             log.warn("[Asset] Failed to get logo from TMDB for series {}: {}", series.getTitle(), e.getMessage());
             return false;
         }
-        if (series.getLogoUrl() == null) {
-            return false;
-        }
+        return downloadSeriesLogo(series, filePath);
+    }
+
+    /**
+     * 为系列下载指定 file_path 的字标 logo（前端选择设置用）。
+     * @return true 表示成功下载并记录了本地路径；false 表示下载失败
+     */
+    public boolean downloadSeriesLogo(VideoSeries series, String filePath) {
+        if (series.getTmdbId() == null || filePath == null || filePath.isBlank()) return false;
+
+        String logoUrl = tmdbService.getLogoUrlByPath(filePath);
+        if (logoUrl == null) return false;
 
         Path seriesDir = findSeriesRootDir(series);
         if (seriesDir == null) {
@@ -322,8 +355,9 @@ public class VideoAssetService {
             return false;
         }
 
-        Path logoPath = seriesDir.resolve("tvshow-logo" + extensionOf(series.getLogoUrl()));
-        downloadCoverImage(series.getLogoUrl(), logoPath);
+        series.setLogoUrl(logoUrl);
+        Path logoPath = seriesDir.resolve("tvshow-logo" + extensionOf(logoUrl));
+        downloadCoverImage(logoUrl, logoPath);
         if (Files.exists(logoPath)) {
             series.setLogoLocalPath(logoPath.toString());
             seriesService.saveSeries(series);
@@ -331,6 +365,16 @@ public class VideoAssetService {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 从完整图片 URL 提取 TMDB file_path（如 /abc.png）
+     */
+    private String extractFilePath(String url) {
+        int query = url.indexOf('?');
+        String path = query >= 0 ? url.substring(0, query) : url;
+        int slash = path.indexOf("/", "https://".length());
+        return slash >= 0 ? path.substring(slash) : path;
     }
 
     /**
