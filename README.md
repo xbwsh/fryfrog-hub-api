@@ -27,8 +27,12 @@
 -   **封面下载** - 自动下载竖屏海报和横屏背景图
 -   **剧集管理** - 自动识别季数/集数，按系列分组
 -   **系列管理** - 独立的视频系列 API，支持系列封面和背景图
+-   **季级别海报** - 支持每季独立的封面图片
+-   **集封面** - 从 TMDB 获取每集的截图作为封面
+-   **演员管理** - 自动下载演员头像，存储在系列根目录
 -   **观看进度** - 记录播放位置，支持续播
 -   **文件监控** - 自动检测新视频文件并索引
+-   **批量刷新** - 支持批量刷新系列/电影的海报、封面和演员信息
 
 ### 通用功能 / Common Features
 
@@ -152,13 +156,16 @@ http://localhost:20058/swagger-ui.html
 | GET | `/api/v1/video/{id}` | 获取视频详情 |
 | GET | `/api/v1/video/{id}/stream` | 播放视频 |
 | GET | `/api/v1/video/{id}/cover` | 获取封面图片 |
+| GET | `/api/v1/video/{id}/fanart` | 获取背景图/集封面 |
 | PUT | `/api/v1/video/{id}/favorite` | 切换收藏状态 |
 | GET | `/api/v1/video/{id}/progress` | 获取观看进度 |
 | PUT | `/api/v1/video/{id}/progress` | 保存观看进度 |
 | GET | `/api/v1/video/tmdb/search?q=xxx` | 搜索 TMDB |
 | POST | `/api/v1/video/{id}/tmdb/bind` | 绑定 TMDB 元数据 |
+| POST | `/api/v1/video/{id}/tmdb/refresh` | 刷新单个视频 TMDB 元数据 |
 | POST | `/api/v1/video/tmdb/auto-scrape` | 自动刮削所有视频 |
 | POST | `/api/v1/video/scan?path=xxx` | 扫描视频目录 |
+| POST | `/api/v1/video/refresh-all-movie-actors` | 批量刷新所有电影演员 |
 
 ### 视频系列接口 / Video Series Endpoints
 
@@ -166,9 +173,17 @@ http://localhost:20058/swagger-ui.html
 |------|------|------|
 | GET | `/api/v1/video/series` | 获取所有系列（含独立电影） |
 | GET | `/api/v1/video/series/grouped-by-library` | 按资源库分组获取系列 |
-| GET | `/api/v1/video/series/{id}` | 获取系列详情 |
+| GET | `/api/v1/video/series/{id}` | 获取系列详情（含季封面 URL） |
 | GET | `/api/v1/video/series/{id}/cover` | 获取系列封面 |
 | GET | `/api/v1/video/series/{id}/fanart` | 获取系列背景图 |
+| GET | `/api/v1/video/series/{id}/season/{seasonNumber}/cover` | 获取季封面 |
+| POST | `/api/v1/video/series/{id}/refresh-season-covers` | 刷新单个系列的季资源 |
+| POST | `/api/v1/video/series/refresh-all-season-covers` | 批量刷新所有系列的季资源 |
+| PUT | `/api/v1/video/series/{id}/favorite` | 设置系列收藏状态 |
+| PUT | `/api/v1/video/series/{id}/metadata` | 编辑系列元数据 |
+| POST | `/api/v1/video/series/{id}/frames/select` | 设置系列背景图 |
+| GET | `/api/v1/video/series/calendar` | 追更日历 |
+| GET | `/api/v1/video/series/favorites` | 获取收藏系列列表 |
 
 ### 系统设置接口 / Settings Endpoints
 
