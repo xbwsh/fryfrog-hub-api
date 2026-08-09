@@ -68,6 +68,9 @@ public class Video extends BaseEntity {
     @Schema(description = "视频格式", example = "MKV")
     private String format;
 
+    @Schema(description = "分辨率（宽x高，按较大值在前规范化）", example = "3840x2160")
+    private String resolution;
+
     @Schema(description = "封面图片本地路径（竖屏海报）")
     private String coverArtPath;
 

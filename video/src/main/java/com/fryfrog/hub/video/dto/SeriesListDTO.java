@@ -62,6 +62,9 @@ public class SeriesListDTO {
     @Schema(description = "是否包含成人内容的集（用于隐私模式过滤）")
     private Boolean hasAdultEpisodes;
 
+    @Schema(description = "分辨率标签列表（去重，按清晰度降序）", example = "[\"4K\",\"1080p\"]")
+    private List<String> resolutions;
+
     public static SeriesListDTO fromEntity(VideoSeries series, List<Video> episodes) {
         SeriesListDTO dto = new SeriesListDTO();
         dto.setId(series.getId());
@@ -81,7 +84,31 @@ public class SeriesListDTO {
         dto.setIsAdult(series.getIsAdult());
         dto.setFavorite(series.getFavorite());
         dto.setHasAdultEpisodes(episodes.stream().anyMatch(v -> Boolean.TRUE.equals(v.getIsAdult())));
+        dto.setResolutions(collectResolutions(episodes));
         return dto;
+    }
+
+    /**
+     * 聚合分辨率标签：去重 + 按清晰度降序（4K > 2K > 1080p > 720p > 480p > 其他）
+     */
+    private static List<String> collectResolutions(List<Video> episodes) {
+        return episodes.stream()
+                .map(v -> VideoDTO.resolutionLabel(v.getResolution()))
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .sorted(java.util.Comparator.comparingInt(SeriesListDTO::resolutionRank))
+                .toList();
+    }
+
+    private static int resolutionRank(String label) {
+        return switch (label) {
+            case "4K" -> 0;
+            case "2K" -> 1;
+            case "1080p" -> 2;
+            case "720p" -> 3;
+            case "480p" -> 4;
+            default -> 5;
+        };
     }
 
     public static SeriesListDTO fromStandaloneVideo(Video video) {
@@ -102,6 +129,8 @@ public class SeriesListDTO {
         dto.setIsAdult(video.getIsAdult());
         dto.setFavorite(video.getFavorite());
         dto.setHasAdultEpisodes(Boolean.TRUE.equals(video.getIsAdult()));
+        String label = VideoDTO.resolutionLabel(video.getResolution());
+        dto.setResolutions(label != null ? List.of(label) : List.of());
         return dto;
     }
 }

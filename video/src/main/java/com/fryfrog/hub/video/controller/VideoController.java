@@ -488,10 +488,51 @@ public class VideoController {
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
+    @PostMapping("/refresh-all-resolutions")
+    @Operation(summary = "批量补全视频分辨率", description = "异步为所有缺少分辨率的视频用 ffprobe 探测并补齐，只更新 resolution 字段，进度查询见 scrape/progress?module=resolution")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllResolutions() {
+        List<Video> allVideos = videoRepository.findAll();
+        List<Video> missingResolution = allVideos.stream()
+                .filter(v -> v.getResolution() == null || v.getResolution().isBlank())
+                .toList();
+
+        String module = "resolution";
+        scrapeProgressService.start(module, missingResolution.size());
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totalVideos", allVideos.size());
+        result.put("pendingVideos", missingResolution.size());
+        result.put("status", "submitted");
+        result.put("message", "批量补全分辨率任务已提交，正在后台执行");
+        result.put("module", module);
+
+        Thread.startVirtualThread(() -> {
+            int updated = 0;
+            for (Video video : missingResolution) {
+                try {
+                    String resolution = transcodingService.probeResolution(video.getFilePath());
+                    if (resolution != null) {
+                        video.setResolution(resolution);
+                        videoRepository.save(video);
+                        updated++;
+                    }
+                    scrapeProgressService.advance(module, video.getFileName(), resolution != null);
+                } catch (Exception e) {
+                    scrapeProgressService.advance(module, video.getFileName(), false);
+                    log.warn("[Resolution] Failed video {}: {}", video.getFileName(), e.getMessage());
+                }
+            }
+            scrapeProgressService.finish(module);
+            log.info("[Resolution] Done: {} videos, {} updated", missingResolution.size(), updated);
+        });
+
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
     @GetMapping("/scrape/progress")
-    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/supplement:{libraryId}/adult:{libraryId}/logo:series/logo:movie，默认 video")
+    @Operation(summary = "刮削进度", description = "返回指定模块的刮削进度，module 可选: video/supplement:{libraryId}/adult:{libraryId}/logo:series/logo:movie/resolution，默认 video")
     public ResponseEntity<ApiResponse<ScrapeProgress>> scrapeProgress(
-            @Parameter(description = "进度模块名，如 supplement:4、adult:4、logo:series、logo:movie") @RequestParam(required = false) String module) {
+            @Parameter(description = "进度模块名，如 supplement:4、adult:4、logo:series、logo:movie、resolution") @RequestParam(required = false) String module) {
         String key = module != null && !module.isBlank() ? module : "video";
         return ResponseEntity.ok(ApiResponse.success(scrapeProgressService.getProgress(key)));
     }

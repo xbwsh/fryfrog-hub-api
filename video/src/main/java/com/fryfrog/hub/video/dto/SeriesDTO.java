@@ -98,6 +98,9 @@ public class SeriesDTO {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String backdropLocalPath;
 
+    @Schema(description = "分辨率标签列表（去重，按清晰度降序）", example = "[\"4K\",\"1080p\"]")
+    private List<String> resolutions;
+
     public static SeriesDTO fromEntity(VideoSeries series, List<VideoDTO> episodes) {
         SeriesDTO dto = new SeriesDTO();
         dto.setId(series.getId());
@@ -126,7 +129,31 @@ public class SeriesDTO {
         dto.setPosterLocalPath(series.getPosterLocalPath());
         dto.setBackdropLocalPath(series.getBackdropLocalPath());
         dto.setSeasons(groupEpisodesBySeason(series.getId(), episodes));
+        dto.setResolutions(collectResolutions(episodes));
         return dto;
+    }
+
+    /**
+     * 聚合剧集分辨率标签：去重 + 按清晰度降序（4K > 2K > 1080p > 720p > 480p > 其他）
+     */
+    private static List<String> collectResolutions(List<VideoDTO> episodes) {
+        return episodes.stream()
+                .map(VideoDTO::getResolutionLabel)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .sorted(java.util.Comparator.comparingInt(SeriesDTO::resolutionRank))
+                .toList();
+    }
+
+    private static int resolutionRank(String label) {
+        return switch (label) {
+            case "4K" -> 0;
+            case "2K" -> 1;
+            case "1080p" -> 2;
+            case "720p" -> 3;
+            case "480p" -> 4;
+            default -> 5;
+        };
     }
 
     private static List<SeasonDTO> groupEpisodesBySeason(Long seriesId, List<VideoDTO> episodes) {
@@ -164,6 +191,8 @@ public class SeriesDTO {
         dto.setPosterLocalPath(video.getCoverArtPath());
         dto.setBackdropLocalPath(video.getBackdropLocalPath());
         dto.setSeasons(List.of(SeasonDTO.of(video.getId(), 1, List.of(episode))));
+        String label = VideoDTO.resolutionLabel(video.getResolution());
+        dto.setResolutions(label != null ? List.of(label) : List.of());
         return dto;
     }
 }

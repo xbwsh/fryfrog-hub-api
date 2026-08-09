@@ -64,6 +64,12 @@ public class VideoDTO {
     @Schema(description = "视频格式", example = "MKV")
     private String format;
 
+    @Schema(description = "分辨率（宽x高）", example = "3840x2160")
+    private String resolution;
+
+    @Schema(description = "分辨率标签", example = "4K")
+    private String resolutionLabel;
+
     @Schema(description = "是否收藏")
     private Boolean favorite;
 
@@ -172,6 +178,8 @@ public class VideoDTO {
         dto.setOriginalFileName(video.getOriginalFileName());
         dto.setFileSize(video.getFileSize());
         dto.setFormat(video.getFormat());
+        dto.setResolution(video.getResolution());
+        dto.setResolutionLabel(resolutionLabel(video.getResolution()));
         dto.setFavorite(video.getFavorite());
         dto.setTmdbId(video.getTmdbId());
         dto.setMediaType(video.getMediaType());
@@ -200,5 +208,27 @@ public class VideoDTO {
             dto.setSeriesTitle(video.getSeries().getTitle());
         }
         return dto;
+    }
+
+    /**
+     * 将 "宽x高" 分辨率转为展示标签：4K / 1080p / 720p / 480p 等
+     */
+    public static String resolutionLabel(String resolution) {
+        if (resolution == null || resolution.isBlank()) return null;
+        try {
+            String[] parts = resolution.toLowerCase().split("x");
+            if (parts.length != 2) return null;
+            int width = Integer.parseInt(parts[0].trim());
+            int height = Integer.parseInt(parts[1].trim());
+            int longerSide = Math.max(width, height);
+            if (longerSide >= 3800) return "4K";
+            if (longerSide >= 2500) return "2K";
+            if (longerSide >= 1800) return "1080p";
+            if (longerSide >= 1200) return "720p";
+            if (longerSide >= 700) return "480p";
+            return height + "p";
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

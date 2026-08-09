@@ -182,6 +182,57 @@ public class TranscodingService {
     }
 
     /**
+     * 使用 ffprobe 探测视频分辨率，返回如 "3840x2160"；失败返回 null。
+     * 供扫描时填充 Video.resolution。
+     */
+    public String probeResolution(String inputPath) {
+        try {
+            String[] cmd = isWindows()
+                    ? new String[]{"cmd", "/c", ffprobePath, "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "csv=s=x:p=0",
+                    inputPath}
+                    : new String[]{ffprobePath, "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "csv=s=x:p=0",
+                    inputPath};
+
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            if (libraryDir != null) {
+                pb.environment().put(getLibraryPathEnv(), libraryDir);
+            }
+            Process p = pb.redirectErrorStream(true).start();
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes()).trim();
+            }
+
+            boolean finished = p.waitFor(5, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return null;
+            }
+
+            if (p.exitValue() == 0 && !output.isEmpty()) {
+                // 输出形如 "1920x1080"（csv=s=x:p=0 只输出值）
+                String[] parts = output.split("x");
+                if (parts.length == 2) {
+                    int width = Integer.parseInt(parts[0].trim());
+                    int height = Integer.parseInt(parts[1].trim());
+                    // 统一为 宽x高（横屏时 width>height；竖屏/旋转视频按较大值规范）
+                    return Math.max(width, height) + "x" + Math.min(width, height);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to probe resolution: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
      * 从视频中截取一帧保存为 JPG（用于未刮削视频的封面）。
      * 取视频 15% 处的一帧（避开片头黑屏），失败时返回 false。
      * 默认竖屏尺寸 300x450。
