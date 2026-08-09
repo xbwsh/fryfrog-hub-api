@@ -37,10 +37,9 @@ class TmdbServiceTest {
         ReflectionTestUtils.setField(service, "imageSize", "w500");
     }
 
-    private TmdbTvImages.Logo logo(String filePath, String fileType, String lang, int votes) {
+    private TmdbTvImages.Logo logo(String filePath, String lang, int votes) {
         TmdbTvImages.Logo l = new TmdbTvImages.Logo();
         l.setFilePath(filePath);
-        l.setFileType(fileType);
         l.setIso6391(lang);
         l.setVoteCount(votes);
         return l;
@@ -55,9 +54,9 @@ class TmdbServiceTest {
     void getTvLogoUrl_prefersConfiguredLanguage() {
         TmdbTvImages images = new TmdbTvImages();
         images.setLogos(List.of(
-                logo("/en-logo.png", ".png", "en", 10),
-                logo("/zh-logo.png", ".png", "zh", 5),
-                logo("/ja-logo.png", ".png", "ja", 8)));
+                logo("/en-logo.png", "en", 10),
+                logo("/zh-logo.png", "zh", 5),
+                logo("/ja-logo.png", "ja", 8)));
         stubImages(images);
 
         String url = service.getTvLogoUrl(100L);
@@ -69,8 +68,8 @@ class TmdbServiceTest {
     void getTvLogoUrl_fallsBackToJapaneseWhenConfiguredLanguageMissing() {
         TmdbTvImages images = new TmdbTvImages();
         images.setLogos(List.of(
-                logo("/en-logo.png", ".png", "en", 3),
-                logo("/ja-logo.png", ".png", "ja", 9)));
+                logo("/en-logo.png", "en", 3),
+                logo("/ja-logo.png", "ja", 9)));
         stubImages(images);
 
         String url = service.getTvLogoUrl(100L);
@@ -82,7 +81,7 @@ class TmdbServiceTest {
     void getTvLogoUrl_usesOriginalSizeForSvg() {
         TmdbTvImages images = new TmdbTvImages();
         images.setLogos(List.of(
-                logo("/ja-logo.svg", ".svg", "ja", 7)));
+                logo("/ja-logo.svg", "ja", 7)));
         stubImages(images);
 
         String url = service.getTvLogoUrl(100L);
@@ -103,7 +102,7 @@ class TmdbServiceTest {
     void getMovieLogoUrl_usesMovieEndpointAndReturnsUrl() {
         TmdbTvImages images = new TmdbTvImages();
         images.setLogos(List.of(
-                logo("/movie-ja-logo.png", ".png", "ja", 6)));
+                logo("/movie-ja-logo.png", "ja", 6)));
         stubImages(images);
 
         String url = service.getMovieLogoUrl(200L);

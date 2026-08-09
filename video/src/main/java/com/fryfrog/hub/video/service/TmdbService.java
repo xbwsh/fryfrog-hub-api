@@ -47,7 +47,7 @@ public class TmdbService {
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
     private final Cache<Long, TmdbMovieDetail> movieDetailCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
-    private final Cache<Long, TmdbTvDetail> tvDetailCache = Caffeine.newBuilder()
+    private final Cache<String, TmdbTvDetail> tvDetailCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
     private final Cache<String, TmdbTvImages> imagesCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
@@ -233,8 +233,7 @@ public class TmdbService {
         }
 
         String cacheKey = tvId + ":" + language;
-        TmdbTvDetail cached = tvDetailCache.getIfPresent(tvId);
-        // 缓存不分语言（快速返回），但如果缓存存在且语言不同，仍可复用
+        TmdbTvDetail cached = tvDetailCache.getIfPresent(cacheKey);
         if (cached != null) {
             return cached;
         }
@@ -250,7 +249,7 @@ public class TmdbService {
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 TmdbTvDetail detail = response.getBody();
-                tvDetailCache.put(tvId, detail);
+                tvDetailCache.put(cacheKey, detail);
                 return detail;
             }
         } catch (Exception e) {
@@ -333,7 +332,7 @@ public class TmdbService {
 
     /**
      * 获取电视剧图片资源（含剧集字标 logos）。
-     * include_image_language=null 必须是字面字符串 "null"，TMDB 才会返回所有语言的图片。
+     * 不传 language / include_image_language 参数，TMDB 默认返回所有语言的图片（含 null 无语言）。
      */
     public TmdbTvImages getTvImages(Long tvId) {
         return getImages("tv", tvId);
@@ -355,7 +354,6 @@ public class TmdbService {
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/" + mediaType + "/" + id + "/images")
-                .queryParam("include_image_language", "null")
                 .toUriString();
 
         try {
@@ -423,7 +421,8 @@ public class TmdbService {
 
     private String buildLogoUrl(TmdbTvImages.Logo logo) {
         if (logo.getFilePath() == null) return null;
-        boolean isSvg = logo.getFileType() != null && logo.getFileType().toLowerCase().contains("svg");
+        // TMDB 响应的 logo 对象没有 file_type 字段，用 file_path 扩展名判断 SVG
+        boolean isSvg = logo.getFilePath().toLowerCase().endsWith(".svg");
         String size = isSvg ? "original" : getImageSize();
         return IMAGE_BASE_URL + "/" + size + logo.getFilePath();
     }

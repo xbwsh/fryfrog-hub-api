@@ -26,9 +26,6 @@ public class TmdbTvImages {
         @JsonProperty("file_path")
         private String filePath;
 
-        @JsonProperty("file_type")
-        private String fileType;
-
         @JsonProperty("iso_639_1")
         private String iso6391;
 
