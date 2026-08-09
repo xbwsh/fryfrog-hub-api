@@ -484,6 +484,47 @@ public class SeriesController {
         }
     }
 
+    @PostMapping("/refresh-all-season-covers")
+    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllSeasonCovers() {
+        List<VideoSeries> allSeries = seriesService.getAllSeries();
+        List<VideoSeries> seriesWithTmdb = allSeries.stream()
+                .filter(s -> s.getTmdbId() != null)
+                .toList();
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totalSeries", seriesWithTmdb.size());
+        result.put("status", "submitted");
+        result.put("message", "批量刷新任务已提交，正在后台执行");
+
+        // 异步执行批量刷新
+        Thread.startVirtualThread(() -> {
+            int completed = 0;
+            int failed = 0;
+            Map<String, Integer> totals = new java.util.LinkedHashMap<>();
+            totals.put("seasonPosters", 0);
+            totals.put("episodeCovers", 0);
+            totals.put("actors", 0);
+            totals.put("cleanedOldActorsDirs", 0);
+
+            for (VideoSeries series : seriesWithTmdb) {
+                try {
+                    Map<String, Integer> refreshResult = videoAssetService.refreshSeasonAssets(series);
+                    refreshResult.forEach((key, value) -> totals.merge(key, value, Integer::sum));
+                    completed++;
+                    log.info("[Batch] Completed series {}/{}: {}", completed, seriesWithTmdb.size(), series.getTitle());
+                } catch (Exception e) {
+                    failed++;
+                    log.warn("[Batch] Failed series {}: {}", series.getTitle(), e.getMessage());
+                }
+            }
+
+            log.info("[Batch] All done: {} completed, {} failed, results: {}", completed, failed, totals);
+        });
+
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
     private ResponseEntity<Resource> generatePlaceholder(String title, int width, int height) {
         try {
             byte[] placeholder = PlaceholderImageGenerator.generate(title, width, height);
