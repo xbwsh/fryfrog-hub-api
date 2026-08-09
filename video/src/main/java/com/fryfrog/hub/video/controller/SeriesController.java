@@ -485,11 +485,20 @@ public class SeriesController {
     }
 
     @PostMapping("/refresh-all-season-covers")
-    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息")
+    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息（仅处理启用刮削的媒体库）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllSeasonCovers() {
+        // 获取启用刮削的媒体库 ID
+        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
+                .map(lib -> lib.getId())
+                .toList();
+
         List<VideoSeries> allSeries = seriesService.getAllSeries();
         List<VideoSeries> seriesWithTmdb = allSeries.stream()
                 .filter(s -> s.getTmdbId() != null)
+                // 只处理启用刮削的媒体库中的系列
+                .filter(s -> s.getVideos().stream()
+                        .anyMatch(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId())))
                 .toList();
 
         Map<String, Object> result = new java.util.LinkedHashMap<>();
