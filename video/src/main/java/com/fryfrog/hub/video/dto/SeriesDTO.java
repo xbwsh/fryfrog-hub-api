@@ -30,6 +30,9 @@ public class SeriesDTO {
     @Schema(description = "背景图URL")
     private String fanartUrl;
 
+    @Schema(description = "剧集字标Logo URL")
+    private String logoUrl;
+
     @Schema(description = "原始标题")
     private String originalTitle;
 
@@ -102,6 +105,7 @@ public class SeriesDTO {
         dto.setTitle(series.getTitle());
         dto.setCoverUrl("/api/v1/video/series/" + series.getId() + "/cover");
         dto.setFanartUrl("/api/v1/video/series/" + series.getId() + "/fanart");
+        dto.setLogoUrl(series.getLogoApiUrl());
         dto.setOriginalTitle(series.getOriginalTitle());
         dto.setOverview(series.getOverview());
         dto.setMediaType(series.getMediaType());

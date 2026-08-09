@@ -64,6 +64,13 @@ public class VideoSeries extends BaseEntity {
     @Schema(description = "背景图本地路径")
     private String backdropLocalPath;
 
+    @Schema(description = "Logo URL（TMDB，仅远程下载源）")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String logoUrl;
+
+    @Schema(description = "Logo 本地路径")
+    private String logoLocalPath;
+
     @Schema(description = "元数据来源")
     private String metadataSource;
 
@@ -113,5 +120,13 @@ public class VideoSeries extends BaseEntity {
     public String getFanartUrl() {
         if (getId() == null) return null;
         return "/api/v1/video/series/" + getId() + "/fanart";
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("logoUrl")
+    public String getLogoApiUrl() {
+        if (getId() == null) return null;
+        if (logoLocalPath == null) return null;
+        if (!java.nio.file.Files.exists(java.nio.file.Paths.get(logoLocalPath))) return null;
+        return "/api/v1/video/series/" + getId() + "/logo";
     }
 }

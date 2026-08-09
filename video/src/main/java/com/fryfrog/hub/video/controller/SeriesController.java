@@ -399,6 +399,56 @@ public class SeriesController {
         }
     }
 
+    @GetMapping("/{id}/logo")
+    @Operation(summary = "获取系列Logo", description = "返回系列的剧集字标图片（本地优先，远程 TMDB 兜底）")
+    public ResponseEntity<Resource> getSeriesLogo(
+            @Parameter(description = "系列ID") @PathVariable Long id) {
+        var series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // 优先使用本地 logo 文件
+        if (series.getLogoLocalPath() != null) {
+            Path localPath = Paths.get(series.getLogoLocalPath());
+            if (Files.exists(localPath)) {
+                return ResponseEntity.ok()
+                        .contentType(logoMediaType(localPath.getFileName().toString()))
+                        .body(new FileSystemResource(localPath.toFile()));
+            }
+        }
+
+        // 兜底：从 TMDB 远程下载
+        String logoUrl = series.getLogoUrl();
+        if (logoUrl == null && series.getTmdbId() != null) {
+            logoUrl = tmdbService.getTvLogoUrl(series.getTmdbId());
+        }
+        if (logoUrl == null) {
+            return ResponseEntity.notFound().build();
+        }
+        try {
+            java.net.URL url = new java.net.URL(logoUrl);
+            byte[] imageBytes = url.openStream().readAllBytes();
+            return ResponseEntity.ok()
+                    .contentType(logoMediaType(logoUrl))
+                    .body(new ByteArrayResource(imageBytes));
+        } catch (Exception e) {
+            log.debug("Failed to download series logo from TMDB: {}", e.getMessage());
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    private MediaType logoMediaType(String fileName) {
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".svg")) {
+            return MediaType.parseMediaType("image/svg+xml");
+        }
+        if (lower.endsWith(".png")) {
+            return MediaType.IMAGE_PNG;
+        }
+        return MediaType.IMAGE_JPEG;
+    }
+
     @PostMapping("/{id}/frames/select")
     @Operation(summary = "从单集截帧设置系列横屏背景图", description = "前端先调单集接口生成候选帧并预览，用户选定某集某帧后，将该帧设为系列横屏背景图")
     public ResponseEntity<ApiResponse<Map<String, Object>>> selectSeriesFanart(
@@ -484,9 +534,70 @@ public class SeriesController {
         }
     }
 
+    @PostMapping("/{id}/refresh-logo")
+    @Operation(summary = "补全系列Logo", description = "为已绑定 TMDB 的系列从 TMDB 获取并下载剧集字标 logo（本地已有则跳过）")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshSeriesLogo(
+            @Parameter(description = "系列ID") @PathVariable Long id) {
+        VideoSeries series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列不存在: " + id));
+        }
+        if (series.getTmdbId() == null) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法获取 logo"));
+        }
+
+        try {
+            boolean downloaded = videoAssetService.downloadSeriesLogo(series);
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
+            result.put("seriesId", id);
+            result.put("seriesTitle", series.getTitle());
+            result.put("downloaded", downloaded);
+            result.put("logoUrl", series.getLogoApiUrl());
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            log.warn("Failed to refresh logo for {}: {}", id, e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("补全 logo 失败: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/refresh-all-logos")
+    @Operation(summary = "批量补全所有系列Logo", description = "异步为所有已绑定 TMDB 的系列从 TMDB 获取并下载剧集字标 logo")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllLogos() {
+        List<VideoSeries> allSeries = seriesService.getAllSeries();
+        List<VideoSeries> seriesWithTmdb = allSeries.stream()
+                .filter(s -> s.getTmdbId() != null)
+                .toList();
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totalSeries", seriesWithTmdb.size());
+        result.put("status", "submitted");
+        result.put("message", "批量补全 logo 任务已提交，正在后台执行");
+
+        Thread.startVirtualThread(() -> {
+            int downloaded = 0;
+            int skipped = 0;
+            int failed = 0;
+            for (VideoSeries series : seriesWithTmdb) {
+                try {
+                    if (videoAssetService.downloadSeriesLogo(series)) {
+                        downloaded++;
+                    } else {
+                        skipped++;
+                    }
+                    log.info("[LogoBatch] Series {}/{}: {}", downloaded + skipped + failed, seriesWithTmdb.size(), series.getTitle());
+                } catch (Exception e) {
+                    failed++;
+                    log.warn("[LogoBatch] Failed series {}: {}", series.getTitle(), e.getMessage());
+                }
+            }
+            log.info("[LogoBatch] All done: {} downloaded, {} skipped, {} failed", downloaded, skipped, failed);
+        });
+
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
     @PostMapping("/refresh-all-season-covers")
-    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息（仅处理启用刮削的媒体库）")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllSeasonCovers() {
+    @Operation(summary = "批量刷新所有系列季资源", description = "异步刷新所有系列的季海报、集封面和演员信息（仅处理启用刮削的媒体库）")    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllSeasonCovers() {
         // 获取启用刮削的媒体库 ID
         List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))

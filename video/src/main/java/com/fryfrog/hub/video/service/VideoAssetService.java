@@ -202,9 +202,93 @@ public class VideoAssetService {
             }
         }
 
+        // 下载剧集字标 logo（存到剧名目录）
+        if (series.getLogoUrl() != null) {
+            Path seriesDir = seasonDir.getParent();
+            if (seriesDir != null) {
+                Path logoPath = seriesDir.resolve("tvshow-logo" + extensionOf(series.getLogoUrl()));
+                if (force || !Files.exists(logoPath)) {
+                    downloadCoverImage(series.getLogoUrl(), logoPath);
+                }
+                if (Files.exists(logoPath) && (force || series.getLogoLocalPath() == null)) {
+                    series.setLogoLocalPath(logoPath.toString());
+                    updated = true;
+                }
+            }
+        }
+
         if (updated) {
             seriesService.saveSeries(series);
         }
+    }
+
+    /**
+     * 从图片 URL 推断文件扩展名（含点），默认 .png
+     */
+    private String extensionOf(String url) {
+        int query = url.indexOf('?');
+        String path = query >= 0 ? url.substring(0, query) : url;
+        int dot = path.lastIndexOf('.');
+        if (dot >= 0 && dot < path.length() - 1) {
+            String ext = path.substring(dot);
+            if (ext.matches("\\.[a-zA-Z0-9]{2,5}")) return ext;
+        }
+        return ".png";
+    }
+
+    /**
+     * 为系列下载剧集字标 logo（查 TMDB → 下载到剧名目录 → 记录本地路径）。
+     * 供绑定后资产生成和"补 logo"接口复用。
+     * @return true 表示成功下载并记录了本地路径；false 表示无 logo 或下载失败
+     */
+    public boolean downloadSeriesLogo(VideoSeries series) {
+        if (series.getTmdbId() == null) return false;
+
+        try {
+            series.setLogoUrl(tmdbService.getTvLogoUrl(series.getTmdbId()));
+        } catch (Exception e) {
+            log.warn("[Asset] Failed to get logo from TMDB for series {}: {}", series.getTitle(), e.getMessage());
+            return false;
+        }
+        if (series.getLogoUrl() == null) {
+            return false;
+        }
+
+        Path seriesDir = findSeriesRootDir(series);
+        if (seriesDir == null) {
+            log.debug("[Asset] Cannot locate series root dir for logo: {}", series.getTitle());
+            return false;
+        }
+        try {
+            Files.createDirectories(seriesDir);
+        } catch (IOException e) {
+            log.warn("[Asset] Failed to create series dir {}: {}", seriesDir, e.getMessage());
+            return false;
+        }
+
+        Path logoPath = seriesDir.resolve("tvshow-logo" + extensionOf(series.getLogoUrl()));
+        downloadCoverImage(series.getLogoUrl(), logoPath);
+        if (Files.exists(logoPath)) {
+            series.setLogoLocalPath(logoPath.toString());
+            seriesService.saveSeries(series);
+            log.info("[Asset] Downloaded logo for series: {}", series.getTitle());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 查找系列根目录（剧名目录）：从系列任一视频的季目录向上取父目录
+     */
+    private Path findSeriesRootDir(VideoSeries series) {
+        for (Video video : series.getVideos()) {
+            if (video.getFilePath() == null) continue;
+            Path seasonDir = nfoService.getSeasonDir(video);
+            if (seasonDir != null && seasonDir.getParent() != null) {
+                return seasonDir.getParent();
+            }
+        }
+        return null;
     }
 
     /**
@@ -246,10 +330,21 @@ public class VideoAssetService {
         result.put("episodeCovers", 0);
         result.put("actors", 0);
         result.put("cleanedOldActorsDirs", 0);
+        result.put("logos", 0);
 
         if (series.getTmdbId() == null) {
             log.warn("[Asset] Cannot refresh season assets: no tmdbId for series {}", series.getTitle());
             return result;
+        }
+
+        // 刷新系列剧集字标 logo（剧名目录）
+        try {
+            if (downloadSeriesLogo(series)) {
+                result.merge("logos", 1, Integer::sum);
+                log.info("[Asset] Refreshed logo for series: {}", series.getTitle());
+            }
+        } catch (Exception e) {
+            log.warn("[Asset] Failed to refresh logo for series {}: {}", series.getTitle(), e.getMessage());
         }
 
         // 按季分组视频
@@ -338,6 +433,10 @@ public class VideoAssetService {
                     log.warn("[Asset] Failed to refresh assets for episode {}: {}", video.getTitle(), e.getMessage());
                 }
             }
+        }
+
+        if (series.getLogoLocalPath() != null) {
+            seriesService.saveSeries(series);
         }
 
         return result;

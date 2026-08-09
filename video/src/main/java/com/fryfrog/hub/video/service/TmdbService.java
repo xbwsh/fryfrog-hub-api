@@ -5,6 +5,7 @@ import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.TmdbSeasonDetail;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
+import com.fryfrog.hub.video.dto.TmdbTvImages;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +48,8 @@ public class TmdbService {
     private final Cache<Long, TmdbMovieDetail> movieDetailCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
     private final Cache<Long, TmdbTvDetail> tvDetailCache = Caffeine.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES).build();
+    private final Cache<Long, TmdbTvImages> tvImagesCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
 
     public TmdbService(RestTemplate restTemplate) {
@@ -326,5 +329,85 @@ public class TmdbService {
     public String getBackdropUrl(String backdropPath) {
         if (backdropPath == null) return null;
         return IMAGE_BASE_URL + "/" + getImageSize() + backdropPath;
+    }
+
+    /**
+     * 获取电视剧图片资源（含剧集字标 logos）。
+     * include_image_language=null 必须是字面字符串 "null"，TMDB 才会返回所有语言的图片。
+     */
+    public TmdbTvImages getTvImages(Long tvId) {
+        if (!isConfigured()) {
+            throw new IllegalStateException("TMDB API key not configured");
+        }
+
+        TmdbTvImages cached = tvImagesCache.getIfPresent(tvId);
+        if (cached != null) {
+            return cached;
+        }
+
+        String url = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/images")
+                .queryParam("include_image_language", "null")
+                .toUriString();
+
+        try {
+            ResponseEntity<TmdbTvImages> response = getForEntity(url, TmdbTvImages.class);
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                TmdbTvImages images = response.getBody();
+                tvImagesCache.put(tvId, images);
+                return images;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get TV images from TMDB: tvId={}: {}", tvId, e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * 获取电视剧剧集字标 URL。语言优先级：配置语言 → 日文 → 英文 → 任意，同语言内按投票数取最高。
+     * SVG 格式只能使用 original 尺寸，其他格式用配置尺寸。
+     */
+    public String getTvLogoUrl(Long tvId) {
+        TmdbTvImages images = getTvImages(tvId);
+        if (images == null || images.getLogos() == null || images.getLogos().isEmpty()) {
+            return null;
+        }
+
+        List<String> languagePrefs = new java.util.ArrayList<>();
+        String lang = getLanguage();
+        if (lang != null && !lang.isBlank()) {
+            languagePrefs.add(lang);
+            // 兼容 "zh-CN" -> "zh" 这类前缀语言
+            int dash = lang.indexOf('-');
+            if (dash > 0) {
+                languagePrefs.add(lang.substring(0, dash));
+            }
+        }
+        languagePrefs.add("ja");
+        languagePrefs.add("en");
+
+        for (String pref : languagePrefs) {
+            TmdbTvImages.Logo best = images.getLogos().stream()
+                    .filter(l -> pref.equalsIgnoreCase(l.getIso6391()))
+                    .max(java.util.Comparator.comparingInt(
+                            l -> l.getVoteCount() != null ? l.getVoteCount() : 0))
+                    .orElse(null);
+            if (best != null) {
+                return buildLogoUrl(best);
+            }
+        }
+
+        // 任意语言兜底
+        return images.getLogos().stream()
+                .max(java.util.Comparator.comparingInt(l -> l.getVoteCount() != null ? l.getVoteCount() : 0))
+                .map(this::buildLogoUrl)
+                .orElse(null);
+    }
+
+    private String buildLogoUrl(TmdbTvImages.Logo logo) {
+        if (logo.getFilePath() == null) return null;
+        boolean isSvg = logo.getFileType() != null && logo.getFileType().toLowerCase().contains("svg");
+        String size = isSvg ? "original" : getImageSize();
+        return IMAGE_BASE_URL + "/" + size + logo.getFilePath();
     }
 }
