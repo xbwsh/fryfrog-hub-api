@@ -12,13 +12,23 @@ public class SeasonDTO {
     @Schema(description = "季数")
     private Integer seasonNumber;
 
+    @Schema(description = "季封面URL")
+    private String coverUrl;
+
     @Schema(description = "该季的剧集列表")
     private List<VideoDTO> episodes;
 
     public static SeasonDTO of(Integer seasonNumber, List<VideoDTO> episodes) {
+        return of(null, seasonNumber, episodes);
+    }
+
+    public static SeasonDTO of(Long seriesId, Integer seasonNumber, List<VideoDTO> episodes) {
         SeasonDTO dto = new SeasonDTO();
         dto.setSeasonNumber(seasonNumber);
         dto.setEpisodes(episodes);
+        if (seriesId != null) {
+            dto.setCoverUrl("/api/v1/video/series/" + seriesId + "/season/" + seasonNumber + "/cover");
+        }
         return dto;
     }
 }

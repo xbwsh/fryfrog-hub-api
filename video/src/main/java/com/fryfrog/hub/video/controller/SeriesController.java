@@ -14,6 +14,7 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
+import com.fryfrog.hub.video.service.TmdbService;
 import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
@@ -54,6 +55,7 @@ public class SeriesController {
     private final WatchProgressService watchProgressService;
     private final MediaLibraryService mediaLibraryService;
     private final TranscodingService transcodingService;
+    private final TmdbService tmdbService;
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -280,6 +282,56 @@ public class SeriesController {
         } catch (Exception e) {
             return generatePlaceholder(title, 300, 450);
         }
+    }
+
+    @GetMapping("/{id}/season/{seasonNumber}/cover")
+    @Operation(summary = "获取季封面", description = "返回指定季的竖屏封面图片")
+    public ResponseEntity<Resource> getSeasonCover(
+            @Parameter(description = "系列ID") @PathVariable Long id,
+            @Parameter(description = "季数") @PathVariable Integer seasonNumber) {
+        var series = seriesService.getSeriesById(id).orElse(null);
+        if (series == null) {
+            return generatePlaceholder("Unknown", 300, 450);
+        }
+
+        // 查找该季的任意一集，用于定位季目录
+        var seasonVideo = series.getVideos().stream()
+                .filter(v -> seasonNumber.equals(v.getSeasonNumber()))
+                .findFirst()
+                .orElse(null);
+
+        if (seasonVideo != null) {
+            Path seasonDir = nfoService.getSeasonDir(seasonVideo);
+            if (seasonDir != null) {
+                // 检查本地季封面文件
+                Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
+                if (Files.exists(posterPath)) {
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new FileSystemResource(posterPath.toFile()));
+                }
+            }
+        }
+
+        // 兜底：从 TMDB 获取季海报
+        if (series.getTmdbId() != null) {
+            try {
+                var seasonDetail = tmdbService.getTvSeasonDetail(series.getTmdbId(), seasonNumber);
+                if (seasonDetail != null && seasonDetail.getPosterPath() != null) {
+                    String posterUrl = tmdbService.getPosterUrl(seasonDetail.getPosterPath());
+                    java.net.URL url = new java.net.URL(posterUrl);
+                    byte[] imageBytes = url.openStream().readAllBytes();
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.IMAGE_JPEG)
+                            .body(new ByteArrayResource(imageBytes));
+                }
+            } catch (Exception e) {
+                log.debug("Failed to get season poster from TMDB: {}", e.getMessage());
+            }
+        }
+
+        // 最终兜底：返回系列封面
+        return getSeriesCover(id);
     }
 
     @GetMapping("/{id}/fanart")

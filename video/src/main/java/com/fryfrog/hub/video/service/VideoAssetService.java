@@ -143,6 +143,7 @@ public class VideoAssetService {
 
     /**
      * 下载系列封面到剧名目录（tvshow-poster.jpg, tvshow-fanart.jpg）
+     * 对于电视剧，会尝试从 TMDB 获取季级别海报
      * @param force true 时无视已有文件，强制重新下载
      */
     public void downloadSeriesCovers(VideoSeries series, Path episodeMetadataDir, boolean force) {
@@ -158,13 +159,29 @@ public class VideoAssetService {
             return;
         }
 
+        // 尝试获取季级别海报
+        String seasonPosterUrl = null;
+        Integer seasonNumber = extractSeasonNumber(seasonDir);
+        if (seasonNumber != null && series.getTmdbId() != null) {
+            try {
+                var seasonDetail = tmdbService.getTvSeasonDetail(series.getTmdbId(), seasonNumber);
+                if (seasonDetail != null && seasonDetail.getPosterPath() != null) {
+                    seasonPosterUrl = tmdbService.getPosterUrl(seasonDetail.getPosterPath());
+                    log.debug("[Asset] Got season {} poster from TMDB: {}", seasonNumber, seasonPosterUrl);
+                }
+            } catch (Exception e) {
+                log.debug("[Asset] Failed to get season poster from TMDB: {}", e.getMessage());
+            }
+        }
+
         boolean updated = false;
 
-        // 下载系列海报
-        if (series.getPosterUrl() != null) {
+        // 下载海报（优先使用季级别海报，兜底用系列海报）
+        String posterUrl = seasonPosterUrl != null ? seasonPosterUrl : series.getPosterUrl();
+        if (posterUrl != null) {
             Path posterPath = seasonDir.resolve("tvshow-poster.jpg");
             if (force || !Files.exists(posterPath)) {
-                downloadCoverImage(series.getPosterUrl(), posterPath);
+                downloadCoverImage(posterUrl, posterPath);
             }
             if (Files.exists(posterPath) && (force || series.getPosterLocalPath() == null)) {
                 series.setPosterLocalPath(posterPath.toString());
@@ -172,7 +189,7 @@ public class VideoAssetService {
             }
         }
 
-        // 下载系列背景图
+        // 下载背景图（背景图通常使用系列级别的）
         if (series.getBackdropUrl() != null) {
             Path fanartPath = seasonDir.resolve("tvshow-fanart.jpg");
             if (force || !Files.exists(fanartPath)) {
@@ -187,6 +204,34 @@ public class VideoAssetService {
         if (updated) {
             seriesService.saveSeries(series);
         }
+    }
+
+    /**
+     * 从季目录路径中提取季号（支持 "第 1 季"、"Season 1"、"S01" 等格式）
+     */
+    private Integer extractSeasonNumber(Path seasonDir) {
+        if (seasonDir == null || seasonDir.getFileName() == null) return null;
+        String dirName = seasonDir.getFileName().toString();
+
+        // 匹配 "第 1 季" 格式
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("第 (\\d+) 季").matcher(dirName);
+        if (matcher.find()) {
+            return Integer.parseInt(matcher.group(1));
+        }
+
+        // 匹配 "Season 1" 或 "season 1" 格式
+        matcher = java.util.regex.Pattern.compile("[Ss]eason\\s*(\\d+)").matcher(dirName);
+        if (matcher.find()) {
+            return Integer.parseInt(matcher.group(1));
+        }
+
+        // 匹配 "S01" 格式
+        matcher = java.util.regex.Pattern.compile("[Ss](\\d+)").matcher(dirName);
+        if (matcher.find()) {
+            return Integer.parseInt(matcher.group(1));
+        }
+
+        return null;
     }
 
     /**

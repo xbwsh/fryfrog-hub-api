@@ -121,18 +121,18 @@ public class SeriesDTO {
         dto.setMetadataDir(series.getMetadataDir());
         dto.setPosterLocalPath(series.getPosterLocalPath());
         dto.setBackdropLocalPath(series.getBackdropLocalPath());
-        dto.setSeasons(groupEpisodesBySeason(episodes));
+        dto.setSeasons(groupEpisodesBySeason(series.getId(), episodes));
         return dto;
     }
 
-    private static List<SeasonDTO> groupEpisodesBySeason(List<VideoDTO> episodes) {
+    private static List<SeasonDTO> groupEpisodesBySeason(Long seriesId, List<VideoDTO> episodes) {
         Map<Integer, List<VideoDTO>> grouped = new LinkedHashMap<>();
         for (VideoDTO ep : episodes) {
             int season = ep.getSeasonNumber() != null ? ep.getSeasonNumber() : 1;
             grouped.computeIfAbsent(season, k -> new ArrayList<>()).add(ep);
         }
         return grouped.entrySet().stream()
-                .map(e -> SeasonDTO.of(e.getKey(), e.getValue()))
+                .map(e -> SeasonDTO.of(seriesId, e.getKey(), e.getValue()))
                 .toList();
     }
 
@@ -158,7 +158,7 @@ public class SeriesDTO {
         dto.setStatus(video.getStatus());
         dto.setPosterLocalPath(video.getCoverArtPath());
         dto.setBackdropLocalPath(video.getBackdropLocalPath());
-        dto.setSeasons(List.of(SeasonDTO.of(1, List.of(episode))));
+        dto.setSeasons(List.of(SeasonDTO.of(video.getId(), 1, List.of(episode))));
         return dto;
     }
 }

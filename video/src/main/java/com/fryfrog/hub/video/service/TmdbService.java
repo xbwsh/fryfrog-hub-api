@@ -3,6 +3,7 @@ package com.fryfrog.hub.video.service;
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
+import com.fryfrog.hub.video.dto.TmdbSeasonDetail;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -251,6 +252,37 @@ public class TmdbService {
             }
         } catch (Exception e) {
             log.error("Failed to get TV detail from TMDB: {}", e.getMessage(), e);
+        }
+        return null;
+    }
+
+    public TmdbSeasonDetail getTvSeasonDetail(Long tvId, Integer seasonNumber) {
+        return getTvSeasonDetail(tvId, seasonNumber, getLanguage());
+    }
+
+    /**
+     * 获取电视剧季详情，可指定语言。language 为 null 时不传 language 参数。
+     */
+    public TmdbSeasonDetail getTvSeasonDetail(Long tvId, Integer seasonNumber, String language) {
+        if (!isConfigured()) {
+            throw new IllegalStateException("TMDB API key not configured");
+        }
+
+        String url = addLanguageParam(
+                UriComponentsBuilder.fromHttpUrl(BASE_URL + "/tv/" + tvId + "/season/" + seasonNumber),
+                language)
+                .toUriString();
+
+        try {
+            ResponseEntity<TmdbSeasonDetail> response = getForEntity(url, TmdbSeasonDetail.class);
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                return response.getBody();
+            }
+        } catch (HttpClientErrorException.NotFound e) {
+            log.debug("TV season not found on TMDB: tvId={}, season={}", tvId, seasonNumber);
+        } catch (Exception e) {
+            log.warn("Failed to get TV season detail from TMDB: tvId={}, season={}: {}", tvId, seasonNumber, e.getMessage());
         }
         return null;
     }
