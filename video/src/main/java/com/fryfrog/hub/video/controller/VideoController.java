@@ -929,7 +929,9 @@ public class VideoController {
                         Map<String, String> entry = new java.util.LinkedHashMap<>();
                         entry.put("filename", name);
                         entry.put("language", lang);
-                        entry.put("url", "/api/v1/video/" + id + "/subtitles/" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8));
+                        // URLEncoder 把空格编成 '+'，但 @PathVariable 解码时不把 '+' 当空格（客户端 404），
+                        // 必须替换为 %20；字面 '+' 会被编码为 %2B 不受影响
+                        entry.put("url", "/api/v1/video/" + id + "/subtitles/" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
                         subtitles.add(entry);
                     });
         } catch (Exception e) {
