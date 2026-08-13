@@ -174,6 +174,26 @@ public class MediaLibraryService {
                 .toList();
     }
 
+    /**
+     * 当前请求是否为「受限用户」：普通账号（非 ADMIN、非匿名、有 Web 请求）。
+     * 受限用户只能看到被分配库内的内容，libraryId 为空的游离内容一律不可见。
+     */
+    public boolean isRestrictedCurrentUser() {
+        Long userId = UserContext.currentUserIdOrNull();
+        return isRestrictedUser(userId);
+    }
+
+    /** 指定用户是否为受限用户：普通账号（非 ADMIN、非匿名）。 */
+    public boolean isRestrictedUser(Long userId) {
+        return userId != null && userId != UserContext.ANONYMOUS_ID && !userService.isAdmin(userId);
+    }
+
+    /** 当前用户是否可访问某媒体库（受限用户必须已授权且库已启用）。 */
+    public boolean isVisibleToCurrentUser(Long libraryId) {
+        if (!isRestrictedCurrentUser()) return true;
+        return libraryId != null && getAllowableLibraryIds().contains(libraryId);
+    }
+
     /** 管理员为指定用户分配可访问的媒体库（幂等替换）。 */
     @Transactional
     public void assignLibraries(Long userId, List<Long> libraryIds) {

@@ -77,8 +77,10 @@ public class VideoService {
     // ==================== 视频查询 ====================
 
     public List<Video> getAllVideos() {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
-        return repository.findAllByEnabledLibraries(allowedIds);
+        if (mediaLibraryService.isRestrictedCurrentUser()) {
+            return repository.findAllByAllowedLibraries(mediaLibraryService.getAllowableLibraryIds());
+        }
+        return repository.findAllByEnabledLibraries(mediaLibraryService.getEnabledLibraryIds());
     }
 
     public Video getVideoById(Long id) {
@@ -87,24 +89,34 @@ public class VideoService {
     }
 
     public List<Video> searchByTitle(String title) {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
-        return repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, allowedIds);
+        if (mediaLibraryService.isRestrictedCurrentUser()) {
+            return repository.findByTitleContainingIgnoreCaseAndAllowedLibraries(title, mediaLibraryService.getAllowableLibraryIds());
+        }
+        return repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, mediaLibraryService.getEnabledLibraryIds());
     }
 
     public List<Video> searchByDirector(String director) {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
-        return repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, allowedIds);
+        if (mediaLibraryService.isRestrictedCurrentUser()) {
+            return repository.findByDirectorContainingIgnoreCaseAndAllowedLibraries(director, mediaLibraryService.getAllowableLibraryIds());
+        }
+        return repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, mediaLibraryService.getEnabledLibraryIds());
     }
 
     public PageResponse<Video> searchByTitle(String title, int page, int size) {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
-        var result = repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, allowedIds, PageRequest.of(page, size));
+        if (mediaLibraryService.isRestrictedCurrentUser()) {
+            var result = repository.findByTitleContainingIgnoreCaseAndAllowedLibraries(title, mediaLibraryService.getAllowableLibraryIds(), PageRequest.of(page, size));
+            return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        }
+        var result = repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, mediaLibraryService.getEnabledLibraryIds(), PageRequest.of(page, size));
         return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     public PageResponse<Video> searchByDirector(String director, int page, int size) {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
-        var result = repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, allowedIds, PageRequest.of(page, size));
+        if (mediaLibraryService.isRestrictedCurrentUser()) {
+            var result = repository.findByDirectorContainingIgnoreCaseAndAllowedLibraries(director, mediaLibraryService.getAllowableLibraryIds(), PageRequest.of(page, size));
+            return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
+        }
+        var result = repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, mediaLibraryService.getEnabledLibraryIds(), PageRequest.of(page, size));
         return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
@@ -117,7 +129,7 @@ public class VideoService {
         }
         List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
         List<Video> enabled = repository.findByIdIn(favIds).stream()
-                .filter(v -> v.getLibraryId() == null || allowedIds.contains(v.getLibraryId()))
+                .filter(v -> v.getLibraryId() != null && allowedIds.contains(v.getLibraryId()))
                 .sorted(Comparator.comparing(Video::getTitle))
                 .toList();
         int start = (int) Math.min(page * (long) size, enabled.size());

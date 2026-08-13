@@ -109,25 +109,38 @@ public class SeriesService {
     }
 
     public List<VideoSeries> getAllSeries() {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
+        boolean restricted = mediaLibraryService.isRestrictedCurrentUser();
+        List<Long> allowed = restricted ? mediaLibraryService.getAllowableLibraryIds() : null;
+        List<Long> enabled = restricted ? null : mediaLibraryService.getEnabledLibraryIds();
         return seriesRepository.findAll().stream()
-                .filter(series -> series.getVideos().isEmpty() ||
-                        series.getVideos().stream().anyMatch(v ->
-                                v.getLibraryId() == null || allowedIds.contains(v.getLibraryId())))
+                .filter(series -> seriesVisible(series, restricted, allowed, enabled))
                 .toList();
+    }
+
+    /**
+     * 系列可见性：受限用户只能看到「至少一集视频属于其授权库」的系列；
+     * 非受限用户保持旧语义（空系列或 libraryId 为空/启用库的都可见）。
+     */
+    private boolean seriesVisible(VideoSeries series, boolean restricted, List<Long> allowed, List<Long> enabled) {
+        if (restricted) {
+            return !series.getVideos().isEmpty() && series.getVideos().stream()
+                    .anyMatch(v -> v.getLibraryId() != null && allowed.contains(v.getLibraryId()));
+        }
+        return series.getVideos().isEmpty() || series.getVideos().stream()
+                .anyMatch(v -> v.getLibraryId() == null || enabled.contains(v.getLibraryId()));
     }
 
     /**
      * 追更日历：返回在播（Returning Series）且有下一集播出日期的系列，按日期升序
      */
     public List<VideoSeries> getUpcomingCalendar() {
-        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
+        boolean restricted = mediaLibraryService.isRestrictedCurrentUser();
+        List<Long> allowed = restricted ? mediaLibraryService.getAllowableLibraryIds() : null;
+        List<Long> enabled = restricted ? null : mediaLibraryService.getEnabledLibraryIds();
         java.time.LocalDate today = java.time.LocalDate.now();
 
         return seriesRepository.findAll().stream()
-                .filter(series -> series.getVideos().isEmpty() ||
-                        series.getVideos().stream().anyMatch(v ->
-                                v.getLibraryId() == null || allowedIds.contains(v.getLibraryId())))
+                .filter(series -> seriesVisible(series, restricted, allowed, enabled))
                 .filter(series -> series.getNextEpisodeDate() != null)
                 .filter(series -> "tv".equalsIgnoreCase(series.getMediaType()))
                 .filter(series -> {
@@ -280,6 +293,7 @@ public class SeriesService {
     }
 
     public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary(Long userId) {
+        boolean restricted = mediaLibraryService.isRestrictedUser(userId);
         List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
         List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
@@ -302,7 +316,7 @@ public class SeriesService {
         for (VideoSeries series : allSeries) {
             Set<Long> libraryIds = series.getVideos().stream()
                     .map(Video::getLibraryId)
-                    .filter(Objects::nonNull)
+                    .filter(restricted ? Objects::nonNull : id -> true)
                     .collect(Collectors.toSet());
 
             boolean added = false;
@@ -320,7 +334,7 @@ public class SeriesService {
         for (Video video : allStandalone) {
             if (video.getLibraryId() != null && allowedIds.contains(video.getLibraryId())) {
                 standaloneByLibrary.computeIfAbsent(video.getLibraryId(), k -> new ArrayList<>()).add(video);
-            } else {
+            } else if (!restricted && video.getLibraryId() == null) {
                 unassignedStandalone.add(video);
             }
         }
@@ -343,7 +357,7 @@ public class SeriesService {
             }
         }
 
-        if (!unassignedSeries.isEmpty() || !unassignedStandalone.isEmpty()) {
+        if (!restricted && (!unassignedSeries.isEmpty() || !unassignedStandalone.isEmpty())) {
             List<SeriesListDTO> unassignedSeriesDTOs = unassignedSeries.stream()
                     .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), seriesFav.getOrDefault(s.getId(), false)))
                     .toList();

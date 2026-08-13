@@ -3,6 +3,7 @@ package com.fryfrog.hub.video.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
@@ -91,6 +92,9 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id,
             HttpServletRequest request) {
         Video video = service.getVideoById(id);
+        if (!mediaLibraryService.isVisibleToCurrentUser(video.getLibraryId())) {
+            throw new ResourceNotFoundException("Video", "id", id);
+        }
         return ResponseEntity.ok(ApiResponse.success(toDTO(video, request)));
     }
 

@@ -2,6 +2,7 @@ package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
+import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.util.MediaUrlSigner;
@@ -32,6 +33,7 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.*;
@@ -110,11 +112,14 @@ public class SeriesController {
             int saPage = (int) (standaloneStart / size);
             int saOffset = (int) (standaloneStart % size);
             int saLimit = (int) (standaloneEnd - standaloneStart);
-            List<Long> enabledIds = mediaLibraryService.getAllowedLibraryIds(userId);
-            Page<Video> standalonePage = videoRepository.findBySeriesIsNullAndEnabledLibraries(
-                    enabledIds,
-                    PageRequest.of(saPage, Math.max(size, saLimit),
-                            Sort.by(Sort.Direction.ASC, "title")));
+            boolean restricted = mediaLibraryService.isRestrictedUser(userId);
+            List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
+            Pageable saPageable = PageRequest.of(saPage, Math.max(size, saLimit),
+                    Sort.by(Sort.Direction.ASC, "title"));
+            Page<Video> standalonePage = restricted
+                    ? videoRepository.findBySeriesIsNullAndAllowedLibraries(allowedIds, saPageable)
+                    : videoRepository.findBySeriesIsNullAndEnabledLibraries(
+                            mediaLibraryService.getEnabledLibraryIds(), saPageable);
             List<Video> pagedVideos = standalonePage.getContent();
             if (saOffset > 0 && pagedVideos.size() > saOffset) {
                 pagedVideos = pagedVideos.subList(saOffset,
@@ -237,6 +242,10 @@ public class SeriesController {
             var series = seriesService.getSeriesById(id);
             if (series.isPresent()) {
                 VideoSeries s = series.get();
+                if (mediaLibraryService.isRestrictedUser(userId)
+                        && s.getVideos().stream().noneMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()))) {
+                    throw new ResourceNotFoundException("Series", "id", id);
+                }
                 boolean favorite = favoriteService.statusMap(userId, Favorite.TYPE_SERIES, List.of(id))
                         .getOrDefault(id, false);
                 List<Long> videoIds = s.getVideos().stream().map(Video::getId).toList();
@@ -251,6 +260,10 @@ public class SeriesController {
         if (!"series".equals(type)) {
             var video = videoService.getVideoById(id);
             if (video != null && video.getSeries() == null) {
+                if (mediaLibraryService.isRestrictedUser(userId)
+                        && !mediaLibraryService.isVisibleToCurrentUser(video.getLibraryId())) {
+                    throw new ResourceNotFoundException("Series", "id", id);
+                }
                 WatchProgress progress = watchProgressService.getProgress(userId, id);
                 boolean favorite = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, List.of(id))
                         .getOrDefault(id, false);
