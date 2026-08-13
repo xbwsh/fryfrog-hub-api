@@ -11,6 +11,9 @@ import java.util.Map;
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
+    /** 请求属性：当前已认证用户 ID（Long） */
+    public static final String USER_ID_ATTR = "auth.userId";
+
     private final AuthManager authManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -35,12 +38,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            if (authManager.validateToken(token)) {
-                return true;
-            }
+        Long userId = authManager.getUserId(extractToken(request));
+        if (userId != null) {
+            request.setAttribute(USER_ID_ATTR, userId);
+            return true;
         }
 
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -48,6 +49,14 @@ public class AuthInterceptor implements HandlerInterceptor {
         response.getWriter().write(objectMapper.writeValueAsString(
                 Map.of("success", false, "message", "Unauthorized")));
         return false;
+    }
+
+    private String extractToken(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7);
+        }
+        return null;
     }
 
     private boolean isStaticResource(String path) {

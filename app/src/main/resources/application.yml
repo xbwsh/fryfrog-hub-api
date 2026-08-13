@@ -30,7 +30,10 @@ watcher:
 
 auth:
   enabled: ${AUTH_ENABLED:true}
-  password: ${AUTH_PASSWORD:1234}
+  password: ${AUTH_PASSWORD:}
+  token-ttl-seconds: ${AUTH_TOKEN_TTL:604800}
+  login-max-failures: ${AUTH_LOGIN_MAX_FAILURES:5}
+  login-lock-minutes: ${AUTH_LOGIN_LOCK_MINUTES:15}
 
 video:
   root-paths: ${VIDEO_ROOT_PATHS:}

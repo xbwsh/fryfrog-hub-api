@@ -69,7 +69,8 @@ mvn verify
 - REST 端点：`/api/v1/{resource}`
 - 响应格式：统一使用 `ApiResponse<T>`（`com.fryfrog.hub.common.dto.ApiResponse`）
 - 实体继承 `BaseEntity`（包含 id、createdAt、updatedAt）
-- 认证：自定义 Bearer Token 认证（非 Spring Security），通过 `AuthManager` 管理
+- 认证：自定义 Bearer Token 认证（非 Spring Security），多用户 + BCrypt 密码哈希，通过 `AuthManager`（app/config）与 `UserService`（common/service）管理
+- 用户管理：`User` 实体（common/model），角色 `ADMIN`/`USER`，管理端点 `/api/v1/users`；首次启动自动创建初始 `admin`（密码取 `AUTH_PASSWORD`，未配置则生成随机密码并打印日志）
 - 异常处理：`@RestControllerAdvice` 全局异常处理器
 - 配置：`application.yml`，多环境用 `application-{profile}.yml`
 - Lombok：`lombok.config` 启用 `@Qualifier` 注解拷贝
@@ -78,7 +79,7 @@ mvn verify
 
 - 端口：`20058`（`SERVER_PORT` 环境变量可覆盖）
 - 数据库：PostgreSQL，通过环境变量配置（开发用 `.env`，Docker 用环境变量）
-- 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认 `1234`
+- 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认留空（启动时若未配置则生成随机 admin 密码），登录失败默认 5 次后锁定 15 分钟
 - 媒体路径：`VIDEO_ROOT_PATHS`
 - `.env` 为开发环境配置，已加入 `.gitignore`
 - `.env.example` 为配置模板，已提交到仓库

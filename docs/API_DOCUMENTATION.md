@@ -20,19 +20,31 @@
 
 ### 1.1 登录
 - **POST** `/auth/login`
-- **请求体**:
+- **请求体**（`username` 可不传，默认按 `admin` 处理，兼容旧单密码登录）:
 ```json
 {
-  "password": "1234"
+  "username": "admin",
+  "password": "your_password"
 }
 ```
 - **响应**:
 ```json
 {
   "success": true,
-  "token": "eyJhbGciOiJIUzI1NiJ9..."
+  "token": "550e8400-e29b-41d4-a716-446655440000",
+  "user": {
+    "id": 1,
+    "username": "admin",
+    "nickname": "管理员",
+    "avatar": null,
+    "role": "ADMIN",
+    "enabled": true,
+    "createdAt": "2026-08-13T15:11:53",
+    "lastLoginAt": "2026-08-13T15:11:56"
+  }
 }
 ```
+- 失败响应：密码错误返回 `401 {"success": false, "message": "用户名或密码错误"}`；连续失败超过 `AUTH_LOGIN_MAX_FAILURES` 次后锁定，返回 `429` 并带 `retryAfterSeconds`。
 
 ### 1.2 登出
 - **POST** `/auth/logout`
@@ -50,6 +62,86 @@
 ```json
 {
   "enabled": true
+}
+```
+
+### 1.4 当前用户
+- **GET** `/auth/me`
+- **Header**: `Authorization: Bearer <token>`
+- **响应**:
+```json
+{
+  "success": true,
+  "user": {
+    "id": 1,
+    "username": "admin",
+    "nickname": "管理员",
+    "role": "ADMIN",
+    "enabled": true
+  }
+}
+```
+
+## 1.5 用户管理 (`/users`，仅登录用户访问，管理操作需 `ADMIN` 角色)
+
+> **登录方式**：所有用户接口请求头都需要携带 `Authorization: Bearer <token>`。
+
+### 1.5.1 用户列表（管理员）
+- **GET** `/users`
+- **响应**: `ApiResponse<List<UserDTO>>`
+
+### 1.5.2 当前用户信息
+- **GET** `/users/me`
+- **响应**: `ApiResponse<UserDTO>`
+
+### 1.5.3 用户详情（管理员或本人）
+- **GET** `/users/{id}`
+- **响应**: `ApiResponse<UserDTO>`
+
+### 1.5.4 创建用户（管理员）
+- **POST** `/users`
+- **请求体**:
+```json
+{
+  "username": "zhangsan",
+  "password": "secret123",
+  "nickname": "张三",
+  "role": "USER"
+}
+```
+- 密码至少 8 位；`role` 取 `ADMIN`/`USER`，默认 `USER`。
+
+### 1.5.5 更新用户（管理员可改全部字段；普通用户仅能改自己昵称/头像）
+- **PUT** `/users/{id}`
+- **请求体**（均可选）:
+```json
+{
+  "nickname": "新昵称",
+  "avatar": "https://...",
+  "role": "ADMIN",
+  "enabled": true
+}
+```
+
+### 1.5.6 删除用户（管理员，不能删除自己）
+- **DELETE** `/users/{id}`
+
+### 1.5.7 修改自己的密码
+- **PUT** `/users/me/password`
+- **请求体**:
+```json
+{
+  "oldPassword": "旧密码",
+  "newPassword": "新密码（至少 8 位）"
+}
+```
+
+### 1.5.8 管理员重置用户密码（无需原密码）
+- **PUT** `/users/{id}/password`
+- **请求体**:
+```json
+{
+  "newPassword": "新密码（至少 8 位）"
 }
 ```
 

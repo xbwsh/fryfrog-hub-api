@@ -114,7 +114,7 @@ export DB_USERNAME=your_db_user
 export DB_PASSWORD=your_db_password
 export VIDEO_ROOT_PATHS=/path/to/your/video
 export TMDB_API_KEY=your_tmdb_api_key  # 可选，用于视频刮削
-export AUTH_PASSWORD=your_password      # 可选，登录密码
+export AUTH_PASSWORD=your_password      # 可选，首次启动时作为 admin 初始密码（留空则自动生成随机密码）
 
 # 启动应用
 java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
@@ -130,9 +130,23 @@ http://localhost:20058/swagger-ui.html
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/v1/auth/login` | 登录（输入密码，返回 Token） |
+| POST | `/api/v1/auth/login` | 登录（用户名+密码，返回 Token 与用户信息） |
 | POST | `/api/v1/auth/logout` | 登出（注销当前 Token） |
 | GET | `/api/v1/auth/status` | 认证状态（前端判断是否需要登录） |
+| GET | `/api/v1/auth/me` | 当前登录用户信息 |
+
+### 用户管理接口 / User Management Endpoints（需管理员）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/users` | 用户列表 |
+| GET | `/api/v1/users/me` | 当前用户信息 |
+| GET | `/api/v1/users/{id}` | 用户详情（管理员或本人） |
+| POST | `/api/v1/users` | 创建用户 |
+| PUT | `/api/v1/users/{id}` | 更新用户（昵称/头像/角色/启用状态） |
+| DELETE | `/api/v1/users/{id}` | 删除用户 |
+| PUT | `/api/v1/users/me/password` | 修改自己的密码（需原密码） |
+| PUT | `/api/v1/users/{id}/password` | 管理员重置指定用户密码 |
 
 ### 媒体资源库接口 / Media Library Endpoints
 
