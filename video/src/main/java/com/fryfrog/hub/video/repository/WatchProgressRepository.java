@@ -11,7 +11,9 @@ import java.util.Optional;
 @Repository
 public interface WatchProgressRepository extends JpaRepository<WatchProgress, Long> {
 
-    Optional<WatchProgress> findByVideo_Id(Long videoId);
+    Optional<WatchProgress> findByUserIdAndVideo_Id(Long userId, Long videoId);
 
-    List<WatchProgress> findByVideo_IdIn(Collection<Long> videoIds);
+    List<WatchProgress> findByUserIdAndVideo_IdIn(Long userId, Collection<Long> videoIds);
+
+    List<WatchProgress> findByUserIdIsNull();
 }

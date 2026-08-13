@@ -65,13 +65,13 @@ public class SeriesListDTO {
     @Schema(description = "分辨率标签列表（去重，按清晰度降序）", example = "[\"4K\",\"1080p\"]")
     private List<String> resolutions;
 
-    public static SeriesListDTO fromEntity(VideoSeries series, List<Video> episodes) {
+    public static SeriesListDTO fromEntity(VideoSeries series, List<Video> episodes, boolean favorite) {
         SeriesListDTO dto = new SeriesListDTO();
         dto.setId(series.getId());
         dto.setType("series");
         dto.setTitle(series.getTitle());
-        dto.setCoverUrl("/api/v1/video/series/" + series.getId() + "/cover");
-        dto.setFanartUrl("/api/v1/video/series/" + series.getId() + "/fanart");
+        dto.setCoverUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/series/" + series.getId() + "/cover"));
+        dto.setFanartUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/series/" + series.getId() + "/fanart"));
         dto.setLogoUrl(series.getLogoApiUrl());
         dto.setOriginalTitle(series.getOriginalTitle());
         dto.setMediaType(series.getMediaType());
@@ -82,7 +82,7 @@ public class SeriesListDTO {
         dto.setTotalEpisodes(series.getTotalEpisodes());
         dto.setEpisodeCount(series.getEpisodeCount());
         dto.setIsAdult(series.getIsAdult());
-        dto.setFavorite(series.getFavorite());
+        dto.setFavorite(favorite);
         dto.setHasAdultEpisodes(episodes.stream().anyMatch(v -> Boolean.TRUE.equals(v.getIsAdult())));
         dto.setResolutions(collectResolutions(episodes));
         return dto;
@@ -111,13 +111,13 @@ public class SeriesListDTO {
         };
     }
 
-    public static SeriesListDTO fromStandaloneVideo(Video video) {
+    public static SeriesListDTO fromStandaloneVideo(Video video, boolean favorite) {
         SeriesListDTO dto = new SeriesListDTO();
         dto.setId(video.getId());
         dto.setType("standalone");
         dto.setTitle(video.getTitle());
-        dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
-        dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
+        dto.setCoverUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/cover"));
+        dto.setFanartUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/fanart"));
         dto.setLogoUrl(video.getLogoApiUrl());
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setMediaType(video.getMediaType());
@@ -127,7 +127,7 @@ public class SeriesListDTO {
         dto.setTotalEpisodes(1);
         dto.setEpisodeCount(1);
         dto.setIsAdult(video.getIsAdult());
-        dto.setFavorite(video.getFavorite());
+        dto.setFavorite(favorite);
         dto.setHasAdultEpisodes(Boolean.TRUE.equals(video.getIsAdult()));
         String label = VideoDTO.resolutionLabel(video.getResolution());
         dto.setResolutions(label != null ? List.of(label) : List.of());

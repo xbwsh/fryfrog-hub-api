@@ -2,16 +2,20 @@ package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
+import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.util.MediaUrlSigner;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.LibrarySeriesGroupDTO;
 import com.fryfrog.hub.video.dto.SeriesDTO;
 import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.VideoDTO;
+import com.fryfrog.hub.video.model.Favorite;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoRepository;
+import com.fryfrog.hub.video.service.FavoriteService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.TmdbService;
@@ -42,6 +46,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 @RestController
 @RequestMapping("/api/v1/video/series")
 @RequiredArgsConstructor
@@ -54,6 +60,7 @@ public class SeriesController {
     private final VideoRepository videoRepository;
     private final NfoService nfoService;
     private final WatchProgressService watchProgressService;
+    private final FavoriteService favoriteService;
     private final MediaLibraryService mediaLibraryService;
     private final TranscodingService transcodingService;
     private final TmdbService tmdbService;
@@ -64,7 +71,9 @@ public class SeriesController {
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
     public ResponseEntity<ApiResponse<PageResponse<SeriesListDTO>>> getAllSeries(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
         long seriesCount = seriesService.count();
         long standaloneCount = videoRepository.countBySeriesIsNull();
         long total = seriesCount + standaloneCount;
@@ -86,11 +95,13 @@ public class SeriesController {
         // 系列（通常数量少，加载全部）
         if (start < seriesCount) {
             List<VideoSeries> allSeries = seriesService.getAllSeries();
+            Map<Long, Boolean> seriesFav = favoriteService.statusMap(userId, Favorite.TYPE_SERIES,
+                    allSeries.stream().map(VideoSeries::getId).toList());
             List<VideoSeries> pagedSeries = allSeries.subList(
                     (int) Math.min(start, seriesCount),
                     (int) Math.min(seriesEnd, allSeries.size()));
             for (VideoSeries s : pagedSeries) {
-                allItems.add(SeriesListDTO.fromEntity(s, s.getVideos()));
+                allItems.add(SeriesListDTO.fromEntity(s, s.getVideos(), seriesFav.getOrDefault(s.getId(), false)));
             }
         }
 
@@ -111,8 +122,10 @@ public class SeriesController {
             } else if (saOffset > 0) {
                 pagedVideos = List.of();
             }
+            Map<Long, Boolean> videoFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO,
+                    pagedVideos.stream().map(Video::getId).toList());
             for (Video video : pagedVideos) {
-                allItems.add(SeriesListDTO.fromStandaloneVideo(video));
+                allItems.add(SeriesListDTO.fromStandaloneVideo(video, videoFav.getOrDefault(video.getId(), false)));
             }
         }
 
@@ -122,8 +135,8 @@ public class SeriesController {
 
     @GetMapping("/grouped-by-library")
     @Operation(summary = "按资源库分组获取系列", description = "返回按资源库分组的系列和独立视频列表")
-    public ResponseEntity<ApiResponse<List<LibrarySeriesGroupDTO>>> getSeriesGroupedByLibrary() {
-        return ResponseEntity.ok(ApiResponse.success(seriesService.getSeriesGroupedByLibrary()));
+    public ResponseEntity<ApiResponse<List<LibrarySeriesGroupDTO>>> getSeriesGroupedByLibrary(HttpServletRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(seriesService.getSeriesGroupedByLibrary(UserContext.currentUserId(request))));
     }
 
     @GetMapping("/calendar")
@@ -134,8 +147,8 @@ public class SeriesController {
                     Map<String, Object> item = new java.util.LinkedHashMap<>();
                     item.put("seriesId", series.getId());
                     item.put("title", series.getTitle());
-                    item.put("coverUrl", "/api/v1/video/series/" + series.getId() + "/cover");
-                    item.put("fanartUrl", "/api/v1/video/series/" + series.getId() + "/fanart");
+                    item.put("coverUrl", MediaUrlSigner.sign("/api/v1/video/series/" + series.getId() + "/cover"));
+                    item.put("fanartUrl", MediaUrlSigner.sign("/api/v1/video/series/" + series.getId() + "/fanart"));
                     item.put("nextEpisodeDate", series.getNextEpisodeDate());
                     item.put("nextEpisodeNumber", series.getNextEpisodeNumber());
                     return item;
@@ -145,33 +158,43 @@ public class SeriesController {
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏系列列表", description = "返回已收藏的系列列表")
-    public ResponseEntity<ApiResponse<List<SeriesListDTO>>> getFavoriteSeries() {
-        List<SeriesListDTO> result = seriesService.getFavoriteSeries().stream()
-                .map(s -> SeriesListDTO.fromEntity(s, s.getVideos()))
+    @Operation(summary = "获取收藏系列列表", description = "返回当前用户已收藏的系列列表")
+    public ResponseEntity<ApiResponse<List<SeriesListDTO>>> getFavoriteSeries(HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        List<SeriesListDTO> result = favoriteService.contentIds(userId, Favorite.TYPE_SERIES).stream()
+                .map(id -> seriesService.getSeriesById(id).orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), true))
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PutMapping("/{id}/favorite")
-    @Operation(summary = "设置系列收藏状态", description = "设置系列的收藏状态")
+    @Operation(summary = "设置系列收藏状态", description = "设置当前用户的系列收藏状态")
     public ResponseEntity<ApiResponse<SeriesDTO>> setSeriesFavorite(
             @Parameter(description = "系列ID") @PathVariable Long id,
-            @Parameter(description = "收藏状态") @RequestParam boolean status) {
-        VideoSeries series = seriesService.setFavorite(id, status);
+            @Parameter(description = "收藏状态") @RequestParam boolean status,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        favoriteService.setFavorite(userId, Favorite.TYPE_SERIES, id, status);
+        VideoSeries series = seriesService.getSeriesById(id)
+                .orElseThrow(() -> new RuntimeException("Series not found: " + id));
         List<Long> videoIds = series.getVideos().stream().map(Video::getId).toList();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(userId, videoIds);
+        Map<Long, Boolean> episodesFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, videoIds);
         List<VideoDTO> episodes = series.getVideos().stream()
-                .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
+                .map(video -> toVideoDTO(video, progressMap.get(video.getId()), episodesFav.getOrDefault(video.getId(), false)))
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes)));
+        return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes, status)));
     }
 
     @PutMapping("/{id}/metadata")
     @Operation(summary = "编辑系列元数据", description = "手动修改系列的标题、简介、评分、上映日期、类型等元数据（只更新传入的非空字段）")
     public ResponseEntity<ApiResponse<SeriesDTO>> updateSeriesMetadata(
             @Parameter(description = "系列ID") @PathVariable Long id,
-            @RequestBody com.fryfrog.hub.video.dto.SeriesMetadataUpdateRequest request) {
+            @RequestBody com.fryfrog.hub.video.dto.SeriesMetadataUpdateRequest request,
+            HttpServletRequest req) {
+        long userId = UserContext.currentUserId(req);
         VideoSeries series = seriesService.getSeriesById(id)
                 .orElseThrow(() -> new RuntimeException("Series not found: " + id));
         boolean updated = false;
@@ -191,12 +214,15 @@ public class SeriesController {
         }
 
         // 返回完整系列详情（含剧集）
+        boolean favorite = favoriteService.statusMap(userId, Favorite.TYPE_SERIES, List.of(id))
+                .getOrDefault(id, false);
         List<Long> videoIds = series.getVideos().stream().map(Video::getId).toList();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(userId, videoIds);
+        Map<Long, Boolean> episodesFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, videoIds);
         List<VideoDTO> episodes = series.getVideos().stream()
-                .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
+                .map(video -> toVideoDTO(video, progressMap.get(video.getId()), episodesFav.getOrDefault(video.getId(), false)))
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes)));
+        return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(series, episodes, favorite)));
     }
 
     @GetMapping("/{id}")
@@ -204,24 +230,31 @@ public class SeriesController {
     public ResponseEntity<ApiResponse<SeriesDTO>> getSeriesById(
             @Parameter(description = "系列ID或独立视频ID") @PathVariable Long id,
             @Parameter(description = "条目类型: series=系列, standalone=独立视频，不传时自动判断")
-            @RequestParam(required = false) String type) {
+            @RequestParam(required = false) String type,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
         if (!"standalone".equals(type)) {
             var series = seriesService.getSeriesById(id);
             if (series.isPresent()) {
                 VideoSeries s = series.get();
+                boolean favorite = favoriteService.statusMap(userId, Favorite.TYPE_SERIES, List.of(id))
+                        .getOrDefault(id, false);
                 List<Long> videoIds = s.getVideos().stream().map(Video::getId).toList();
-                Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
+                Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(userId, videoIds);
+                Map<Long, Boolean> episodesFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, videoIds);
                 List<VideoDTO> episodes = s.getVideos().stream()
-                        .map(video -> toVideoDTO(video, progressMap.get(video.getId())))
+                        .map(video -> toVideoDTO(video, progressMap.get(video.getId()), episodesFav.getOrDefault(video.getId(), false)))
                         .collect(Collectors.toList());
-                return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(s, episodes)));
+                return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromEntity(s, episodes, favorite)));
             }
         }
         if (!"series".equals(type)) {
             var video = videoService.getVideoById(id);
             if (video != null && video.getSeries() == null) {
-                WatchProgress progress = watchProgressService.getProgress(id);
-                return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromStandaloneVideo(video, toVideoDTO(video, progress))));
+                WatchProgress progress = watchProgressService.getProgress(userId, id);
+                boolean favorite = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, List.of(id))
+                        .getOrDefault(id, false);
+                return ResponseEntity.ok(ApiResponse.success(SeriesDTO.fromStandaloneVideo(video, toVideoDTO(video, progress, favorite), favorite)));
             }
         }
         throw new RuntimeException("Series not found: " + id);
@@ -674,12 +707,12 @@ public class SeriesController {
         }
     }
 
-    private VideoDTO toVideoDTO(Video video, WatchProgress progress) {
+    private VideoDTO toVideoDTO(Video video, WatchProgress progress, boolean favorite) {
         boolean hasNfo = Files.exists(nfoService.getNfoPath(video));
         boolean hasPoster = Files.exists(nfoService.getPosterPath(video));
         boolean hasFanart = Files.exists(nfoService.getFanartPath(video));
         boolean hasMetadataDir = Files.exists(nfoService.getMetadataDir(video));
-        VideoDTO dto = VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir);
+        VideoDTO dto = VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir, favorite);
 
         if (progress != null) {
             dto.setWatchPosition(progress.getPositionSeconds());

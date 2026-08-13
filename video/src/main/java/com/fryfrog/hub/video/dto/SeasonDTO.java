@@ -27,7 +27,7 @@ public class SeasonDTO {
         dto.setSeasonNumber(seasonNumber);
         dto.setEpisodes(episodes);
         if (seriesId != null) {
-            dto.setCoverUrl("/api/v1/video/series/" + seriesId + "/season/" + seasonNumber + "/cover");
+            dto.setCoverUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/series/" + seriesId + "/season/" + seasonNumber + "/cover"));
         }
         return dto;
     }

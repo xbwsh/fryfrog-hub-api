@@ -27,23 +27,24 @@ public class WatchProgressService {
     private static final double COMPLETED_THRESHOLD = 0.95;
     private static final int MAX_RETRIES = 3;
 
-    public WatchProgress getProgress(Long videoId) {
-        return repository.findByVideo_Id(videoId).orElse(null);
+    public WatchProgress getProgress(Long userId, Long videoId) {
+        return repository.findByUserIdAndVideo_Id(userId, videoId).orElse(null);
     }
 
-    public Map<Long, WatchProgress> getProgressByVideoIds(Collection<Long> videoIds) {
+    public Map<Long, WatchProgress> getProgressByVideoIds(Long userId, Collection<Long> videoIds) {
         if (videoIds == null || videoIds.isEmpty()) {
             return Map.of();
         }
-        return repository.findByVideo_IdIn(videoIds).stream()
+        return repository.findByUserIdAndVideo_IdIn(userId, videoIds).stream()
                 .collect(Collectors.toMap(wp -> wp.getVideo().getId(), wp -> wp));
     }
 
-    public WatchProgress updatePosition(Long videoId, Double positionSeconds, Double durationSeconds) {
+    public WatchProgress updatePosition(Long userId, Long videoId, Double positionSeconds, Double durationSeconds) {
         return retryOnLock(() -> transactionTemplate.execute(status -> {
             Video video = videoService.getVideoById(videoId);
 
-            WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
+            WatchProgress progress = repository.findByUserIdAndVideo_Id(userId, videoId).orElseGet(WatchProgress::new);
+            progress.setUserId(userId);
             progress.setVideo(video);
             progress.setPositionSeconds(positionSeconds);
             if (durationSeconds != null) {
@@ -56,16 +57,17 @@ public class WatchProgressService {
             }
 
             WatchProgress saved = repository.save(progress);
-            log.debug("Updated position for video {}: {}s", videoId, positionSeconds);
+            log.debug("Updated position for user {} video {}: {}s", userId, videoId, positionSeconds);
             return saved;
         }));
     }
 
-    public WatchProgress updateWatched(Long videoId, boolean completed) {
+    public WatchProgress updateWatched(Long userId, Long videoId, boolean completed) {
         return retryOnLock(() -> transactionTemplate.execute(status -> {
             Video video = videoService.getVideoById(videoId);
 
-            WatchProgress progress = repository.findByVideo_Id(videoId).orElse(new WatchProgress());
+            WatchProgress progress = repository.findByUserIdAndVideo_Id(userId, videoId).orElseGet(WatchProgress::new);
+            progress.setUserId(userId);
             progress.setVideo(video);
             progress.setCompleted(completed);
 
@@ -74,14 +76,14 @@ public class WatchProgressService {
             }
 
             WatchProgress saved = repository.save(progress);
-            log.debug("Set video {} watched={}", videoId, completed);
+            log.debug("Set user {} video {} watched={}", userId, videoId, completed);
             return saved;
         }));
     }
 
     @Transactional
-    public void deleteProgress(Long videoId) {
-        repository.findByVideo_Id(videoId).ifPresent(repository::delete);
+    public void deleteProgress(Long userId, Long videoId) {
+        repository.findByUserIdAndVideo_Id(userId, videoId).ifPresent(repository::delete);
     }
 
     private <T> T retryOnLock(Supplier<T> action) {

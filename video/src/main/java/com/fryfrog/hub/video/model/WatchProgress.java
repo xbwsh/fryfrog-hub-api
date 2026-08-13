@@ -6,7 +6,9 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "watch_progress", uniqueConstraints = @UniqueConstraint(columnNames = "video_id"))
+@Table(name = "watch_progress",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "video_id"}),
+        indexes = @Index(name = "idx_watch_progress_user", columnList = "user_id"))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -14,8 +16,12 @@ import lombok.*;
 @Schema(description = "观看进度")
 public class WatchProgress extends BaseEntity {
 
-    @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "video_id", nullable = false, unique = true)
+    @Schema(description = "所属用户 ID（认证关闭时为匿名档案）")
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "video_id", nullable = false)
     @Schema(description = "关联视频")
     private Video video;
 

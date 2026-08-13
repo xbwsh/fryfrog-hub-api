@@ -81,6 +81,8 @@ mvn verify
 - 数据库：PostgreSQL，通过环境变量配置（开发用 `.env`，Docker 用环境变量）
 - 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认留空（启动时若未配置则生成随机 admin 密码），登录失败默认 5 次后锁定 15 分钟
 - 媒体路径：`VIDEO_ROOT_PATHS`
+- 数据隔离：观看进度（`(user, video)` 唯一）与收藏（`favorites` 表）按用户隔离，认证关闭时用匿名 ID（`UserContext.ANONYMOUS_ID`）全局共享
+- 媒体签名：封面/流/字幕等 URL 由 `MediaUrlSigner`（common/util）签名（exp+sig，HMAC-SHA256），`AuthInterceptor` 校验；`LegacyDataMigrator` 启动时把旧全局数据迁移给 admin
 - `.env` 为开发环境配置，已加入 `.gitignore`
 - `.env.example` 为配置模板，已提交到仓库
 

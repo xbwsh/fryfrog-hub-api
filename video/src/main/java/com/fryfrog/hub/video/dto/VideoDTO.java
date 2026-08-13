@@ -158,14 +158,14 @@ public class VideoDTO {
     @Schema(description = "是否为成人内容", example = "false")
     private Boolean isAdult;
 
-    public static VideoDTO fromEntity(Video video, boolean hasNfo, boolean hasPoster, boolean hasFanart, boolean hasMetadataDir) {
+public static VideoDTO fromEntity(Video video, boolean hasNfo, boolean hasPoster, boolean hasFanart,
+                                     boolean hasMetadataDir, boolean favorite) {
         VideoDTO dto = new VideoDTO();
         dto.setId(video.getId());
-        dto.setTitle(video.getTitle());
-        dto.setCoverUrl("/api/v1/video/" + video.getId() + "/cover");
-        dto.setFanartUrl("/api/v1/video/" + video.getId() + "/fanart");
+        dto.setCoverUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/cover"));
+        dto.setFanartUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/fanart"));
         dto.setLogoUrl(video.getLogoApiUrl());
-        dto.setStreamUrl("/api/v1/video/" + video.getId() + "/stream");
+        dto.setStreamUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/stream"));
         dto.setOriginalTitle(video.getOriginalTitle());
         dto.setDirector(video.getDirector());
         dto.setActors(video.getActors());
@@ -180,7 +180,7 @@ public class VideoDTO {
         dto.setFormat(video.getFormat());
         dto.setResolution(video.getResolution());
         dto.setResolutionLabel(resolutionLabel(video.getResolution()));
-        dto.setFavorite(video.getFavorite());
+        dto.setFavorite(favorite);
         dto.setTmdbId(video.getTmdbId());
         dto.setMediaType(video.getMediaType());
         dto.setPosterUrl(video.getPosterUrl());

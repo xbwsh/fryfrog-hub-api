@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,9 +28,8 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     Optional<Video> findByFilePath(String filePath);
 
-    List<Video> findByFavoriteTrue();
-
-    Page<Video> findByFavoriteTrue(Pageable pageable);
+    /** 收藏表（favorites）关联查询用 */
+    List<Video> findByIdIn(Collection<Long> ids);
 
     List<Video> findByTmdbIdIsNull();
 
@@ -62,12 +62,6 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     @Query("SELECT v FROM Video v WHERE v.libraryId IS NULL OR v.libraryId IN :enabledIds")
     List<Video> findAllByEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
-
-    @Query("SELECT v FROM Video v WHERE v.favorite = true AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
-    List<Video> findByFavoriteTrueAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
-
-    @Query("SELECT v FROM Video v WHERE v.favorite = true AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
-    Page<Video> findByFavoriteTrueAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds, Pageable pageable);
 
     @Query("SELECT v FROM Video v WHERE LOWER(v.title) LIKE LOWER(CONCAT('%', :title, '%')) AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
     List<Video> findByTitleContainingIgnoreCaseAndEnabledLibraries(@Param("title") String title, @Param("enabledIds") List<Long> enabledIds);

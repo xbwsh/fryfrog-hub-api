@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.video.dto.LibrarySeriesGroupDTO;
 import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
+import com.fryfrog.hub.video.model.Favorite;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.repository.VideoRepository;
@@ -34,6 +35,7 @@ public class SeriesService {
     private final TmdbService tmdbService;
     private final NfoService nfoService;
     private final MediaLibraryService mediaLibraryService;
+    private final FavoriteService favoriteService;
 
     private static final Pattern EPISODE_PATTERN = Pattern.compile(
             "(?:S\\d{1,2})?E(\\d{1,4})|(?i:EP?)(\\d{1,4})|[＃#](\\d{1,4})|[\\s._\\-　](\\d{1,4})$|(\\d{1,4})$", Pattern.CASE_INSENSITIVE
@@ -151,33 +153,6 @@ public class SeriesService {
 
     public Optional<VideoSeries> getSeriesById(Long id) {
         return seriesRepository.findById(id);
-    }
-
-    /**
-     * 设置系列收藏状态
-     */
-    public VideoSeries setFavorite(Long id, boolean status) {
-        VideoSeries series = getSeriesById(id)
-                .orElseThrow(() -> new RuntimeException("Series not found: " + id));
-        series.setFavorite(status);
-        return seriesRepository.save(series);
-    }
-
-    /**
-     * 收藏的系列列表（按启用资源库过滤）
-     */
-    public List<VideoSeries> getFavoriteSeries() {
-        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
-        return seriesRepository.findAll().stream()
-                .filter(series -> Boolean.TRUE.equals(series.getFavorite()))
-                .filter(series -> series.getVideos().isEmpty() ||
-                        series.getVideos().stream().anyMatch(v ->
-                                v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
-                .toList();
-    }
-
-    public long countFavoriteSeries() {
-        return getFavoriteSeries().size();
     }
 
     @Transactional
@@ -304,7 +279,7 @@ public class SeriesService {
         seriesRepository.save(series);
     }
 
-    public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary() {
+    public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary(Long userId) {
         List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
         List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
@@ -313,6 +288,11 @@ public class SeriesService {
 
         List<VideoSeries> allSeries = getAllSeries();
         List<Video> allStandalone = videoRepository.findBySeriesIsNullOrderByTitleAsc();
+
+        Map<Long, Boolean> seriesFav = favoriteService.statusMap(userId, Favorite.TYPE_SERIES,
+                allSeries.stream().map(VideoSeries::getId).toList());
+        Map<Long, Boolean> standaloneFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO,
+                allStandalone.stream().map(Video::getId).toList());
 
         Map<Long, List<VideoSeries>> seriesByLibrary = new LinkedHashMap<>();
         Map<Long, List<Video>> standaloneByLibrary = new LinkedHashMap<>();
@@ -352,10 +332,10 @@ public class SeriesService {
             List<Video> libStandalone = standaloneByLibrary.getOrDefault(lib.getId(), List.of());
 
             List<SeriesListDTO> seriesDTOs = libSeries.stream()
-                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos()))
+                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), seriesFav.getOrDefault(s.getId(), false)))
                     .toList();
             List<SeriesListDTO> standaloneDTOs = libStandalone.stream()
-                    .map(SeriesListDTO::fromStandaloneVideo)
+                    .map(v -> SeriesListDTO.fromStandaloneVideo(v, standaloneFav.getOrDefault(v.getId(), false)))
                     .toList();
 
             if (!seriesDTOs.isEmpty() || !standaloneDTOs.isEmpty()) {
@@ -365,10 +345,10 @@ public class SeriesService {
 
         if (!unassignedSeries.isEmpty() || !unassignedStandalone.isEmpty()) {
             List<SeriesListDTO> unassignedSeriesDTOs = unassignedSeries.stream()
-                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos()))
+                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), seriesFav.getOrDefault(s.getId(), false)))
                     .toList();
             List<SeriesListDTO> unassignedStandaloneDTOs = unassignedStandalone.stream()
-                    .map(SeriesListDTO::fromStandaloneVideo)
+                    .map(v -> SeriesListDTO.fromStandaloneVideo(v, standaloneFav.getOrDefault(v.getId(), false)))
                     .toList();
 
             result.add(LibrarySeriesGroupDTO.builder()

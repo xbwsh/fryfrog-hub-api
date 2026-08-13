@@ -6,6 +6,7 @@ import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
+import com.fryfrog.hub.video.model.Favorite;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.repository.VideoRepository;
@@ -42,6 +43,7 @@ public class VideoService {
     private final CoverArtService coverArtService;
     private final VideoAssetService assetService;
     private final ScrapeProgressService progressService;
+    private final FavoriteService favoriteService;
 
     @Qualifier("scraperRestTemplate")
     private final RestTemplate scraperRestTemplate;
@@ -94,11 +96,6 @@ public class VideoService {
         return repository.findByDirectorContainingIgnoreCaseAndEnabledLibraries(director, enabledIds);
     }
 
-    public List<Video> getFavorites() {
-        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
-        return repository.findByFavoriteTrueAndEnabledLibraries(enabledIds);
-    }
-
     public PageResponse<Video> searchByTitle(String title, int page, int size) {
         List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
         var result = repository.findByTitleContainingIgnoreCaseAndEnabledLibraries(title, enabledIds, PageRequest.of(page, size));
@@ -111,18 +108,25 @@ public class VideoService {
         return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
-    public PageResponse<Video> getFavorites(int page, int size) {
-        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
-        var result = repository.findByFavoriteTrueAndEnabledLibraries(enabledIds, PageRequest.of(page, size));
-        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
-    }
-
     // ==================== 用户状态 ====================
 
-    public Video setFavorite(Long id, boolean status) {
-        Video video = getVideoById(id);
-        video.setFavorite(status);
-        return repository.save(video);
+    public PageResponse<Video> getFavorites(Long userId, int page, int size) {
+        List<Long> favIds = favoriteService.contentIds(userId, Favorite.TYPE_VIDEO);
+        if (favIds.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, 0);
+        }
+        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        List<Video> enabled = repository.findByIdIn(favIds).stream()
+                .filter(v -> v.getLibraryId() == null || enabledIds.contains(v.getLibraryId()))
+                .sorted(Comparator.comparing(Video::getTitle))
+                .toList();
+        int start = (int) Math.min(page * (long) size, enabled.size());
+        int end = (int) Math.min((page + 1) * (long) size, enabled.size());
+        return PageResponse.of(enabled.subList(start, end), page, size, enabled.size());
+    }
+
+    public void setFavorite(Long userId, Long id, boolean status) {
+        favoriteService.setFavorite(userId, Favorite.TYPE_VIDEO, id, status);
     }
 
     // ==================== TMDB 搜索 ====================

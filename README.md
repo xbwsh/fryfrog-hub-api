@@ -148,6 +148,13 @@ http://localhost:20058/swagger-ui.html
 | PUT | `/api/v1/users/me/password` | 修改自己的密码（需原密码） |
 | PUT | `/api/v1/users/{id}/password` | 管理员重置指定用户密码 |
 
+### 多用户数据隔离与媒体签名 / Per-user Data & Signed Media URLs
+
+- **观看进度 / 收藏按用户隔离**：`watch_progress` 以 `(user_id, video_id)` 唯一，收藏存于 `favorites(user_id, content_type, content_id)` 表，不同用户互不影响。认证关闭时退化为匿名全局共享。
+- **媒体资源签名 URL**：视频封面、背景图、流、季封面、外挂字幕的 URL 均带 `exp`（过期时间）与 `sig`（HMAC 签名）参数，由后端 DTO 自动拼接，前端直接使用无需改造。启动时签名密钥随机生成，重启后旧 URL 失效，前端重新拉取列表即可。
+- **历史数据**：首次启动自动将旧的全局进度与收藏迁移到初始管理员（admin）。
+- **说明**：转码流（`/stream/transcode`）、演员头像、海报占位图等端点仍维持公开放行。
+
 ### 媒体资源库接口 / Media Library Endpoints
 
 | 方法 | 路径 | 说明 |

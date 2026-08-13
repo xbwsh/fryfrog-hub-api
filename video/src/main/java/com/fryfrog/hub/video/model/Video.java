@@ -14,7 +14,6 @@ import java.util.List;
     @Index(name = "idx_video_title", columnList = "title"),
     @Index(name = "idx_video_tmdb_id", columnList = "tmdbId"),
     @Index(name = "idx_video_file_name", columnList = "fileName"),
-    @Index(name = "idx_video_favorite", columnList = "favorite"),
     @Index(name = "idx_video_series_id", columnList = "series_id"),
     @Index(name = "idx_video_library_id", columnList = "library_id")
 })
@@ -76,9 +75,6 @@ public class Video extends BaseEntity {
 
     @Schema(description = "背景图片本地路径（横屏）")
     private String backdropLocalPath;
-
-    @Schema(description = "是否收藏", example = "false")
-    private Boolean favorite = false;
 
     @Schema(description = "是否为成人内容", example = "false")
     private Boolean isAdult = false;

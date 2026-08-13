@@ -77,9 +77,6 @@ public class VideoSeries extends BaseEntity {
     @Schema(description = "播出状态", example = "Returning Series")
     private String status;
 
-    @Schema(description = "是否收藏", example = "false")
-    private Boolean favorite = false;
-
     @Schema(description = "是否为成人内容", example = "false")
     private Boolean isAdult = false;
 

@@ -1,8 +1,8 @@
 package com.fryfrog.hub.controller;
 
 import com.fryfrog.hub.common.dto.UserDTO;
+import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.UserService;
-import com.fryfrog.hub.config.AuthInterceptor;
 import com.fryfrog.hub.config.AuthManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -83,7 +83,7 @@ public class AuthController {
     }
 
     private Long currentUserId(HttpServletRequest request) {
-        Object value = request.getAttribute(AuthInterceptor.USER_ID_ATTR);
+        Object value = request.getAttribute(UserContext.USER_ID_ATTR);
         return value instanceof Long id ? id : null;
     }
 }

@@ -3,9 +3,11 @@ package com.fryfrog.hub.video.controller;
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
+import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.common.util.MediaUrlSigner;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.VideoBindRequest;
@@ -13,6 +15,7 @@ import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.dto.UpdatePositionRequest;
 import com.fryfrog.hub.video.dto.UpdateWatchedRequest;
 import com.fryfrog.hub.video.dto.WatchProgressDTO;
+import com.fryfrog.hub.video.model.Favorite;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.VideoSeries;
@@ -20,6 +23,7 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
+import com.fryfrog.hub.video.service.FavoriteService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.TmdbService;
@@ -41,6 +45,7 @@ import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
@@ -67,6 +72,7 @@ public class VideoController {
     private final NfoService nfoService;
     private final CoverArtService coverArtService;
     private final WatchProgressService watchProgressService;
+    private final FavoriteService favoriteService;
     private final TranscodingService transcodingService;
     private final VideoActorRepository actorRepository;
     private final VideoRepository videoRepository;
@@ -82,16 +88,18 @@ public class VideoController {
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
     public ResponseEntity<ApiResponse<VideoDTO>> getVideoById(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            HttpServletRequest request) {
         Video video = service.getVideoById(id);
-        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+        return ResponseEntity.ok(ApiResponse.success(toDTO(video, request)));
     }
 
     @PutMapping("/{id:\\d+}/metadata")
     @Operation(summary = "编辑视频元数据", description = "手动修改视频的标题、简介、评分、上映日期、类型等元数据（只更新传入的非空字段）")
     public ResponseEntity<ApiResponse<VideoDTO>> updateVideoMetadata(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody com.fryfrog.hub.video.dto.VideoMetadataUpdateRequest request) {
+            @RequestBody com.fryfrog.hub.video.dto.VideoMetadataUpdateRequest request,
+            HttpServletRequest req) {
         Video video = service.getVideoById(id);
         boolean updated = false;
 
@@ -111,7 +119,7 @@ public class VideoController {
             videoRepository.save(video);
             log.info("[Metadata] Updated video id={}: manual metadata applied", id);
         }
-        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+        return ResponseEntity.ok(ApiResponse.success(toDTO(video, req)));
     }
 
     @GetMapping("/search/title")
@@ -119,15 +127,11 @@ public class VideoController {
     public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> searchByTitle(
             @Parameter(description = "搜索关键词") @RequestParam String q,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
         var result = service.searchByTitle(q, page, size);
-        List<Long> videoIds = result.getContent().stream().map(Video::getId).toList();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
-        List<VideoDTO> dtos = result.getContent().stream()
-                .map(v -> toDTO(v, progressMap.get(v.getId())))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(
-                PageResponse.of(dtos, page, size, result.getTotalElements())));
+        return ResponseEntity.ok(ApiResponse.success(toPageDTO(result.getContent(), page, size, result.getTotalElements(), userId)));
     }
 
     @GetMapping("/search/director")
@@ -135,39 +139,33 @@ public class VideoController {
     public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> searchByDirector(
             @Parameter(description = "导演名称关键词") @RequestParam String q,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
         var result = service.searchByDirector(q, page, size);
-        List<Long> videoIds = result.getContent().stream().map(Video::getId).toList();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
-        List<VideoDTO> dtos = result.getContent().stream()
-                .map(v -> toDTO(v, progressMap.get(v.getId())))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(
-                PageResponse.of(dtos, page, size, result.getTotalElements())));
+        return ResponseEntity.ok(ApiResponse.success(toPageDTO(result.getContent(), page, size, result.getTotalElements(), userId)));
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏列表", description = "返回已收藏的视频，支持分页")
+    @Operation(summary = "获取收藏列表", description = "返回当前用户已收藏的视频，支持分页")
     public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> getFavorites(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        var result = service.getFavorites(page, size);
-        List<Long> videoIds = result.getContent().stream().map(Video::getId).toList();
-        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(videoIds);
-        List<VideoDTO> dtos = result.getContent().stream()
-                .map(v -> toDTO(v, progressMap.get(v.getId())))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.success(
-                PageResponse.of(dtos, page, size, result.getTotalElements())));
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        var result = service.getFavorites(userId, page, size);
+        return ResponseEntity.ok(ApiResponse.success(toPageDTO(result.getContent(), page, size, result.getTotalElements(), userId)));
     }
 
     @PutMapping("/{id:\\d+}/favorite")
-    @Operation(summary = "设置收藏状态", description = "设置视频的收藏状态")
+    @Operation(summary = "设置收藏状态", description = "设置当前用户的视频收藏状态")
     public ResponseEntity<ApiResponse<VideoDTO>> setFavorite(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @Parameter(description = "收藏状态") @RequestParam boolean status) {
-        Video video = service.setFavorite(id, status);
-        return ResponseEntity.ok(ApiResponse.success(toDTO(video)));
+            @Parameter(description = "收藏状态") @RequestParam boolean status,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        service.setFavorite(userId, id, status);
+        return ResponseEntity.ok(ApiResponse.success(toDTO(service.getVideoById(id), request)));
     }
 
     @GetMapping("/{id:\\d+}/actors")
@@ -868,10 +866,12 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/progress")
-    @Operation(summary = "获取观看进度", description = "获取指定视频的观看进度")
+    @Operation(summary = "获取观看进度", description = "获取当前用户指定视频的观看进度")
     public ResponseEntity<ApiResponse<WatchProgressDTO>> getProgress(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        WatchProgress progress = watchProgressService.getProgress(id);
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        WatchProgress progress = watchProgressService.getProgress(userId, id);
         if (progress == null) {
             return ResponseEntity.ok(ApiResponse.success(null));
         }
@@ -882,8 +882,10 @@ public class VideoController {
     @Operation(summary = "更新播放位置", description = "轻量更新播放位置，可选更新总时长。退出播放器时调用，自动判定是否看完")
     public ResponseEntity<ApiResponse<WatchProgressDTO>> updatePosition(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @Valid @RequestBody UpdatePositionRequest request) {
-        WatchProgress progress = watchProgressService.updatePosition(id, request.getPosition(), request.getDuration());
+            @Valid @RequestBody UpdatePositionRequest request,
+            HttpServletRequest req) {
+        long userId = UserContext.currentUserId(req);
+        WatchProgress progress = watchProgressService.updatePosition(userId, id, request.getPosition(), request.getDuration());
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 
@@ -891,17 +893,21 @@ public class VideoController {
     @Operation(summary = "设置已观看状态", description = "标记视频为已看完或未看完")
     public ResponseEntity<ApiResponse<WatchProgressDTO>> updateWatched(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody UpdateWatchedRequest request) {
+            @RequestBody UpdateWatchedRequest request,
+            HttpServletRequest req) {
+        long userId = UserContext.currentUserId(req);
         boolean completed = request != null && Boolean.TRUE.equals(request.getCompleted());
-        WatchProgress progress = watchProgressService.updateWatched(id, completed);
+        WatchProgress progress = watchProgressService.updateWatched(userId, id, completed);
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
     }
 
     @DeleteMapping("/{id:\\d+}/progress")
-    @Operation(summary = "清除观看进度", description = "删除指定视频的观看进度记录")
+    @Operation(summary = "清除观看进度", description = "删除当前用户指定视频的观看进度记录")
     public ResponseEntity<ApiResponse<Void>> deleteProgress(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
-        watchProgressService.deleteProgress(id);
+            @Parameter(description = "视频ID") @PathVariable Long id,
+            HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        watchProgressService.deleteProgress(userId, id);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
@@ -931,7 +937,7 @@ public class VideoController {
                         entry.put("language", lang);
                         // URLEncoder 把空格编成 '+'，但 @PathVariable 解码时不把 '+' 当空格（客户端 404），
                         // 必须替换为 %20；字面 '+' 会被编码为 %2B 不受影响
-                        entry.put("url", "/api/v1/video/" + id + "/subtitles/" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+                        entry.put("url", MediaUrlSigner.sign("/api/v1/video/" + id + "/subtitles/" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20")));
                         subtitles.add(entry);
                     });
         } catch (Exception e) {
@@ -1158,7 +1164,7 @@ public class VideoController {
             return Integer.compare(ea, eb);
         });
 
-        // 生成 M3U（绝对 URL）
+        // 生成 M3U（绝对 URL，流地址带签名）
         StringBuilder m3u = new StringBuilder("#EXTM3U\n");
         String seriesTitle = video.getSeriesName() != null ? video.getSeriesName() : video.getTitle();
         for (Video v : siblings) {
@@ -1167,7 +1173,7 @@ public class VideoController {
                 title = String.format("S%02dE%02d - %s", v.getSeasonNumber(), v.getEpisodeNumber(), v.getTitle());
             }
             m3u.append("#EXTINF:-1,").append(title).append("\n");
-            m3u.append(baseUrl).append("/api/v1/video/").append(v.getId()).append("/stream\n");
+            m3u.append(baseUrl).append(MediaUrlSigner.sign("/api/v1/video/" + v.getId() + "/stream")).append("\n");
         }
 
         byte[] content = m3u.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -1217,7 +1223,15 @@ public class VideoController {
         return "application/octet-stream";
     }
 
-    private VideoDTO toDTO(Video video, WatchProgress progress) {
+    private VideoDTO toDTO(Video video, HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        WatchProgress progress = watchProgressService.getProgress(userId, video.getId());
+        boolean favorite = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, List.of(video.getId()))
+                .getOrDefault(video.getId(), false);
+        return toDTO(video, progress, favorite);
+    }
+
+    private VideoDTO toDTO(Video video, WatchProgress progress, boolean favorite) {
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         String baseName = nfoService.getBaseName(video.getFileName());
         boolean hasNfo = Files.exists(videoDir.resolve(baseName + ".nfo"));
@@ -1225,7 +1239,7 @@ public class VideoController {
         boolean hasFanart = Files.exists(videoDir.resolve(baseName + "-fanart.jpg"));
         boolean hasMetadataDir = Files.exists(nfoService.getMetadataDir(video));
 
-        VideoDTO dto = VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir);
+        VideoDTO dto = VideoDTO.fromEntity(video, hasNfo, hasPoster, hasFanart, hasMetadataDir, favorite);
 
         if (progress != null) {
             dto.setWatchPosition(progress.getPositionSeconds());
@@ -1238,7 +1252,16 @@ public class VideoController {
         return dto;
     }
 
-    private VideoDTO toDTO(Video video) {
-        return toDTO(video, watchProgressService.getProgress(video.getId()));
+    private PageResponse<VideoDTO> toPageDTO(List<Video> videos, int page, int size, long total, long userId) {
+        if (videos.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, total);
+        }
+        List<Long> videoIds = videos.stream().map(Video::getId).toList();
+        Map<Long, WatchProgress> progressMap = watchProgressService.getProgressByVideoIds(userId, videoIds);
+        Map<Long, Boolean> favMap = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, videoIds);
+        List<VideoDTO> dtos = videos.stream()
+                .map(v -> toDTO(v, progressMap.get(v.getId()), favMap.getOrDefault(v.getId(), false)))
+                .collect(Collectors.toList());
+        return PageResponse.of(dtos, page, size, total);
     }
 }
