@@ -110,7 +110,7 @@ public class SeriesController {
             int saPage = (int) (standaloneStart / size);
             int saOffset = (int) (standaloneStart % size);
             int saLimit = (int) (standaloneEnd - standaloneStart);
-            List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+            List<Long> enabledIds = mediaLibraryService.getAllowedLibraryIds(userId);
             Page<Video> standalonePage = videoRepository.findBySeriesIsNullAndEnabledLibraries(
                     enabledIds,
                     PageRequest.of(saPage, Math.max(size, saLimit),

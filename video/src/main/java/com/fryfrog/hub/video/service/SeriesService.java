@@ -109,11 +109,11 @@ public class SeriesService {
     }
 
     public List<VideoSeries> getAllSeries() {
-        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
         return seriesRepository.findAll().stream()
                 .filter(series -> series.getVideos().isEmpty() ||
                         series.getVideos().stream().anyMatch(v ->
-                                v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
+                                v.getLibraryId() == null || allowedIds.contains(v.getLibraryId())))
                 .toList();
     }
 
@@ -121,13 +121,13 @@ public class SeriesService {
      * 追更日历：返回在播（Returning Series）且有下一集播出日期的系列，按日期升序
      */
     public List<VideoSeries> getUpcomingCalendar() {
-        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        List<Long> allowedIds = mediaLibraryService.getAllowableLibraryIds();
         java.time.LocalDate today = java.time.LocalDate.now();
 
         return seriesRepository.findAll().stream()
                 .filter(series -> series.getVideos().isEmpty() ||
                         series.getVideos().stream().anyMatch(v ->
-                                v.getLibraryId() == null || enabledIds.contains(v.getLibraryId())))
+                                v.getLibraryId() == null || allowedIds.contains(v.getLibraryId())))
                 .filter(series -> series.getNextEpisodeDate() != null)
                 .filter(series -> "tv".equalsIgnoreCase(series.getMediaType()))
                 .filter(series -> {
@@ -280,7 +280,7 @@ public class SeriesService {
     }
 
     public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary(Long userId) {
-        List<Long> enabledIds = mediaLibraryService.getEnabledLibraryIds();
+        List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
         List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries().stream()
                 .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
                 .sorted(Comparator.comparingInt(lib -> lib.getSortOrder() != null ? lib.getSortOrder() : 0))
@@ -307,7 +307,7 @@ public class SeriesService {
 
             boolean added = false;
             for (Long libId : libraryIds) {
-                if (enabledIds.contains(libId)) {
+                if (allowedIds.contains(libId)) {
                     seriesByLibrary.computeIfAbsent(libId, k -> new ArrayList<>()).add(series);
                     added = true;
                 }
@@ -318,7 +318,7 @@ public class SeriesService {
         }
 
         for (Video video : allStandalone) {
-            if (video.getLibraryId() != null && enabledIds.contains(video.getLibraryId())) {
+            if (video.getLibraryId() != null && allowedIds.contains(video.getLibraryId())) {
                 standaloneByLibrary.computeIfAbsent(video.getLibraryId(), k -> new ArrayList<>()).add(video);
             } else {
                 unassignedStandalone.add(video);

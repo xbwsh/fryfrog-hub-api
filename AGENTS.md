@@ -71,6 +71,7 @@ mvn verify
 - 实体继承 `BaseEntity`（包含 id、createdAt、updatedAt）
 - 认证：自定义 Bearer Token 认证（非 Spring Security），多用户 + BCrypt 密码哈希，通过 `AuthManager`（app/config）与 `UserService`（common/service）管理
 - 用户管理：`User` 实体（common/model），角色 `ADMIN`/`USER`，管理端点 `/api/v1/users`；首次启动自动创建初始 `admin`（密码取 `AUTH_PASSWORD`，未配置则生成随机密码并打印日志）
+- 媒体库授权：`UserLibrary`（common/model）记录用户可访问的媒体库，`MediaLibraryService.getAllowedLibraryIds(userId)` 计算可见库（ADMIN/匿名/后台=全部启用库，普通用户=分配库∩启用库），内容查询走 `getAllowableLibraryIds()` 按当前请求用户过滤
 - 异常处理：`@RestControllerAdvice` 全局异常处理器
 - 配置：`application.yml`，多环境用 `application-{profile}.yml`
 - Lombok：`lombok.config` 启用 `@Qualifier` 注解拷贝

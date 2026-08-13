@@ -2,11 +2,15 @@ package com.fryfrog.hub.common.service;
 
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.model.UserLibrary;
 import com.fryfrog.hub.common.repository.MediaLibraryRepository;
+import com.fryfrog.hub.common.repository.UserLibraryRepository;
+import com.fryfrog.hub.common.security.UserContext;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
 import java.util.List;
@@ -17,12 +21,18 @@ import java.util.stream.Collectors;
 public class MediaLibraryService {
 
     private final MediaLibraryRepository repository;
+    private final UserLibraryRepository userLibraryRepository;
+    private final UserService userService;
 
     @Value("${video.root-paths:}")
     private String legacyRootPaths;
 
-    public MediaLibraryService(MediaLibraryRepository repository) {
+    public MediaLibraryService(MediaLibraryRepository repository,
+                               UserLibraryRepository userLibraryRepository,
+                               UserService userService) {
         this.repository = repository;
+        this.userLibraryRepository = userLibraryRepository;
+        this.userService = userService;
     }
 
     @PostConstruct
@@ -135,6 +145,65 @@ public class MediaLibraryService {
         return getEnabledLibraries().stream()
                 .map(MediaLibrary::getId)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 当前请求环境下用户可访问的媒体库 ID（取两者交集）：
+     * <ul>
+     *   <li>ADMIN 或认证关闭的匿名档案：全部启用库</li>
+     *   <li>普通用户：被分配的库 ∩ 启用库；未分配则空</li>
+     *   <li>无 Web 请求（后台扫描等）：全部启用库</li>
+     * </ul>
+     */
+    public List<Long> getAllowableLibraryIds() {
+        Long userId = UserContext.currentUserIdOrNull();
+        if (userId == null) {
+            return getEnabledLibraryIds();
+        }
+        return getAllowedLibraryIds(userId);
+    }
+
+    public List<Long> getAllowedLibraryIds(Long userId) {
+        if (userId == null || userId == UserContext.ANONYMOUS_ID || userService.isAdmin(userId)) {
+            return getEnabledLibraryIds();
+        }
+        List<Long> enabledIds = getEnabledLibraryIds();
+        return userLibraryRepository.findByUserId(userId).stream()
+                .map(UserLibrary::getLibraryId)
+                .filter(enabledIds::contains)
+                .toList();
+    }
+
+    /** 管理员为指定用户分配可访问的媒体库（幂等替换）。 */
+    @Transactional
+    public void assignLibraries(Long userId, List<Long> libraryIds) {
+        userService.getUser(userId);
+        List<Long> target = libraryIds == null ? List.of() : libraryIds.stream().distinct().toList();
+
+        List<Long> current = userLibraryRepository.findByUserId(userId).stream()
+                .map(UserLibrary::getLibraryId)
+                .toList();
+
+        for (Long addId : target) {
+            if (!current.contains(addId)) {
+                getLibraryById(addId);
+                userLibraryRepository.save(UserLibrary.builder()
+                        .userId(userId).libraryId(addId).build());
+            }
+        }
+        for (Long removeId : current) {
+            if (!target.contains(removeId)) {
+                userLibraryRepository.deleteByUserIdAndLibraryId(userId, removeId);
+            }
+        }
+        log.info("[LibraryGrant] user={} libraries={}", userId, target);
+    }
+
+    /** 用户已分配的媒体库 ID（不做启用态过滤）。 */
+    public List<Long> getAssignedLibraryIds(Long userId) {
+        return userLibraryRepository.findByUserId(userId).stream()
+                .map(UserLibrary::getLibraryId)
+                .toList();
     }
 
     public List<String> getEnabledPaths() {

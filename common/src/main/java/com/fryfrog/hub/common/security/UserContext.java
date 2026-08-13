@@ -1,6 +1,9 @@
 package com.fryfrog.hub.common.security;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * 当前登录用户上下文。AuthInterceptor 将已认证用户 ID 写入请求属性，
@@ -25,5 +28,18 @@ public final class UserContext {
             return id;
         }
         return ANONYMOUS_ID;
+    }
+
+    /** 从请求上下文读取当前用户 ID；无 Web 请求（如后台扫描任务）时返回 null。 */
+    public static Long currentUserIdOrNull() {
+        RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+        if (attrs instanceof ServletRequestAttributes sra) {
+            HttpServletRequest request = sra.getRequest();
+            Object value = request.getAttribute(USER_ID_ATTR);
+            if (value instanceof Long id) {
+                return id;
+            }
+        }
+        return null;
     }
 }

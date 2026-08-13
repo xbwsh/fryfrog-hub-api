@@ -4,8 +4,9 @@ import com.fryfrog.hub.common.dto.*;
 import com.fryfrog.hub.common.exception.BadRequestException;
 import com.fryfrog.hub.common.exception.ForbiddenException;
 import com.fryfrog.hub.common.model.User;
-import com.fryfrog.hub.common.security.UserContext;
+import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.UserService;
+import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.config.AuthManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,10 +23,12 @@ public class UserController {
 
     private final UserService userService;
     private final AuthManager authManager;
+    private final MediaLibraryService mediaLibraryService;
 
-    public UserController(UserService userService, AuthManager authManager) {
+    public UserController(UserService userService, AuthManager authManager, MediaLibraryService mediaLibraryService) {
         this.userService = userService;
         this.authManager = authManager;
+        this.mediaLibraryService = mediaLibraryService;
     }
 
     @GetMapping
@@ -111,6 +114,26 @@ public class UserController {
         userService.resetPassword(id, req.getNewPassword());
         invalidateTokensFor(id);
         return ResponseEntity.ok(ApiResponse.success("密码已重置", null));
+    }
+
+    @GetMapping("/{id}/libraries")
+    @Operation(summary = "用户可访问媒体库", description = "返回指定用户被分配的媒体库 ID 列表（仅管理员）")
+    public ResponseEntity<ApiResponse<List<Long>>> getUserLibraries(@PathVariable Long id,
+                                                                    HttpServletRequest request) {
+        requireAdmin(request);
+        userService.getUser(id);
+        return ResponseEntity.ok(ApiResponse.success(mediaLibraryService.getAssignedLibraryIds(id)));
+    }
+
+    @PutMapping("/{id}/libraries")
+    @Operation(summary = "分配用户可访问媒体库", description = "幂等替换指定用户的媒体库授权（仅管理员）")
+    public ResponseEntity<ApiResponse<List<Long>>> setUserLibraries(@PathVariable Long id,
+                                                                    @RequestBody UserLibraryUpdateRequest req,
+                                                                    HttpServletRequest request) {
+        requireAdmin(request);
+        userService.getUser(id);
+        mediaLibraryService.assignLibraries(id, req.getLibraryIds());
+        return ResponseEntity.ok(ApiResponse.success("媒体库授权已更新", mediaLibraryService.getAssignedLibraryIds(id)));
     }
 
     private Long currentUserId(HttpServletRequest request) {
