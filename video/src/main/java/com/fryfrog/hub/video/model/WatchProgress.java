@@ -16,8 +16,8 @@ import lombok.*;
 @Schema(description = "观看进度")
 public class WatchProgress extends BaseEntity {
 
-    @Schema(description = "所属用户 ID（认证关闭时为匿名档案）")
-    @Column(name = "user_id", nullable = false)
+    @Schema(description = "所属用户 ID（认证关闭时为匿名档案；升级前旧数据可能为空，由迁移补全）")
+    @Column(name = "user_id")
     private Long userId;
 
     @ManyToOne(fetch = FetchType.LAZY)
