@@ -84,6 +84,18 @@ public class MediaLibraryService {
         return repository.findAllByOrderBySortOrderAsc();
     }
 
+    /** 当前请求用户可见的媒体库：管理员/后台见全部，受限用户仅见授权且启用的库。 */
+    public List<MediaLibrary> getVisibleLibraries() {
+        Long userId = UserContext.currentUserIdOrNull();
+        if (!isRestrictedUser(userId)) {
+            return getAllLibraries();
+        }
+        List<Long> allowedIds = getAllowedLibraryIds(userId);
+        return repository.findAllByOrderBySortOrderAsc().stream()
+                .filter(lib -> allowedIds.contains(lib.getId()))
+                .toList();
+    }
+
     public List<MediaLibrary> getEnabledLibraries() {
         return repository.findByEnabledTrueOrderBySortOrderAsc();
     }

@@ -2,6 +2,7 @@ package com.fryfrog.hub.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fryfrog.hub.common.security.UserContext;
+import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.common.util.MediaUrlSigner;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -10,15 +11,37 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
     private final AuthManager authManager;
+    private final UserService userService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public AuthInterceptor(AuthManager authManager) {
+    /** 普通用户允许的「自身数据」写操作路径（其余写操作仅 ADMIN） */
+    private static final Set<String> USER_OWNED_MUTATIONS = Set.of(
+            "^/api/v1/auth/logout$",
+            "^/api/v1/users/me/password$",
+            "^/api/v1/video/\\d+/favorite$",
+            "^/api/v1/video/series/\\d+/favorite$",
+            "^/api/v1/video/\\d+/progress$",
+            "^/api/v1/video/\\d+/watched$"
+    );
+
+    /** 读操作但属于管理功能，普通用户不可访问 */
+    private static final Set<String> ADMIN_ONLY_READS = Set.of(
+            "^/api/v1/media-libraries/browse$",
+            "^/api/v1/settings.*$",
+            "^/api/v1/logs.*$"
+    );
+
+    private static final Set<String> MUTATING_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
+
+    public AuthInterceptor(AuthManager authManager, UserService userService) {
         this.authManager = authManager;
+        this.userService = userService;
     }
 
     @Override
@@ -46,10 +69,24 @@ public class AuthInterceptor implements HandlerInterceptor {
         Long userId = authManager.getUserId(extractToken(request));
         if (userId != null) {
             request.setAttribute(UserContext.USER_ID_ATTR, userId);
+            if (!userService.isAdmin(userId) && requiresAdmin(request, path)) {
+                return reject(response, HttpServletResponse.SC_FORBIDDEN, "需要管理员权限");
+            }
             return true;
         }
 
         return reject(response, HttpServletResponse.SC_UNAUTHORIZED);
+    }
+
+    /**
+     * 判断是否必须 ADMIN：默认所有状态变更（POST/PUT/PATCH/DELETE）仅 ADMIN，
+     * 白名单（用户自身数据）与普通读操作除外；部分读操作也要求 ADMIN。
+     */
+    private boolean requiresAdmin(HttpServletRequest request, String path) {
+        if (MUTATING_METHODS.contains(request.getMethod())) {
+            return USER_OWNED_MUTATIONS.stream().noneMatch(path::matches);
+        }
+        return ADMIN_ONLY_READS.stream().anyMatch(path::matches);
     }
 
     /** 签名校验的媒体端点：封面/背景/流/季封面/字幕 */
@@ -76,10 +113,14 @@ public class AuthInterceptor implements HandlerInterceptor {
     }
 
     private boolean reject(HttpServletResponse response, int status) throws IOException {
+        return reject(response, status, "Unauthorized");
+    }
+
+    private boolean reject(HttpServletResponse response, int status, String message) throws IOException {
         response.setStatus(status);
         response.setContentType("application/json");
         response.getWriter().write(objectMapper.writeValueAsString(
-                Map.of("success", false, "message", "Unauthorized")));
+                Map.of("success", false, "message", message)));
         return false;
     }
 

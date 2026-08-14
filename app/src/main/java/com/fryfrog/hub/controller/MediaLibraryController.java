@@ -43,15 +43,19 @@ public class MediaLibraryController {
     // ── CRUD ──
 
     @GetMapping
-    @Operation(summary = "获取所有资源库")
+    @Operation(summary = "获取所有资源库", description = "管理员可见全部；普通用户仅可见被分配的启用库")
     public ResponseEntity<ApiResponse<List<MediaLibrary>>> getAll() {
-        return ResponseEntity.ok(ApiResponse.success(service.getAllLibraries()));
+        return ResponseEntity.ok(ApiResponse.success(service.getVisibleLibraries()));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "获取资源库详情")
     public ResponseEntity<ApiResponse<MediaLibrary>> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(service.getLibraryById(id)));
+        MediaLibrary library = service.getLibraryById(id);
+        if (!service.isVisibleToCurrentUser(id)) {
+            throw new com.fryfrog.hub.common.exception.ResourceNotFoundException("MediaLibrary", "id", id);
+        }
+        return ResponseEntity.ok(ApiResponse.success(library));
     }
 
     @PostMapping
