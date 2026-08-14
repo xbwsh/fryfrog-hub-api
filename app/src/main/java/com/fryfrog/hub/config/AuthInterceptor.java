@@ -24,6 +24,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     private static final Set<String> USER_OWNED_MUTATIONS = Set.of(
             "^/api/v1/auth/logout$",
             "^/api/v1/users/me/password$",
+            "^/api/v1/users/me/preferences$",
             "^/api/v1/video/\\d+/favorite$",
             "^/api/v1/video/series/\\d+/favorite$",
             "^/api/v1/video/\\d+/progress$",

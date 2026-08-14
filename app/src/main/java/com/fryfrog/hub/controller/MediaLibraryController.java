@@ -6,6 +6,7 @@ import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.video.service.MediaLibraryBrowseService;
 import com.fryfrog.hub.video.service.VideoPipelineService;
 import com.fryfrog.hub.video.service.VideoService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,9 +17,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.*;
 import java.util.*;
 
 @RestController
@@ -32,12 +30,14 @@ public class MediaLibraryController {
     private final VideoService videoService;
     private final ScrapeProgressService progressService;
     private final VideoPipelineService pipelineService;
+    private final MediaLibraryBrowseService browseService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService) {
         this.service = service;
         this.videoService = videoService;
         this.progressService = progressService;
         this.pipelineService = pipelineService;
+        this.browseService = browseService;
     }
 
     // ── CRUD ──
@@ -203,67 +203,6 @@ public class MediaLibraryController {
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> browse(
             @Parameter(description = "目录路径，不传则列出所有磁盘根目录")
             @RequestParam(required = false) String path) {
-        if (path == null || path.isBlank()) {
-            return ResponseEntity.ok(ApiResponse.success(listRoots()));
-        }
-        Path dirPath = Paths.get(path);
-        if (!Files.isDirectory(dirPath)) {
-            return ResponseEntity.ok(ApiResponse.success(List.of()));
-        }
-        return ResponseEntity.ok(ApiResponse.success(listChildren(dirPath.toFile())));
-    }
-
-    private List<Map<String, Object>> listRoots() {
-        List<Map<String, Object>> result = new ArrayList<>();
-        Set<String> added = new HashSet<>();
-
-        // Docker 环境优先暴露媒体挂载路径
-        String[] mediaPaths = {
-                "/data/media/video", "/data/media", "/data"
-        };
-        for (String p : mediaPaths) {
-            File dir = new File(p);
-            if (dir.exists() && dir.isDirectory() && added.add(dir.getAbsolutePath())) {
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("name", p);
-                item.put("path", dir.getAbsolutePath());
-                item.put("writable", dir.canWrite());
-                result.add(item);
-            }
-        }
-
-        // 补充系统根目录（Linux 下 / 通常对用户无意义，但 Windows 盘符有用）
-        for (File root : File.listRoots()) {
-            String rootPath = root.getAbsolutePath();
-            if (added.add(rootPath)) {
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("name", rootPath);
-                item.put("path", rootPath);
-                item.put("writable", root.canWrite());
-                result.add(item);
-            }
-        }
-
-        return result;
-    }
-
-    private List<Map<String, Object>> listChildren(File dir) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir.toPath(), Files::isDirectory)) {
-            for (Path child : stream) {
-                String name = child.getFileName().toString();
-                if (name.startsWith(".")) continue;
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("name", name);
-                item.put("path", child.toAbsolutePath().toString());
-                item.put("writable", Files.isWritable(child));
-                result.add(item);
-            }
-        } catch (IOException e) {
-            log.warn("Failed to list directory: {}", dir.getAbsolutePath(), e);
-            return List.of();
-        }
-        result.sort((a, b) -> ((String) a.get("name")).compareToIgnoreCase((String) b.get("name")));
-        return result;
+        return ResponseEntity.ok(ApiResponse.success(browseService.listChildren(path)));
     }
 }

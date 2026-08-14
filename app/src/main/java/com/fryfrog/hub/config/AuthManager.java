@@ -1,10 +1,13 @@
 package com.fryfrog.hub.config;
 
+import com.fryfrog.hub.common.model.AuthToken;
 import com.fryfrog.hub.common.model.User;
+import com.fryfrog.hub.common.repository.AuthTokenRepository;
 import com.fryfrog.hub.common.service.UserService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AuthManager {
 
     private final UserService userService;
+    private final AuthTokenRepository authTokenRepository;
 
     @Value("${auth.enabled:false}")
     private boolean enabled;
@@ -26,13 +30,12 @@ public class AuthManager {
     @Value("${auth.login-lock-minutes:15}")
     private long lockMinutes;
 
-    // token → 持有者信息
-    private final Map<String, TokenEntry> tokens = new ConcurrentHashMap<>();
-    // username → 登录失败计数/锁定信息
+    // username → 登录失败计数/锁定信息（短期状态，内存即可）
     private final Map<String, LoginAttempt> attempts = new ConcurrentHashMap<>();
 
-    public AuthManager(UserService userService) {
+    public AuthManager(UserService userService, AuthTokenRepository authTokenRepository) {
         this.userService = userService;
+        this.authTokenRepository = authTokenRepository;
     }
 
     public boolean isEnabled() {
@@ -68,7 +71,11 @@ public class AuthManager {
         attempts.remove(username);
 
         String token = UUID.randomUUID().toString();
-        tokens.put(token, new TokenEntry(user.getId(), System.currentTimeMillis() + tokenTtlSeconds * 1000));
+        authTokenRepository.save(AuthToken.builder()
+                .token(token)
+                .userId(user.getId())
+                .expiresAt(LocalDateTime.now().plusSeconds(tokenTtlSeconds))
+                .build());
         userService.updateLastLogin(user.getId(), ip);
         return new LoginResult(token, null, 0);
     }
@@ -80,22 +87,22 @@ public class AuthManager {
         if (!isEnabled()) return null;
         if (token == null || token.isEmpty()) return null;
 
-        TokenEntry entry = tokens.get(token);
+        AuthToken entry = authTokenRepository.findByToken(token).orElse(null);
         if (entry == null) return null;
-        if (System.currentTimeMillis() > entry.expiresAt) {
-            tokens.remove(token);
+        if (LocalDateTime.now().isAfter(entry.getExpiresAt())) {
+            authTokenRepository.deleteByToken(token);
             return null;
         }
-        return entry.userId;
+        return entry.getUserId();
     }
 
     public void logout(String token) {
-        if (token != null) tokens.remove(token);
+        if (token != null) authTokenRepository.deleteByToken(token);
     }
 
     public void invalidateUserTokens(Long userId) {
         if (userId == null) return;
-        tokens.entrySet().removeIf(entry -> entry.getValue().userId == userId);
+        authTokenRepository.deleteByUserId(userId);
     }
 
     private void recordFailure(LoginAttempt attempt) {
@@ -117,9 +124,6 @@ public class AuthManager {
         static LoginResult fail(String error) {
             return new LoginResult(null, error, 0);
         }
-    }
-
-    private record TokenEntry(long userId, long expiresAt) {
     }
 
     private static class LoginAttempt {

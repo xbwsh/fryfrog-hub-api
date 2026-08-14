@@ -162,6 +162,7 @@ public static VideoDTO fromEntity(Video video, boolean hasNfo, boolean hasPoster
                                      boolean hasMetadataDir, boolean favorite) {
         VideoDTO dto = new VideoDTO();
         dto.setId(video.getId());
+        dto.setTitle(video.getTitle());
         dto.setCoverUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/cover"));
         dto.setFanartUrl(com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + video.getId() + "/fanart"));
         dto.setLogoUrl(video.getLogoApiUrl());

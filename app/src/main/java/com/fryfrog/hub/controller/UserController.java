@@ -5,6 +5,7 @@ import com.fryfrog.hub.common.exception.BadRequestException;
 import com.fryfrog.hub.common.exception.ForbiddenException;
 import com.fryfrog.hub.common.model.User;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.UserPreferenceService;
 import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.config.AuthManager;
@@ -24,11 +25,14 @@ public class UserController {
     private final UserService userService;
     private final AuthManager authManager;
     private final MediaLibraryService mediaLibraryService;
+    private final UserPreferenceService preferenceService;
 
-    public UserController(UserService userService, AuthManager authManager, MediaLibraryService mediaLibraryService) {
+    public UserController(UserService userService, AuthManager authManager, MediaLibraryService mediaLibraryService,
+                          UserPreferenceService preferenceService) {
         this.userService = userService;
         this.authManager = authManager;
         this.mediaLibraryService = mediaLibraryService;
+        this.preferenceService = preferenceService;
     }
 
     @GetMapping
@@ -134,6 +138,21 @@ public class UserController {
         userService.getUser(id);
         mediaLibraryService.assignLibraries(id, req.getLibraryIds());
         return ResponseEntity.ok(ApiResponse.success("媒体库授权已更新", mediaLibraryService.getAssignedLibraryIds(id)));
+    }
+
+    @GetMapping("/me/preferences")
+    @Operation(summary = "我的偏好设置", description = "返回当前登录用户的全部偏好（主题/隐私/播放器等）")
+    public ResponseEntity<ApiResponse<java.util.Map<String, String>>> myPreferences(HttpServletRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(preferenceService.getPreferences(currentUserId(request))));
+    }
+
+    @PutMapping("/me/preferences")
+    @Operation(summary = "更新我的偏好设置", description = "全量替换当前用户偏好，value 为空串表示删除该键")
+    public ResponseEntity<ApiResponse<java.util.Map<String, String>>> updateMyPreferences(
+            @RequestBody UserPreferenceUpdateRequest req,
+            HttpServletRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                preferenceService.setPreferences(currentUserId(request), req.getPreferences())));
     }
 
     private Long currentUserId(HttpServletRequest request) {

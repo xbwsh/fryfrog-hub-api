@@ -80,10 +80,12 @@ mvn verify
 
 - 端口：`20058`（`SERVER_PORT` 环境变量可覆盖）
 - 数据库：PostgreSQL，通过环境变量配置（开发用 `.env`，Docker 用环境变量）
-- 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认留空（启动时若未配置则生成随机 admin 密码），登录失败默认 5 次后锁定 15 分钟
+- 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 默认留空（启动时若未配置则生成随机 admin 密码），登录失败默认 5 次后锁定 15 分钟；登录令牌存 `auth_tokens` 表（`AuthToken`/`AuthTokenRepository`）DB 持久化，重启不失效，`TokenCleanupScheduler` 每日 4:20 清理过期令牌
 - 媒体路径：`VIDEO_ROOT_PATHS`
 - 数据隔离：观看进度（`(user, video)` 唯一）与收藏（`favorites` 表）按用户隔离，认证关闭时用匿名 ID（`UserContext.ANONYMOUS_ID`）全局共享
 - 媒体签名：封面/流/字幕等 URL 由 `MediaUrlSigner`（common/util）签名（exp+sig，HMAC-SHA256），`AuthInterceptor` 校验；`LegacyDataMigrator` 启动时把旧全局数据迁移给 admin
+- HTTP 客户端：默认 `restTemplate` 使用标准证书校验；`scraperRestTemplate`（TMDB 刮削）默认同样严格，如需信任自签名/内网证书，设 `SCRAPER_BYPASS_SSL=true`（通过 Apache HttpClient 局部配置，不改 JVM 全局 SSL）
+- 用户偏好：主题/隐私/播放器等「我的」页设置存 `user_preferences` 表（`UserPreference`/`UserPreferenceService`），按账号隔离，接口 `GET|PUT /api/v1/users/me/preferences`（普通用户可写，已加入 `USER_OWNED_MUTATIONS` 白名单）；PUT 为全量替换，value 空串表示删除该键。认证关闭时不提供（返回 401）
 - `.env` 为开发环境配置，已加入 `.gitignore`
 - `.env.example` 为配置模板，已提交到仓库
 
