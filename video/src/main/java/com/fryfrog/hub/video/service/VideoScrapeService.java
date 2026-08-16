@@ -40,6 +40,7 @@ public class VideoScrapeService {
     private final SeriesService seriesService;
     private final VideoActorRepository actorRepository;
     private final VideoAssetService assetService;
+    private final VideoOrganizeService organizeService;
     private final TransactionTemplate transactionTemplate;
     private final SystemSettingService settingService;
     private final ScrapeProgressService scrapeProgressService;
@@ -137,6 +138,12 @@ public class VideoScrapeService {
 
             for (Video video : seriesGroup) {
                 try {
+                    // 未识别目录中的视频不参与自动刮削（等待手动绑定）
+                    if (nfoService.isInUnscrapedDir(video)) {
+                        log.debug("[Scrape] Video '{}' in unscraped dir, skipping", video.getTitle());
+                        continue;
+                    }
+
                     String query = video.getTitle();
                     if (query == null || query.isBlank()) {
                         log.debug("[Scrape] Skipping video with empty title: {}", video.getFileName());
@@ -167,6 +174,10 @@ public class VideoScrapeService {
                     if (results.isEmpty()) {
                         log.info("[Scrape] No TMDB results for: '{}'", video.getTitle());
                         markScrapeAttempted(video);
+                        // 移入未识别目录，之后不再自动刮削
+                        if (organizeService.moveToUnscrapedDir(video)) {
+                            log.info("[Scrape] Moved '{}' to unscraped dir (no TMDB results)", video.getTitle());
+                        }
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no TMDB results");
                         continue;
                     }
@@ -182,6 +193,10 @@ public class VideoScrapeService {
                     if (bestMatch == null) {
                         log.info("[Scrape] No confident TMDB match for: '{}' (best score < 0.6)", video.getTitle());
                         markScrapeAttempted(video);
+                        // 移入未识别目录，之后不再自动刮削
+                        if (organizeService.moveToUnscrapedDir(video)) {
+                            log.info("[Scrape] Moved '{}' to unscraped dir (no confident match)", video.getTitle());
+                        }
                         scrapeProgressService.updateItem("video", video.getFileName(), "failed", "no confident match");
                         continue;
                     }

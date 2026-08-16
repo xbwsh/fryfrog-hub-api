@@ -467,10 +467,12 @@ public class VideoScanService {
     }
 
     /**
-     * 查找未刮削的视频
+     * 查找未刮削的视频（排除未识别目录中的视频，它们不参与自动刮削）
      */
     public List<Video> findUnscraped(Long libraryId) {
-        List<Video> allVideos = repository.findUnscrapedVideos();
+        List<Video> allVideos = repository.findUnscrapedVideos().stream()
+                .filter(v -> !nfoService.isInUnscrapedDir(v))
+                .toList();
         if (libraryId != null) {
             return allVideos.stream()
                     .filter(v -> libraryId.equals(v.getLibraryId()))

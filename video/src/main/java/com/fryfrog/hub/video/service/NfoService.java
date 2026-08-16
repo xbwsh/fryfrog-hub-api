@@ -28,6 +28,35 @@ public class NfoService {
 
     private final MediaLibraryService mediaLibraryService;
 
+    /** 未识别目录名：刮削失败（TMDB 无结果/无置信匹配）的视频移入，不再自动刮削 */
+    public static final String UNSCRAPED_DIR_NAME = "未识别";
+
+    // ==================== 未识别目录 ====================
+
+    /**
+     * 未识别目录路径（媒体库根路径下的 {@value #UNSCRAPED_DIR_NAME} 子目录）。
+     * 无媒体库（libraryId 为空）的视频返回 null。
+     */
+    public Path getUnscrapedDir(Video video) {
+        if (video.getLibraryId() == null || video.getFilePath() == null) return null;
+        try {
+            MediaLibrary lib = mediaLibraryService.getLibraryById(video.getLibraryId());
+            if (lib != null && lib.getPath() != null) {
+                return Paths.get(lib.getPath()).normalize().resolve(UNSCRAPED_DIR_NAME);
+            }
+        } catch (Exception e) {
+            log.debug("[NfoService] Failed to get library path: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /** 视频文件是否位于未识别目录中 */
+    public boolean isInUnscrapedDir(Video video) {
+        Path unscrapedDir = getUnscrapedDir(video);
+        if (unscrapedDir == null || video.getFilePath() == null) return false;
+        return Paths.get(video.getFilePath()).normalize().startsWith(unscrapedDir);
+    }
+
     // ==================== NFO 生成 ====================
 
     /**

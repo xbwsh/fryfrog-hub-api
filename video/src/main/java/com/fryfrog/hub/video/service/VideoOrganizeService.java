@@ -56,6 +56,12 @@ public class VideoOrganizeService {
 
         for (Video video : sorted) {
             try {
+                // 未识别目录中尚未绑定的视频不整理（保留原文件，等待手动绑定）
+                if (nfoService.isInUnscrapedDir(video) && video.getTmdbId() == null) {
+                    skipped++;
+                    continue;
+                }
+
                 // 先重命名文件（如果有 metadata）
                 renameVideoFile(video);
 
@@ -236,6 +242,63 @@ public class VideoOrganizeService {
             repository.save(video);
         } catch (IOException e) {
             log.error("[Organize] Failed to move video {} to metadata dir: {}", video.getFileName(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 移动视频到未识别目录（保留原文件名，带字幕和本地封面）。
+     * 已在未识别目录或无法确定媒体库时不做任何操作。
+     *
+     * @return 是否实际发生了移动
+     */
+    public boolean moveToUnscrapedDir(Video video) {
+        try {
+            if (nfoService.isInUnscrapedDir(video)) return false;
+
+            Path unscrapedDir = nfoService.getUnscrapedDir(video);
+            if (unscrapedDir == null || video.getFilePath() == null) return false;
+
+            Files.createDirectories(unscrapedDir);
+
+            Path videoPath = Paths.get(video.getFilePath());
+            Path targetPath = unscrapedDir.resolve(video.getFileName());
+            if (videoPath.equals(targetPath)) return false;
+
+            if (!Files.exists(videoPath)) {
+                log.warn("[Organize] Unscraped move skipped, source not found: {}", videoPath);
+                return false;
+            }
+
+            // 检查目标路径是否已被其他视频占用（file_path 有 UNIQUE 约束）
+            String targetPathStr = targetPath.toString();
+            Optional<Video> existing = repository.findByFilePath(targetPathStr);
+            if (existing.isPresent() && !existing.get().getId().equals(video.getId())) {
+                log.warn("[Organize] Skip unscraped move {}: target path already used by video id={}",
+                        video.getFileName(), existing.get().getId());
+                return false;
+            }
+
+            Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+            // 移动关联文件（字幕、NFO、本地封面）
+            Path oldDir = videoPath.getParent();
+            String baseName = nfoService.getBaseName(video.getFileName());
+            moveAssociatedSubtitles(oldDir, unscrapedDir, baseName);
+            moveAssociatedFile(oldDir, unscrapedDir, baseName + ".nfo");
+            moveAssociatedFile(oldDir, unscrapedDir, baseName + "-poster.jpg");
+            moveAssociatedFile(oldDir, unscrapedDir, baseName + "-fanart.jpg");
+
+            video.setFilePath(targetPath.toString());
+            repository.save(video);
+
+            // 清理移动后遗留的空目录，上界为库根（库根本身不删除）
+            Path libraryRoot = unscrapedDir.getParent();
+            cleanupEmptyOldDirs(oldDir, libraryRoot != null ? libraryRoot : unscrapedDir);
+            log.info("[Organize] Moved unscraped video: {} -> {}", videoPath, targetPath);
+            return true;
+        } catch (Exception e) {
+            log.error("[Organize] Failed to move video {} to unscraped dir: {}", video.getFileName(), e.getMessage());
+            return false;
         }
     }
 

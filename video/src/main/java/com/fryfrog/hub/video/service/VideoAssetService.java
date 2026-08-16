@@ -68,6 +68,10 @@ public class VideoAssetService {
 
         for (Video video : videos) {
             try {
+                // 未识别目录中的视频不生成资产（无元数据，避免嵌套目录）
+                if (nfoService.isInUnscrapedDir(video)) {
+                    continue;
+                }
                 // 重新获取视频（带 series 关联），避免懒加载问题
                 Video freshVideo = videoRepository.findById(video.getId()).orElse(video);
                 generateNfoAndCovers(freshVideo, force);

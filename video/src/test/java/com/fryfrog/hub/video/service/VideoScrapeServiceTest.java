@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.SystemSettingService;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
+import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ActiveProfiles("test")
 @ExtendWith(MockitoExtension.class)
@@ -28,6 +34,7 @@ class VideoScrapeServiceTest {
     @Mock private SeriesService seriesService;
     @Mock private VideoActorRepository actorRepository;
     @Mock private VideoAssetService assetService;
+    @Mock private VideoOrganizeService organizeService;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private SystemSettingService settingService;
     @Mock private ScrapeProgressService scrapeProgressService;
@@ -101,6 +108,55 @@ class VideoScrapeServiceTest {
 
         // a 的 originalTitle 更接近查询，应选 a
         assertThat(selected).isSameAs(a);
+    }
+
+    @Test
+    void autoScrape_noTmdbResults_movesVideoToUnscrapedDir() {
+        Video video = video("abc.mkv", "abc");
+
+        when(settingService.getBoolean("scrape.auto-scrape", true)).thenReturn(true);
+        when(scanService.findUnscraped(null)).thenReturn(List.of(video));
+        when(nfoService.isInUnscrapedDir(video)).thenReturn(false);
+        when(mediaLibraryService.getLibraryById(10L)).thenReturn(new com.fryfrog.hub.common.model.MediaLibrary());
+        when(tmdbService.isConfigured()).thenReturn(true);
+        when(tmdbService.searchMovies(anyString())).thenReturn(List.of());
+        when(tmdbService.searchTv(anyString())).thenReturn(List.of());
+        when(tmdbService.searchMovies(anyString(), any())).thenReturn(List.of());
+        when(tmdbService.searchTv(anyString(), any())).thenReturn(List.of());
+        when(repository.save(video)).thenReturn(video);
+        when(repository.findAllById(any())).thenReturn(List.of());
+        when(repository.findAll()).thenReturn(List.of());
+        when(organizeService.moveToUnscrapedDir(video)).thenReturn(true);
+
+        service.autoScrapeAll(false);
+
+        verify(organizeService).moveToUnscrapedDir(video);
+    }
+
+    @Test
+    void autoScrape_videoInUnscrapedDir_skippedWithoutTmdbCall() {
+        Video video = video("abc.mkv", "abc");
+
+        when(settingService.getBoolean("scrape.auto-scrape", true)).thenReturn(true);
+        when(scanService.findUnscraped(null)).thenReturn(List.of(video));
+        when(nfoService.isInUnscrapedDir(video)).thenReturn(true);
+        when(repository.findAll()).thenReturn(List.of());
+        when(repository.findAllById(any())).thenReturn(List.of());
+
+        service.autoScrapeAll(false);
+
+        verify(tmdbService, never()).searchMovies(anyString());
+        verify(organizeService, never()).moveToUnscrapedDir(any());
+    }
+
+    private Video video(String fileName, String title) {
+        Video video = new Video();
+        video.setId(1L);
+        video.setFileName(fileName);
+        video.setTitle(title);
+        video.setLibraryId(10L);
+        video.setFilePath("D:/library/" + fileName);
+        return video;
     }
 
     private TmdbSearchResult.TmdbSearchItem item(
