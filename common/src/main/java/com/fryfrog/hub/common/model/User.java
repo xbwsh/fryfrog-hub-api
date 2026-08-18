@@ -25,6 +25,14 @@ public class User extends BaseEntity {
     @Column(nullable = false)
     private String passwordHash;
 
+    /**
+     * Subsonic 协议认证用明文密码副本（Navidrome 同款做法：Subsonic 的
+     * token 认证 t=md5(明文+salt) 无法用 BCrypt 反推，故在密码变更时同步维护一份）。
+     * 仅用于 /rest/* 认证，绝不通过任何 API 返回；需安全存储时可用配置密钥加密。
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String subsonicPassword;
+
     @Schema(description = "昵称", example = "管理员")
     private String nickname;
 

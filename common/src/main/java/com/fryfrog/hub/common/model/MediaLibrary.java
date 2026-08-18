@@ -49,7 +49,7 @@ public class MediaLibrary extends BaseEntity {
     private String description;
 
     public enum Type {
-        VIDEO
+        VIDEO, MUSIC
     }
 
     public enum VideoSubType {
@@ -58,6 +58,10 @@ public class MediaLibrary extends BaseEntity {
 
     public boolean isVideoType() {
         return Type.VIDEO.name().equalsIgnoreCase(type);
+    }
+
+    public boolean isMusicType() {
+        return Type.MUSIC.name().equalsIgnoreCase(type);
     }
 
     public boolean isMovieSubType() {

@@ -28,7 +28,15 @@ public class AuthInterceptor implements HandlerInterceptor {
             "^/api/v1/video/\\d+/favorite$",
             "^/api/v1/video/series/\\d+/favorite$",
             "^/api/v1/video/\\d+/progress$",
-            "^/api/v1/video/\\d+/watched$"
+            "^/api/v1/video/\\d+/watched$",
+            "^/api/v1/music/(songs|albums|artists)/\\d+/star$",
+            "^/api/v1/music/(songs|albums|artists)/\\d+/rating$",
+            "^/api/v1/music/playlists$",
+            "^/api/v1/music/playlists/\\d+$",
+            "^/api/v1/music/scrobble$",
+            "^/api/v1/music/play-queue$",
+            "^/api/v1/music/bookmarks$",
+            "^/api/v1/music/bookmarks/\\d+$"
     );
 
     /** 读操作但属于管理功能，普通用户不可访问 */
@@ -90,13 +98,14 @@ public class AuthInterceptor implements HandlerInterceptor {
         return ADMIN_ONLY_READS.stream().anyMatch(path::matches);
     }
 
-    /** 签名校验的媒体端点：封面/背景/流/季封面/字幕 */
+    /** 签名校验的媒体端点：封面/背景/流/季封面/字幕/歌词 */
     private boolean isSignedMediaPath(String path) {
         return path.matches(".*/cover$")
                 || path.matches(".*/fanart$")
                 || path.matches(".*/stream$")
                 || path.matches(".*/season/\\d+/cover$")
-                || path.matches(".*/subtitles/.*");
+                || path.matches(".*/subtitles/.*")
+                || path.matches(".*/lyrics$");
     }
 
     private boolean validateMediaSignature(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -144,6 +153,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.matches(".*/stream")
                 || path.matches(".*/stream/transcode")
                 || path.matches(".*/subtitles/.*")
-                || path.matches(".*/subtitle/vtt");
+                || path.matches(".*/subtitle/vtt")
+                || path.matches(".*/lyrics");
     }
 }

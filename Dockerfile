@@ -4,6 +4,7 @@ WORKDIR /app
 COPY pom.xml ./
 COPY common/pom.xml common/
 COPY video/pom.xml video/
+COPY music/pom.xml music/
 COPY app/pom.xml app/
 RUN mvn dependency:go-offline -B
 COPY . .

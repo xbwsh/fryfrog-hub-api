@@ -1,0 +1,299 @@
+package com.fryfrog.hub.music.service;
+
+import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.music.model.MusicAlbum;
+import com.fryfrog.hub.music.model.MusicArtist;
+import com.fryfrog.hub.music.model.MusicSong;
+import com.fryfrog.hub.music.repository.MusicAlbumRepository;
+import com.fryfrog.hub.music.repository.MusicArtistRepository;
+import com.fryfrog.hub.music.repository.MusicSongRepository;
+import com.fryfrog.hub.video.service.TranscodingService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Stream;
+
+/**
+ * 音乐扫描服务：遍历音乐资源库，用 ffprobe 读取标签建库（歌手/专辑/单曲），
+ * 关联目录封面（cover.jpg / artist.jpg）与歌词（.lrc）。
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class MusicScanService {
+
+    private static final Set<String> SUPPORTED_FORMATS = Set.of(
+            "mp3", "flac", "wav", "m4a", "aac", "ogg", "oga", "opus",
+            "wma", "ape", "mpc", "wv", "alac", "aif", "aiff", "mka", "webm", "dsf", "dff");
+
+    private static final String UNKNOWN_ALBUM = "未知专辑";
+
+    private final MusicArtistRepository artistRepository;
+    private final MusicAlbumRepository albumRepository;
+    private final MusicSongRepository songRepository;
+    private final MusicCleanupService cleanupService;
+    private final TranscodingService transcodingService;
+    private final ScrapeProgressService progressService;
+    private final MediaLibraryService mediaLibraryService;
+
+    /**
+     * 扫描目录并批量入库。
+     * synchronized 串行化扫描：手动扫描与周期扫描并发时，歌手/专辑的
+     * 「查无则建」check-then-insert 会竞态产生重复记录。
+     */
+    public synchronized List<MusicSong> scanAndSave(String directoryPath, Long libraryId) {
+        long startTime = System.currentTimeMillis();
+        log.info("[MusicScan] Start scanning: {} (libraryId={})", directoryPath, libraryId);
+        String module = "music-scan:" + (libraryId != null ? libraryId : "all");
+
+        // 清理失效记录（文件已不存在的单曲及其空歌手/专辑）
+        cleanupService.cleanupInvalidRecords();
+
+        List<Path> audioFiles = collectAudioFiles(directoryPath);
+        if (audioFiles.isEmpty()) {
+            progressService.start(module, 0);
+            progressService.finish(module);
+            log.info("[MusicScan] No audio files found in: {}", directoryPath);
+            return List.of();
+        }
+        progressService.start(module, audioFiles.size());
+
+        int saved = 0;
+        for (Path path : audioFiles) {
+            try {
+                saveSong(path, libraryId);
+                saved++;
+                progressService.advance(module, path.getFileName().toString(), true);
+            } catch (Exception e) {
+                log.warn("[MusicScan] Failed to process {}: {}", path.getFileName(), e.getMessage(), e);
+                progressService.advance(module, path.getFileName().toString(), false);
+            }
+        }
+        progressService.finish(module);
+        log.info("[MusicScan] Done: {} songs in {}ms (dir={})", saved, System.currentTimeMillis() - startTime, directoryPath);
+        return songRepository.findByLibraryIdIn(List.of(libraryId));
+    }
+
+    public List<Path> collectAudioFiles(String directoryPath) {
+        Path dir = Paths.get(directoryPath);
+        if (!Files.isDirectory(dir)) {
+            throw new IllegalArgumentException("Not a directory: " + directoryPath);
+        }
+        try (Stream<Path> paths = Files.walk(dir)) {
+            return paths.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase();
+                        int dot = name.lastIndexOf('.');
+                        return dot > 0 && SUPPORTED_FORMATS.contains(name.substring(dot + 1));
+                    })
+                    .sorted()
+                    .toList();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to scan directory: " + e.getMessage(), e);
+        }
+    }
+
+    /** 单曲入库：解析标签 → upsert 歌手/专辑 → upsert 单曲。 */
+    public MusicSong saveSong(Path path, Long libraryId) {
+        String absolutePath = path.toAbsolutePath().normalize().toString();
+        MusicSong existing = songRepository.findByFilePath(absolutePath).orElse(null);
+        if (existing != null && !isChanged(existing, path)) {
+            return existing;
+        }
+
+        Map<String, Object> info = transcodingService.probeAudioInfo(absolutePath);
+        @SuppressWarnings("unchecked")
+        Map<String, String> tags = (Map<String, String>) info.getOrDefault("tags", Map.of());
+
+        // 目录推断：root/歌手/专辑/曲目.ext
+        Path parent = path.getParent();
+        String dirAlbum = parent != null ? parent.getFileName().toString() : null;
+        String dirArtist = parent != null && parent.getParent() != null
+                ? parent.getParent().getFileName().toString() : null;
+
+        String title = firstNonBlank(tags.get("title"), stripExtension(path.getFileName().toString()));
+        String artistName = firstNonBlank(tags.get("artist"), tags.get("album_artist"), dirArtist, "未知歌手");
+        String albumName = firstNonBlank(tags.get("album"), dirAlbum, UNKNOWN_ALBUM);
+
+        MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
+        MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
+
+        MusicSong song = existing != null ? existing : new MusicSong();
+        song.setTitle(title);
+        song.setArtistName(artistName);
+        song.setAlbumName(albumName);
+        song.setArtist(artist);
+        song.setAlbum(album);
+        song.setTrackNumber(parseInt(tags.get("track"), tags.get("tracknumber")));
+        song.setDiscNumber(parseInt(tags.get("disc"), tags.get("discnumber")));
+        song.setDurationSeconds(toDouble(info.get("duration")));
+        song.setBitRate(toIntKilobits(info.get("bitrate")));
+        song.setSampleRate(toInt(info.get("sampleRate")));
+        song.setFormat(formatName(absolutePath));
+        song.setGenre(firstNonBlank(tags.get("genre"), album.getGenre()));
+        song.setYear(parseYear(tags.get("date"), tags.get("year")));
+        song.setFilePath(absolutePath);
+        song.setFileSize(path.toFile().length());
+        song.setLyricsPath(findLyrics(parent, path));
+        if (song.getLibraryId() == null) {
+            song.setLibraryId(libraryId);
+        }
+        return songRepository.save(song);
+    }
+
+    private MusicArtist getOrCreateArtist(String name, Long libraryId, Path artistDir) {
+        return artistRepository.findFirstByNameAndLibraryId(name, libraryId)
+                .orElseGet(() -> {
+                    MusicArtist artist = new MusicArtist();
+                    artist.setName(name);
+                    artist.setSortName(sortName(name));
+                    artist.setLibraryId(libraryId);
+                    if (artistDir != null) {
+                        Path cover = findCover(artistDir);
+                        if (cover != null) {
+                            artist.setCoverArtPath(cover.toString());
+                        }
+                    }
+                    return artistRepository.save(artist);
+                });
+    }
+
+    private MusicAlbum getOrCreateAlbum(String title, MusicArtist artist, Map<String, String> tags, Long libraryId, Path albumDir) {
+        String artistName = artist != null ? artist.getName() : "未知歌手";
+        return albumRepository.findFirstByTitleAndArtistNameAndLibraryId(title, artistName, libraryId)
+                .orElseGet(() -> {
+                    MusicAlbum album = new MusicAlbum();
+                    album.setTitle(title);
+                    album.setArtist(artist);
+                    album.setArtistName(artistName);
+                    album.setLibraryId(libraryId);
+                    album.setGenre(firstNonBlank(tags.get("genre"), null));
+                    album.setYear(parseYear(tags.get("date"), tags.get("year")));
+                    if (albumDir != null) {
+                        Path cover = findCover(albumDir);
+                        if (cover != null) {
+                            album.setCoverArtPath(cover.toString());
+                        }
+                    }
+                    return albumRepository.save(album);
+                });
+    }
+
+    private boolean isChanged(MusicSong song, Path path) {
+        long size = path.toFile().length();
+        if (!Objects.equals(song.getFileSize(), size)) return true;
+        return false;
+    }
+
+    private String findLyrics(Path songDir, Path songPath) {
+        if (songDir == null) return null;
+        try (Stream<Path> files = Files.list(songDir)) {
+            String base = stripExtension(songPath.getFileName().toString());
+            return files.filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString().toLowerCase())
+                    .filter(n -> n.endsWith(".lrc"))
+                    .sorted()
+                    .map(n -> songDir.resolve(n).toString())
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Path findCover(Path dir) {
+        if (dir == null || !Files.isDirectory(dir)) return null;
+        for (String name : new String[]{"cover.jpg", "cover.png", "folder.jpg", "front.jpg", "album.jpg"}) {
+            Path candidate = dir.resolve(name);
+            if (Files.exists(candidate)) return candidate;
+        }
+        // 兜底：目录下任意 jpg/png 图片（排除 artist 专辑封面以外的同名封面优先）
+        try (Stream<Path> files = Files.list(dir)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String n = p.getFileName().toString().toLowerCase();
+                        return n.endsWith(".jpg") || n.endsWith(".png");
+                    })
+                    .sorted()
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String formatName(String path) {
+        String lower = path.toLowerCase();
+        int dot = lower.lastIndexOf('.');
+        return dot > 0 ? lower.substring(dot + 1).toUpperCase() : "UNKNOWN";
+    }
+
+    private static String stripExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static String sortName(String name) {
+        if (name == null) return null;
+        return name.replaceFirst("^(?i)(The|A|An)\\s+", "");
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) return v.trim();
+        }
+        return null;
+    }
+
+    private static Integer parseInt(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                // 注意：Java 中 "/".split("/") 返回空数组（[]），需防御
+                String[] parts = v.trim().split("/");
+                if (parts.length == 0) continue;
+                try {
+                    return Integer.parseInt(parts[0].trim());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Integer parseYear(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("(19|20)\\d{2}").matcher(v);
+                if (m.find()) {
+                    try {
+                        return Integer.parseInt(m.group());
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Double toDouble(Object value) {
+        return value instanceof Number n ? n.doubleValue() : null;
+    }
+
+    private static Integer toInt(Object value) {
+        return value instanceof Number n ? n.intValue() : null;
+    }
+
+    private static Integer toIntKilobits(Object value) {
+        Long bits = value instanceof Number n ? n.longValue() : null;
+        return bits != null && bits > 0 ? (int) (bits / 1000) : null;
+    }
+}

@@ -22,6 +22,7 @@
     <modules>
         <module>common</module>
         <module>video</module>
+        <module>music</module>
         <module>app</module>
     </modules>
 
@@ -48,6 +49,11 @@
             <dependency>
                 <groupId>com.fryfrog</groupId>
                 <artifactId>fryfrog-hub-video</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fryfrog</groupId>
+                <artifactId>fryfrog-hub-music</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

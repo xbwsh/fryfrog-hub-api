@@ -16,6 +16,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -89,7 +90,87 @@ public class TranscodingService {
     }
 
     /**
-     * 获取转码后的视频流
+     * 使用 ffprobe 探测音频文件的格式与标签元数据（供音乐扫描建库）。
+     * 返回键：duration(秒)、bitrate、format、codec、sampleRate、tags(Map)。
+     * 失败或 ffprobe 不可用时返回空 Map（调用方退化为按文件名解析）。
+     */
+    public Map<String, Object> probeAudioInfo(String inputPath) {
+        try {
+            String[] cmd = isWindows()
+                    ? new String[]{"cmd", "/c", ffprobePath, "-v", "error",
+                    "-print_format", "json", "-show_format", "-show_streams", inputPath}
+                    : new String[]{ffprobePath, "-v", "error",
+                    "-print_format", "json", "-show_format", "-show_streams", inputPath};
+
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            if (libraryDir != null) {
+                pb.environment().put(getLibraryPathEnv(), libraryDir);
+            }
+            Process p = pb.redirectErrorStream(true).start();
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes()).trim();
+            }
+
+            boolean finished = p.waitFor(10, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return Map.of();
+            }
+            if (p.exitValue() != 0 || output.isEmpty()) {
+                return Map.of();
+            }
+
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var root = mapper.readTree(output);
+            var result = new java.util.LinkedHashMap<String, Object>();
+
+            var formatNode = root.path("format");
+            if (formatNode.isObject()) {
+                if (formatNode.hasNonNull("duration")) {
+                    result.put("duration", formatNode.path("duration").asDouble());
+                }
+                if (formatNode.hasNonNull("bit_rate")) {
+                    result.put("bitrate", formatNode.path("bit_rate").asLong());
+                }
+                if (formatNode.hasNonNull("format_name")) {
+                    result.put("format", formatNode.path("format_name").asText());
+                }
+                if (formatNode.hasNonNull("tags") && formatNode.path("tags").isObject()) {
+                    var tags = new java.util.LinkedHashMap<String, String>();
+                    formatNode.path("tags").fields().forEachRemaining(e ->
+                            tags.put(e.getKey(), e.getValue().asText("")));
+                    result.put("tags", tags);
+                }
+            }
+
+            var streams = root.path("streams");
+            if (streams.isArray()) {
+                for (var stream : streams) {
+                    if ("audio".equals(stream.path("codec_type").asText())) {
+                        if (stream.hasNonNull("codec_name")) {
+                            result.put("codec", stream.path("codec_name").asText());
+                        }
+                        if (stream.hasNonNull("sample_rate")) {
+                            result.put("sampleRate", stream.path("sample_rate").asInt());
+                        }
+                        if (stream.hasNonNull("bit_rate")) {
+                            result.put("bitrate", stream.path("bit_rate").asLong());
+                        }
+                        break;
+                    }
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            log.debug("Failed to probe audio {}: {}", inputPath, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /**
+     * 转码后的视频流
      */
     public TranscodeResult transcode(String inputPath, String quality, String maxBitrate, String subtitlePath) throws IOException {
         int width = getWidthForQuality(quality);

@@ -53,6 +53,7 @@ public class UserService {
         User user = new User();
         user.setUsername(username);
         user.setPasswordHash(encoder.encode(rawPassword));
+        user.setSubsonicPassword(rawPassword);
         user.setNickname(nickname == null || nickname.isBlank() ? DEFAULT_NICKNAME : nickname);
         user.setRole(role != null ? role : User.Role.USER);
         user.setEnabled(true);
@@ -134,6 +135,7 @@ public class UserService {
         User user = new User();
         user.setUsername("admin");
         user.setPasswordHash(encoder.encode(rawPassword == null ? "" : rawPassword));
+        user.setSubsonicPassword(rawPassword == null ? "" : rawPassword);
         user.setNickname("管理员");
         user.setRole(User.Role.ADMIN);
         user.setEnabled(true);
@@ -145,6 +147,7 @@ public class UserService {
     private void setPassword(User user, String newPassword) {
         validatePassword(newPassword);
         user.setPasswordHash(encoder.encode(newPassword));
+        user.setSubsonicPassword(newPassword);
         repository.save(user);
         log.info("Password changed for user: {}", user.getUsername());
     }

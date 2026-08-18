@@ -10,42 +10,35 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>fryfrog-hub-app</artifactId>
-    <name>fryfrog-hub-app</name>
-    <description>Spring Boot application entry point</description>
+    <artifactId>fryfrog-hub-music</artifactId>
+    <name>fryfrog-hub-music</name>
+    <description>Music API module - metadata scanning and Subsonic-compatible streaming</description>
 
     <dependencies>
         <dependency>
             <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-video</artifactId>
+            <artifactId>fryfrog-hub-common</artifactId>
         </dependency>
+        <!-- 复用 video 模块的 FFmpeg/ffprobe 探测能力（FFmpegBinaryExtractor + TranscodingService） -->
         <dependency>
             <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-music</artifactId>
+            <artifactId>fryfrog-hub-video</artifactId>
         </dependency>
+        <!-- Subsonic 兼容层 XML 输出 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-xml</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
         <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-        </dependency>
-        <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>me.paulschwarz</groupId>
-            <artifactId>spring-dotenv</artifactId>
-            <version>4.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -57,8 +50,17 @@
     <build>
         <plugins>
             <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
             </plugin>
         </plugins>
     </build>
