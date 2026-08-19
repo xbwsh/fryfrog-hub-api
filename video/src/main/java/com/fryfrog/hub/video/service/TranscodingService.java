@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -110,7 +111,7 @@ public class TranscodingService {
 
             String output;
             try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes()).trim();
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             boolean finished = p.waitFor(10, TimeUnit.SECONDS);
@@ -297,7 +298,7 @@ public class TranscodingService {
 
             String output;
             try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes()).trim();
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             boolean finished = p.waitFor(5, TimeUnit.SECONDS);
@@ -341,7 +342,7 @@ public class TranscodingService {
 
             String output;
             try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes()).trim();
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             boolean finished = p.waitFor(5, TimeUnit.SECONDS);
@@ -453,7 +454,7 @@ public class TranscodingService {
 
             String output;
             try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes()).trim();
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             boolean finished = p.waitFor(15, TimeUnit.SECONDS);
