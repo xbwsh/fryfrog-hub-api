@@ -107,6 +107,9 @@ public class MusicScanService {
         String absolutePath = path.toAbsolutePath().normalize().toString();
         MusicSong existing = songRepository.findByFilePath(absolutePath).orElse(null);
         if (existing != null && !isChanged(existing, path)) {
+            log.info("[MusicScan] Metadata unchanged; checking cover: {}", absolutePath);
+            ensureLyrics(existing, absolutePath, path.getParent());
+            ensureAlbumCover(existing.getAlbum(), path.getParent(), absolutePath, libraryId);
             return existing;
         }
 
@@ -126,7 +129,7 @@ public class MusicScanService {
 
         MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
         MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
-        ensureEmbeddedCover(album, absolutePath, libraryId);
+        ensureAlbumCover(album, parent, absolutePath, libraryId);
 
         MusicSong song = existing != null ? existing : new MusicSong();
         song.setTitle(title);
@@ -144,8 +147,21 @@ public class MusicScanService {
         song.setYear(parseYear(tags.get("date"), tags.get("year")));
         song.setFilePath(absolutePath);
         song.setFileSize(path.toFile().length());
-        song.setLyricsPath(findLyrics(parent, path));
-        song.setLyricsContent(extractEmbeddedLyrics(tags));
+        String lyricsContent = extractEmbeddedLyrics(tags);
+        String lyricsPath = findLyrics(parent, path);
+        if (lyricsContent != null && !lyricsContent.isBlank()) {
+            log.info("[MusicLyrics] Embedded lyrics found: audio={}, length={}",
+                    absolutePath, lyricsContent.length());
+        } else {
+            log.info("[MusicLyrics] No embedded lyrics found: audio={}", absolutePath);
+        }
+        if (lyricsPath != null) {
+            log.info("[MusicLyrics] Sidecar lyrics found: audio={}, path={}", absolutePath, lyricsPath);
+        } else {
+            log.info("[MusicLyrics] No sidecar .lrc found: audio={}", absolutePath);
+        }
+        song.setLyricsPath(lyricsPath);
+        song.setLyricsContent(lyricsContent);
         if (song.getLibraryId() == null) {
             song.setLibraryId(libraryId);
         }
@@ -153,20 +169,90 @@ public class MusicScanService {
     }
 
     private void ensureEmbeddedCover(MusicAlbum album, String audioPath, Long libraryId) {
-        if (album.getCoverArtPath() != null && Files.exists(Paths.get(album.getCoverArtPath()))) return;
-        if (album.getId() == null || libraryId == null) return;
+        if (album.getCoverArtPath() != null && Files.exists(Paths.get(album.getCoverArtPath()))) {
+            log.info("[MusicCover] Existing cover reused: albumId={}, path={}",
+                    album.getId(), album.getCoverArtPath());
+            return;
+        }
+        if (album.getId() == null || libraryId == null) {
+            log.warn("[MusicCover] Cannot extract embedded cover: albumId={}, libraryId={}, audio={}",
+                    album.getId(), libraryId, audioPath);
+            return;
+        }
         try {
             Path libraryRoot = Paths.get(mediaLibraryService.getLibraryById(libraryId).getPath())
                     .toAbsolutePath().normalize();
             Path cachePath = libraryRoot.resolve(".metadata/music-covers")
                     .resolve(album.getId() + ".jpg").normalize();
-            if (!cachePath.startsWith(libraryRoot)) return;
-            if (Files.exists(cachePath) || transcodingService.extractEmbeddedAudioCover(audioPath, cachePath.toString())) {
+            if (!cachePath.startsWith(libraryRoot)) {
+                log.warn("[MusicCover] Refusing cover path outside library: {}", cachePath);
+                return;
+            }
+            log.info("[MusicCover] No directory cover; checking embedded cover: albumId={}, audio={}, cache={}",
+                    album.getId(), audioPath, cachePath);
+            if (Files.exists(cachePath)) {
+                log.info("[MusicCover] Embedded cover cache already exists: albumId={}, path={}",
+                        album.getId(), cachePath);
                 album.setCoverArtPath(cachePath.toString());
                 albumRepository.save(album);
+            } else if (transcodingService.extractEmbeddedAudioCover(audioPath, cachePath.toString())) {
+                log.info("[MusicCover] Embedded cover extracted successfully: albumId={}, path={}",
+                        album.getId(), cachePath);
+                album.setCoverArtPath(cachePath.toString());
+                albumRepository.save(album);
+            } else {
+                log.warn("[MusicCover] No embedded cover extracted: albumId={}, audio={}",
+                        album.getId(), audioPath);
             }
         } catch (Exception e) {
-            log.debug("[MusicScan] Failed to extract embedded cover for album {}: {}", album.getId(), e.getMessage());
+            log.warn("[MusicCover] Embedded cover extraction failed: albumId={}, audio={}, message={}",
+                    album.getId(), audioPath, e.getMessage(), e);
+        }
+    }
+
+    private void ensureAlbumCover(MusicAlbum album, Path albumDir, String audioPath, Long libraryId) {
+        if (album == null) {
+            log.warn("[MusicCover] Cannot check cover: song has no album, audio={}", audioPath);
+            return;
+        }
+        if (album.getCoverArtPath() == null || !Files.exists(Paths.get(album.getCoverArtPath()))) {
+            Path directoryCover = findCover(albumDir);
+            if (directoryCover != null) {
+                log.info("[MusicCover] Album directory cover found: albumId={}, path={}",
+                        album.getId(), directoryCover);
+                album.setCoverArtPath(directoryCover.toString());
+                albumRepository.save(album);
+                return;
+            }
+        }
+        ensureEmbeddedCover(album, audioPath, libraryId);
+    }
+
+    private void ensureLyrics(MusicSong song, String audioPath, Path songDir) {
+        Map<String, Object> info = transcodingService.probeAudioInfo(audioPath);
+        @SuppressWarnings("unchecked")
+        Map<String, String> tags = (Map<String, String>) info.getOrDefault("tags", Map.of());
+        String lyricsContent = extractEmbeddedLyrics(tags);
+        String lyricsPath = findLyrics(songDir, Paths.get(audioPath));
+
+        if (lyricsContent != null && !lyricsContent.isBlank()) {
+            log.info("[MusicLyrics] Embedded lyrics found: audio={}, length={}",
+                    audioPath, lyricsContent.length());
+        } else {
+            log.info("[MusicLyrics] No embedded lyrics found: audio={}", audioPath);
+        }
+        if (lyricsPath != null) {
+            log.info("[MusicLyrics] Sidecar lyrics found: audio={}, path={}", audioPath, lyricsPath);
+        } else {
+            log.info("[MusicLyrics] No sidecar .lrc found: audio={}", audioPath);
+        }
+
+        if (!Objects.equals(song.getLyricsContent(), lyricsContent)
+                || !Objects.equals(song.getLyricsPath(), lyricsPath)) {
+            song.setLyricsContent(lyricsContent);
+            song.setLyricsPath(lyricsPath);
+            songRepository.save(song);
+            log.info("[MusicLyrics] Lyrics metadata updated: songId={}, audio={}", song.getId(), audioPath);
         }
     }
 
@@ -180,6 +266,7 @@ public class MusicScanService {
                     if (artistDir != null) {
                         Path cover = findCover(artistDir);
                         if (cover != null) {
+                            log.info("[MusicCover] Artist directory cover found: artist={}, path={}", name, cover);
                             artist.setCoverArtPath(cover.toString());
                         }
                     }
@@ -201,6 +288,7 @@ public class MusicScanService {
                     if (albumDir != null) {
                         Path cover = findCover(albumDir);
                         if (cover != null) {
+                            log.info("[MusicCover] Album directory cover found: album={}, path={}", title, cover);
                             album.setCoverArtPath(cover.toString());
                         }
                     }

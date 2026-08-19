@@ -186,9 +186,15 @@ public class TranscodingService {
     /** Extract the first embedded audio artwork into a JPEG cache file. */
     public boolean extractEmbeddedAudioCover(String inputPath, String outputPath) {
         try {
-            if (!Boolean.TRUE.equals(probeAudioInfo(inputPath).get("attachedPicture"))) return false;
+            Map<String, Object> audioInfo = probeAudioInfo(inputPath);
+            if (!Boolean.TRUE.equals(audioInfo.get("attachedPicture"))) {
+                log.info("[MusicCover] ffprobe found no attached picture: input={}", inputPath);
+                return false;
+            }
             Path output = Paths.get(outputPath);
             Files.createDirectories(output.getParent());
+            log.info("[MusicCover] ffmpeg extracting attached picture: input={}, output={}",
+                    inputPath, outputPath);
             String[] cmd = isWindows()
                     ? new String[]{"cmd", "/c", ffmpegPath, "-v", "error", "-i", inputPath,
                     "-map", "0:v:0", "-frames:v", "1", "-c:v", "mjpeg", "-y", outputPath}
@@ -200,11 +206,18 @@ public class TranscodingService {
             process.getInputStream().transferTo(OutputStream.nullOutputStream());
             if (!process.waitFor(20, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
+                log.warn("[MusicCover] ffmpeg timed out extracting cover: input={}", inputPath);
                 return false;
             }
-            return process.exitValue() == 0 && Files.isRegularFile(output) && Files.size(output) > 0;
+            boolean success = process.exitValue() == 0 && Files.isRegularFile(output) && Files.size(output) > 0;
+            if (!success) {
+                log.warn("[MusicCover] ffmpeg failed extracting cover: input={}, exitCode={}, outputExists={}",
+                        inputPath, process.exitValue(), Files.isRegularFile(output));
+            }
+            return success;
         } catch (Exception e) {
-            log.debug("Failed to extract embedded cover from {}: {}", inputPath, e.getMessage());
+            log.warn("[MusicCover] Failed to extract embedded cover: input={}, message={}",
+                    inputPath, e.getMessage(), e);
             return false;
         }
     }

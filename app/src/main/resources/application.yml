@@ -45,10 +45,6 @@ tmdb:
   image-size: ${TMDB_IMAGE_SIZE:original}
   include-adult: ${TMDB_INCLUDE_ADULT:true}
 
-logging:
-  level:
-    com.fryfrog: ${LOG_LEVEL:INFO}
-
 springdoc:
   api-docs:
     path: /api-docs

@@ -1,6 +1,7 @@
 package com.fryfrog.hub.music.repository;
 
 import com.fryfrog.hub.music.model.MusicSong;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
@@ -9,6 +10,7 @@ import java.util.Optional;
 
 public interface MusicSongRepository extends JpaRepository<MusicSong, Long> {
 
+    @EntityGraph(attributePaths = "album")
     Optional<MusicSong> findByFilePath(String filePath);
 
     List<MusicSong> findByAlbum_IdOrderByDiscNumberAscTrackNumberAsc(Long albumId);

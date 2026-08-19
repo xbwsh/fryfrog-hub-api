@@ -21,8 +21,3 @@ hub:
   proxy:
     host: 127.0.0.1
     port: 7890
-
-logging:
-  level:
-    com.fryfrog: DEBUG
-    org.hibernate.SQL: INFO
