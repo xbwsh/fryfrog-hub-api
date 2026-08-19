@@ -481,7 +481,9 @@ public class SubsonicController {
         if (song == null) return lyrics;
         lyrics.artist = song.getArtistName();
         lyrics.title = song.getTitle();
-        if (song.getLyricsPath() != null && Files.exists(Paths.get(song.getLyricsPath()))) {
+        if (song.getLyricsContent() != null && !song.getLyricsContent().isBlank()) {
+            lyrics.value = song.getLyricsContent();
+        } else if (song.getLyricsPath() != null && Files.exists(Paths.get(song.getLyricsPath()))) {
             try {
                 lyrics.value = Files.readString(Paths.get(song.getLyricsPath()), StandardCharsets.UTF_8);
             } catch (Exception e) {

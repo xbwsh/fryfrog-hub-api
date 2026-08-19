@@ -138,10 +138,7 @@ public class TranscodingService {
                     result.put("format", formatNode.path("format_name").asText());
                 }
                 if (formatNode.hasNonNull("tags") && formatNode.path("tags").isObject()) {
-                    var tags = new java.util.LinkedHashMap<String, String>();
-                    formatNode.path("tags").fields().forEachRemaining(e ->
-                            tags.put(e.getKey(), e.getValue().asText("")));
-                    result.put("tags", tags);
+                    mergeTags(result, formatNode);
                 }
             }
 
@@ -149,6 +146,9 @@ public class TranscodingService {
             if (streams.isArray()) {
                 for (var stream : streams) {
                     if ("audio".equals(stream.path("codec_type").asText())) {
+                        if (stream.hasNonNull("tags") && stream.path("tags").isObject()) {
+                            mergeTags(result, stream);
+                        }
                         if (stream.hasNonNull("codec_name")) {
                             result.put("codec", stream.path("codec_name").asText());
                         }
@@ -161,11 +161,51 @@ public class TranscodingService {
                         break;
                     }
                 }
+                for (var stream : streams) {
+                    if (stream.path("disposition").path("attached_pic").asInt(0) == 1) {
+                        result.put("attachedPicture", true);
+                        break;
+                    }
+                }
             }
             return result;
         } catch (Exception e) {
             log.debug("Failed to probe audio {}: {}", inputPath, e.getMessage());
             return Map.of();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void mergeTags(Map<String, Object> result, com.fasterxml.jackson.databind.JsonNode node) {
+        var tags = (Map<String, String>) result.computeIfAbsent(
+                "tags", ignored -> new java.util.LinkedHashMap<String, String>());
+        node.path("tags").fields().forEachRemaining(entry ->
+                tags.put(entry.getKey(), entry.getValue().asText("")));
+    }
+
+    /** Extract the first embedded audio artwork into a JPEG cache file. */
+    public boolean extractEmbeddedAudioCover(String inputPath, String outputPath) {
+        try {
+            if (!Boolean.TRUE.equals(probeAudioInfo(inputPath).get("attachedPicture"))) return false;
+            Path output = Paths.get(outputPath);
+            Files.createDirectories(output.getParent());
+            String[] cmd = isWindows()
+                    ? new String[]{"cmd", "/c", ffmpegPath, "-v", "error", "-i", inputPath,
+                    "-map", "0:v:0", "-frames:v", "1", "-c:v", "mjpeg", "-y", outputPath}
+                    : new String[]{ffmpegPath, "-v", "error", "-i", inputPath,
+                    "-map", "0:v:0", "-frames:v", "1", "-c:v", "mjpeg", "-y", outputPath};
+            ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
+            if (libraryDir != null) pb.environment().put(getLibraryPathEnv(), libraryDir);
+            Process process = pb.start();
+            process.getInputStream().transferTo(OutputStream.nullOutputStream());
+            if (!process.waitFor(20, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0 && Files.isRegularFile(output) && Files.size(output) > 0;
+        } catch (Exception e) {
+            log.debug("Failed to extract embedded cover from {}: {}", inputPath, e.getMessage());
+            return false;
         }
     }
 

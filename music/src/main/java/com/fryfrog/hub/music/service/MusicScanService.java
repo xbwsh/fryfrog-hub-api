@@ -126,6 +126,7 @@ public class MusicScanService {
 
         MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
         MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
+        ensureEmbeddedCover(album, absolutePath, libraryId);
 
         MusicSong song = existing != null ? existing : new MusicSong();
         song.setTitle(title);
@@ -144,10 +145,29 @@ public class MusicScanService {
         song.setFilePath(absolutePath);
         song.setFileSize(path.toFile().length());
         song.setLyricsPath(findLyrics(parent, path));
+        song.setLyricsContent(extractEmbeddedLyrics(tags));
         if (song.getLibraryId() == null) {
             song.setLibraryId(libraryId);
         }
         return songRepository.save(song);
+    }
+
+    private void ensureEmbeddedCover(MusicAlbum album, String audioPath, Long libraryId) {
+        if (album.getCoverArtPath() != null && Files.exists(Paths.get(album.getCoverArtPath()))) return;
+        if (album.getId() == null || libraryId == null) return;
+        try {
+            Path libraryRoot = Paths.get(mediaLibraryService.getLibraryById(libraryId).getPath())
+                    .toAbsolutePath().normalize();
+            Path cachePath = libraryRoot.resolve(".metadata/music-covers")
+                    .resolve(album.getId() + ".jpg").normalize();
+            if (!cachePath.startsWith(libraryRoot)) return;
+            if (Files.exists(cachePath) || transcodingService.extractEmbeddedAudioCover(audioPath, cachePath.toString())) {
+                album.setCoverArtPath(cachePath.toString());
+                albumRepository.save(album);
+            }
+        } catch (Exception e) {
+            log.debug("[MusicScan] Failed to extract embedded cover for album {}: {}", album.getId(), e.getMessage());
+        }
     }
 
     private MusicArtist getOrCreateArtist(String name, Long libraryId, Path artistDir) {
@@ -208,6 +228,20 @@ public class MusicScanService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String extractEmbeddedLyrics(Map<String, String> tags) {
+        for (Map.Entry<String, String> entry : tags.entrySet()) {
+            String key = entry.getKey() == null
+                    ? ""
+                    : entry.getKey().toLowerCase(java.util.Locale.ROOT).replace("_", "").replace("-", "");
+            if (key.equals("lyrics") || key.contains("lyrics") || key.equals("uslt")
+                    || key.equals("©lyr") || key.equals("lyric")) {
+                String value = entry.getValue();
+                if (value != null && !value.isBlank()) return value.trim();
+            }
+        }
+        return null;
     }
 
     private Path findCover(Path dir) {

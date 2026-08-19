@@ -35,6 +35,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -43,6 +44,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -193,9 +195,14 @@ public class MusicController {
     }
 
     @GetMapping("/songs/{id:\\d+}/lyrics")
-    @Operation(summary = "获取歌词", description = "返回该单曲的 .lrc 歌词内容")
+    @Operation(summary = "获取歌词", description = "优先返回音频内嵌歌词，否则返回同目录 .lrc")
     public ResponseEntity<Resource> getLyrics(@Parameter(description = "单曲ID") @PathVariable Long id) {
         MusicSong song = requireSong(id);
+        if (song.getLyricsContent() != null && !song.getLyricsContent().isBlank()) {
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .body(new ByteArrayResource(song.getLyricsContent().getBytes(StandardCharsets.UTF_8)));
+        }
         if (song.getLyricsPath() == null || !Files.exists(Paths.get(song.getLyricsPath()))) {
             return ResponseEntity.notFound().build();
         }
@@ -531,7 +538,8 @@ public class MusicController {
                 && Files.exists(Paths.get(song.getAlbum().getCoverArtPath()))) {
             dto.setCoverUrl(MediaUrlSigner.sign("/api/v1/music/songs/" + song.getId() + "/cover"));
         }
-        if (song.getLyricsPath() != null && Files.exists(Paths.get(song.getLyricsPath()))) {
+        if ((song.getLyricsContent() != null && !song.getLyricsContent().isBlank())
+                || (song.getLyricsPath() != null && Files.exists(Paths.get(song.getLyricsPath())))) {
             dto.setLyricsUrl(MediaUrlSigner.sign("/api/v1/music/songs/" + song.getId() + "/lyrics"));
         }
         return dto;

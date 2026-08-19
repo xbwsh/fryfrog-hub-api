@@ -74,6 +74,10 @@ public class MusicSong extends BaseEntity {
     @Schema(description = "歌词本地路径（.lrc）")
     private String lyricsPath;
 
+    @Schema(description = "音频内嵌歌词内容")
+    @Column(columnDefinition = "TEXT")
+    private String lyricsContent;
+
     @Schema(description = "所属资源库ID", example = "1")
     @Column(name = "library_id")
     private Long libraryId;
