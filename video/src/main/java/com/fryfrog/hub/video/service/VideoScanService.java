@@ -378,13 +378,14 @@ public class VideoScanService {
 
     private void cleanupInvalidRecords() {
         int removed = 0;
-        int pageNum = 0;
         final int pageSize = 100;
-        org.springframework.data.domain.Page<Video> page;
 
         log.debug("[Cleanup] Starting cleanup...");
-        do {
-            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+        // Always read page 0 after deletion. Advancing the page number while
+        // deleting causes the next records to shift into an already skipped page.
+        while (true) {
+            org.springframework.data.domain.Page<Video> page = repository.findAll(
+                    org.springframework.data.domain.PageRequest.of(0, pageSize));
             List<Video> invalidVideos = page.getContent().stream()
                     .filter(v -> {
                         if (v.getFilePath() == null) return true;
@@ -393,7 +394,7 @@ public class VideoScanService {
                     .toList();
 
             if (!invalidVideos.isEmpty()) {
-                log.info("[Cleanup] Found {} invalid records on page {}, removing...", invalidVideos.size(), pageNum);
+                log.info("[Cleanup] Found {} invalid records on current page, removing...", invalidVideos.size());
                 for (Video video : invalidVideos) {
                     cleanupVideoFiles(video);
                     // 清理关联的演员记录
@@ -401,8 +402,10 @@ public class VideoScanService {
                 }
                 repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
                 removed += invalidVideos.size();
+            } else {
+                break;
             }
-        } while (page.hasNext());
+        }
 
         if (removed > 0) {
             // 清理空系列

@@ -26,6 +26,7 @@ import com.fryfrog.hub.music.service.MusicPlaylistService;
 import com.fryfrog.hub.music.service.MusicQueryService;
 import com.fryfrog.hub.music.service.MusicScanService;
 import com.fryfrog.hub.music.service.MusicStreamService;
+import com.fryfrog.hub.music.service.MusicOrganizeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -60,6 +61,7 @@ public class MusicController {
     private final MusicPlayStateService playStateService;
     private final MusicStreamService streamService;
     private final MusicScanService scanService;
+    private final MusicOrganizeService organizeService;
     private final MediaLibraryService mediaLibraryService;
     private final MusicArtistRepository artistRepository;
     private final MusicAlbumRepository albumRepository;
@@ -415,6 +417,14 @@ public class MusicController {
     }
 
     // ── 扫描 ──
+
+    @PostMapping("/organize")
+    @Operation(summary = "整理音乐文件", description = "按歌手/专辑/曲目整理已扫描音乐；默认仅预览")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> organize(
+            @RequestParam Long libraryId,
+            @RequestParam(defaultValue = "true") boolean dryRun) {
+        return ResponseEntity.ok(ApiResponse.success(organizeService.organize(libraryId, dryRun)));
+    }
 
     @PostMapping("/scan")
     @Operation(summary = "扫描音乐资源库", description = "扫描指定 MUSIC 资源库（异步执行），不传 libraryId 时扫描全部")

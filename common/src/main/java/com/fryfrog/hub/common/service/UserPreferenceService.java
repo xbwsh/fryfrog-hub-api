@@ -52,6 +52,11 @@ public class UserPreferenceService {
         if (userId == null) {
             throw new BadRequestException("当前请求未关联用户");
         }
+
+        // Prevent two devices from interleaving delete + insert operations for
+        // the same user and violating the (user_id, pref_key) unique key.
+        repository.lockUserPreferences(userId);
+
         Map<String, String> normalized = preferences == null
                 ? Map.of()
                 : preferences.entrySet().stream()
