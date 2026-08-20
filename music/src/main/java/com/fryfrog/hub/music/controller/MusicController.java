@@ -4,9 +4,11 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.model.User;
 import com.fryfrog.hub.common.security.UserContext;
-import com.fryfrog.hub.common.service.MediaLibraryService;
-import com.fryfrog.hub.common.util.MediaUrlSigner;
+import com.fryfrog.hub.common.exception.ForbiddenException;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
+import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.UserService;
+import com.fryfrog.hub.common.util.MediaUrlSigner;
 import com.fryfrog.hub.music.dto.MusicAlbumDTO;
 import com.fryfrog.hub.music.dto.MusicArtistDTO;
 import com.fryfrog.hub.music.dto.MusicLibraryGroupDTO;
@@ -65,8 +67,16 @@ public class MusicController {
     private final MusicScanService scanService;
     private final MusicOrganizeService organizeService;
     private final MediaLibraryService mediaLibraryService;
+    private final UserService userService;
     private final MusicArtistRepository artistRepository;
     private final MusicAlbumRepository albumRepository;
+
+    private void requireAdmin(HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        if (!userService.isAdmin(userId)) {
+            throw new ForbiddenException("需要管理员权限");
+        }
+    }
 
     // ── 首页音乐模式 ──
 
@@ -429,17 +439,27 @@ public class MusicController {
     @Operation(summary = "整理音乐文件", description = "按歌手/专辑/曲目整理已扫描音乐；默认仅预览")
     public ResponseEntity<ApiResponse<Map<String, Object>>> organize(
             @RequestParam Long libraryId,
-            @RequestParam(defaultValue = "true") boolean dryRun) {
+            @RequestParam(defaultValue = "true") boolean dryRun,
+            HttpServletRequest request) {
+        requireAdmin(request);
+        if (!mediaLibraryService.isVisibleToCurrentUser(libraryId)) {
+            throw new ResourceNotFoundException("MediaLibrary", "id", libraryId);
+        }
         return ResponseEntity.ok(ApiResponse.success(organizeService.organize(libraryId, dryRun)));
     }
 
     @PostMapping("/scan")
     @Operation(summary = "扫描音乐资源库", description = "扫描指定 MUSIC 资源库（异步执行），不传 libraryId 时扫描全部")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scan(
-            @Parameter(description = "资源库ID，可选") @RequestParam(required = false) Long libraryId) {
+            @Parameter(description = "资源库ID，可选") @RequestParam(required = false) Long libraryId,
+            HttpServletRequest request) {
+        requireAdmin(request);
+        if (libraryId != null && !mediaLibraryService.isVisibleToCurrentUser(libraryId)) {
+            throw new ResourceNotFoundException("MediaLibrary", "id", libraryId);
+        }
         List<MediaLibrary> libraries = libraryId != null
                 ? List.of(mediaLibraryService.getLibraryById(libraryId))
-                : mediaLibraryService.getEnabledLibraries().stream().filter(MediaLibrary::isMusicType).toList();
+                : mediaLibraryService.getVisibleLibraries().stream().filter(MediaLibrary::isMusicType).toList();
         Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("status", "started");
         result.put("libraryCount", libraries.size());

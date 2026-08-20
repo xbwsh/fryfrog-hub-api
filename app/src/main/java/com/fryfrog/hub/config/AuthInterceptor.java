@@ -98,14 +98,21 @@ public class AuthInterceptor implements HandlerInterceptor {
         return ADMIN_ONLY_READS.stream().anyMatch(path::matches);
     }
 
-    /** 签名校验的媒体端点：封面/背景/流/季封面/字幕/歌词 */
+    /** 签名校验的媒体端点：封面/背景/流/季封面/字幕/歌词/头像/转码等 */
     private boolean isSignedMediaPath(String path) {
         return path.matches(".*/cover$")
                 || path.matches(".*/fanart$")
                 || path.matches(".*/stream$")
+                || path.matches(".*/stream/transcode$")
                 || path.matches(".*/season/\\d+/cover$")
                 || path.matches(".*/subtitles/.*")
-                || path.matches(".*/lyrics$");
+                || path.matches(".*/subtitle/vtt$")
+                || path.matches(".*/lyrics$")
+                || path.matches(".*/image$")
+                || path.matches(".*/actor/.*/image$")
+                || path.matches(".*/artist/image$")
+                || path.matches(".*/character/.*/image$")
+                || path.matches(".*/pages/\\d+$");
     }
 
     private boolean validateMediaSignature(HttpServletRequest request, HttpServletResponse response) throws IOException {

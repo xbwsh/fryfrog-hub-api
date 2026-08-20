@@ -116,7 +116,7 @@ public class MusicQueryService {
     // ── 可见性 ──
 
     public boolean isVisible(Long libraryId) {
-        return libraryId == null || allowedLibraryIds().contains(libraryId);
+        return libraryId != null && allowedLibraryIds().contains(libraryId);
     }
 
     public boolean isSongVisible(Long songId) {

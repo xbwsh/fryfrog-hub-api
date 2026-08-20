@@ -2,9 +2,11 @@ package com.fryfrog.hub.video.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
+import com.fryfrog.hub.common.exception.ForbiddenException;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.MediaLibraryService;
+import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.common.util.MediaUrlSigner;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.LibrarySeriesGroupDTO;
@@ -68,6 +70,14 @@ public class SeriesController {
     private final TmdbService tmdbService;
     private final VideoAssetService videoAssetService;
     private final com.fryfrog.hub.common.service.ScrapeProgressService scrapeProgressService;
+    private final UserService userService;
+
+    private void requireAdmin(HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        if (!userService.isAdmin(userId)) {
+            throw new ForbiddenException("需要管理员权限");
+        }
+    }
 
     @GetMapping
     @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
@@ -169,6 +179,11 @@ public class SeriesController {
         List<SeriesListDTO> result = favoriteService.contentIds(userId, Favorite.TYPE_SERIES).stream()
                 .map(id -> seriesService.getSeriesById(id).orElse(null))
                 .filter(java.util.Objects::nonNull)
+                .filter(s -> {
+                    var videos = s.getVideos();
+                    if (videos == null || videos.isEmpty()) return false;
+                    return videos.stream().anyMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()));
+                })
                 .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), true))
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(result));
@@ -199,9 +214,13 @@ public class SeriesController {
             @Parameter(description = "系列ID") @PathVariable Long id,
             @RequestBody com.fryfrog.hub.video.dto.SeriesMetadataUpdateRequest request,
             HttpServletRequest req) {
+        requireAdmin(req);
         long userId = UserContext.currentUserId(req);
         VideoSeries series = seriesService.getSeriesById(id)
                 .orElseThrow(() -> new RuntimeException("Series not found: " + id));
+        if (series.getVideos() == null || series.getVideos().isEmpty() || series.getVideos().stream().noneMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()))) {
+            throw new ResourceNotFoundException("Series", "id", id);
+        }
         boolean updated = false;
 
         if (request.getTitle() != null) { series.setTitle(request.getTitle()); updated = true; }
@@ -514,7 +533,9 @@ public class SeriesController {
     @Operation(summary = "设置系列Logo", description = "从查询到的 logo 选项中选一个设置（body 传 filePath）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> setSeriesLogo(
             @Parameter(description = "系列ID") @PathVariable Long id,
-            @RequestBody com.fryfrog.hub.video.dto.LogoSelectRequest request) {
+            @RequestBody com.fryfrog.hub.video.dto.LogoSelectRequest request,
+            HttpServletRequest httpRequest) {
+        requireAdmin(httpRequest);
         if (request.getFilePath() == null || request.getFilePath().isBlank()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("filePath 不能为空"));
         }
@@ -522,6 +543,9 @@ public class SeriesController {
         VideoSeries series = seriesService.getSeriesById(id).orElse(null);
         if (series == null) {
             return ResponseEntity.badRequest().body(ApiResponse.error("系列不存在: " + id));
+        }
+        if (series.getVideos() == null || series.getVideos().isEmpty() || series.getVideos().stream().noneMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()))) {
+            throw new ResourceNotFoundException("Series", "id", id);
         }
         if (series.getTmdbId() == null) {
             return ResponseEntity.badRequest().body(ApiResponse.error("系列没有 TMDB ID，无法设置 logo"));

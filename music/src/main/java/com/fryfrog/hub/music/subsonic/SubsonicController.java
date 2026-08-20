@@ -113,6 +113,7 @@ public class SubsonicController {
 
     private Envelope dispatch(String method, HttpServletRequest request) {
         User user = requireUser(request);
+        request.setAttribute(UserContext.USER_ID_ATTR, user.getId());
         long userId = userIdOf(user);
         String username = usernameOf(user);
 
@@ -234,6 +235,7 @@ public class SubsonicController {
 
     private void handleBinary(String method, HttpServletRequest request, HttpServletResponse response) throws Exception {
         User user = requireUser(request);
+        request.setAttribute(UserContext.USER_ID_ATTR, user.getId());
         long userId = userIdOf(user);
 
         switch (method) {

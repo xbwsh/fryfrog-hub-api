@@ -14,8 +14,30 @@ import java.util.HexFormat;
  */
 public final class MediaUrlSigner {
 
-    private static final byte[] SECRET = new SecureRandom().generateSeed(32);
+    private static final byte[] SECRET = loadSecret();
     private static final long DEFAULT_TTL_MILLIS = 7 * 24 * 3600 * 1000L;
+
+    private static byte[] loadSecret() {
+        try {
+            java.nio.file.Path path = java.nio.file.Paths.get("data/media_secret.key");
+            if (java.nio.file.Files.exists(path)) {
+                String hex = java.nio.file.Files.readString(path).trim();
+                if (!hex.isEmpty()) {
+                    return HexFormat.of().parseHex(hex);
+                }
+            }
+            byte[] secret = new SecureRandom().generateSeed(32);
+            String hex = HexFormat.of().formatHex(secret);
+            try {
+                java.nio.file.Files.createDirectories(path.getParent());
+                java.nio.file.Files.writeString(path, hex);
+            } catch (Exception ignored) {
+            }
+            return secret;
+        } catch (Exception e) {
+            return new SecureRandom().generateSeed(32);
+        }
+    }
 
     private MediaUrlSigner() {
     }

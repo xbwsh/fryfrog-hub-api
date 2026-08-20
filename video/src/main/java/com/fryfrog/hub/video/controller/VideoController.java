@@ -5,9 +5,11 @@ import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
+import com.fryfrog.hub.common.exception.ForbiddenException;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.PeriodicScanScheduler;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.common.util.MediaUrlSigner;
 import com.fryfrog.hub.common.util.PlaceholderImageGenerator;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
@@ -85,6 +87,20 @@ public class VideoController {
     private final VideoScrapeService scrapeService;
     private final MediaLibraryService mediaLibraryService;
     private final TmdbService tmdbService;
+    private final UserService userService;
+
+    private void requireAdmin(HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        if (!userService.isAdmin(userId)) {
+            throw new ForbiddenException("需要管理员权限");
+        }
+    }
+
+    private void requireLibraryVisible(Long libraryId, Long resourceId, String resourceName) {
+        if (!mediaLibraryService.isVisibleToCurrentUser(libraryId)) {
+            throw new ResourceNotFoundException(resourceName, "id", resourceId);
+        }
+    }
 
     @GetMapping("/{id:\\d+}")
     @Operation(summary = "获取视频详情", description = "根据ID获取单个视频的详细信息")
@@ -105,6 +121,9 @@ public class VideoController {
             @RequestBody com.fryfrog.hub.video.dto.VideoMetadataUpdateRequest request,
             HttpServletRequest req) {
         Video video = service.getVideoById(id);
+        if (!mediaLibraryService.isVisibleToCurrentUser(video.getLibraryId())) {
+            throw new ResourceNotFoundException("Video", "id", id);
+        }
         boolean updated = false;
 
         if (request.getTitle() != null) { video.setTitle(request.getTitle()); updated = true; }
@@ -262,6 +281,10 @@ public class VideoController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> bindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestBody VideoBindRequest request) {
+        Video videoForCheck = service.getVideoById(id);
+        if (!mediaLibraryService.isVisibleToCurrentUser(videoForCheck.getLibraryId())) {
+            throw new ResourceNotFoundException("Video", "id", id);
+        }
         log.info("[Bind] Binding video id={} to TMDB {} ({})", id, request.getTmdbId(), request.getMediaType());
 
         String module = "bind:" + id;
@@ -308,6 +331,9 @@ public class VideoController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> unbindTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
         Video video = service.getVideoById(id);
+        if (!mediaLibraryService.isVisibleToCurrentUser(video.getLibraryId())) {
+            throw new ResourceNotFoundException("Video", "id", id);
+        }
         log.info("[Unbind] Request to unbind video id={}, title='{}', tmdbId={}",
                 id, video.getTitle(), video.getTmdbId());
         if (video.getTmdbId() == null) {
@@ -326,6 +352,8 @@ public class VideoController {
     @Operation(summary = "刷新TMDB元数据", description = "重新搜索TMDB并绑定，同时重命名文件（异步执行，进度见 scrape/progress?module=bind:{id}）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshTmdb(
             @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video videoForCheck = service.getVideoById(id);
+        requireLibraryVisible(videoForCheck.getLibraryId(), id, "Video");
         String module = "bind:" + id;
         // 在异步线程启动前先注册进度模块，避免前端轮询竞态拿到空对象误判完成
         scrapeProgressService.start(module, 1);
@@ -364,16 +392,19 @@ public class VideoController {
     @PostMapping("/tmdb/rescrape-library/{libraryId}")
     @Operation(summary = "按资源库重新刮削", description = "解绑指定资源库中所有视频的TMDB绑定，然后根据资源库类型重新搜索绑定")
     public ResponseEntity<ApiResponse<String>> rescrapeByLibrary(
-            @Parameter(description = "资源库ID") @PathVariable Long libraryId) {
+            @Parameter(description = "资源库ID") @PathVariable Long libraryId, HttpServletRequest request) {
+        requireAdmin(request);
+        requireLibraryVisible(mediaLibraryService.getLibraryById(libraryId).getId(), libraryId, "MediaLibrary");
         service.rescrapeByLibrary(libraryId);
         return ResponseEntity.ok(ApiResponse.success("Rescrape started for library " + libraryId));
     }
 
     @PostMapping("/refresh-all-actors")
     @Operation(summary = "批量刷新演员", description = "异步刷新所有开启刮削媒体库中已绑定 TMDB 的视频的演员信息（含电影和剧集），进度查询见 scrape/progress?module=actors")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllActors() {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllActors(HttpServletRequest request) {
+        requireAdmin(request);
         // 获取启用刮削的媒体库 ID
-        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
+        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getVisibleLibraries().stream()
                 .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
                 .map(lib -> lib.getId())
                 .toList();
@@ -421,8 +452,10 @@ public class VideoController {
     @PostMapping("/{id:\\d+}/refresh-logo")
     @Operation(summary = "补全电影Logo", description = "为已绑定 TMDB 的电影从 TMDB 获取并下载字标 logo（本地已有则跳过）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refreshMovieLogo(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         if (video.getTmdbId() == null) {
             return ResponseEntity.badRequest().body(ApiResponse.error("视频没有 TMDB ID，无法获取 logo"));
         }
@@ -443,9 +476,10 @@ public class VideoController {
 
     @PostMapping("/refresh-all-logos")
     @Operation(summary = "批量补全所有Logo", description = "异步为所有开启刮削媒体库中已绑定 TMDB 的系列和电影从 TMDB 获取并下载字标 logo，进度查询见 scrape/progress?module=logo:all")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllLogos() {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshAllLogos(HttpServletRequest request) {
+        requireAdmin(request);
         // 获取启用刮削的媒体库 ID
-        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getEnabledLibraries().stream()
+        List<Long> scrapeEnabledLibraryIds = mediaLibraryService.getVisibleLibraries().stream()
                 .filter(lib -> Boolean.TRUE.equals(lib.getEnableScraping()))
                 .map(lib -> lib.getId())
                 .toList();
@@ -554,8 +588,10 @@ public class VideoController {
     @PostMapping("/{id:\\d+}/nfo")
     @Operation(summary = "生成NFO文件", description = "为指定视频生成NFO元数据文件")
     public ResponseEntity<ApiResponse<Map<String, String>>> generateNfo(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         String nfoPath = nfoService.generateNfo(video);
         return ResponseEntity.ok(ApiResponse.success(Map.of(
                 "videoId", String.valueOf(id),
@@ -566,8 +602,10 @@ public class VideoController {
     @PostMapping("/{id:\\d+}/covers")
     @Operation(summary = "下载封面图片", description = "下载视频的竖屏海报和横屏背景图")
     public ResponseEntity<ApiResponse<Map<String, String>>> downloadCovers(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         boolean success = coverArtService.downloadAllCovers(video, true);
         if (success) {
             videoRepository.save(video);
@@ -688,12 +726,15 @@ public class VideoController {
     @Operation(summary = "设置电影Logo", description = "从查询到的 logo 选项中选一个设置（body 传 filePath）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> setMovieLogo(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody com.fryfrog.hub.video.dto.LogoSelectRequest request) {
+            @RequestBody com.fryfrog.hub.video.dto.LogoSelectRequest request,
+            HttpServletRequest httpRequest) {
+        requireAdmin(httpRequest);
         if (request.getFilePath() == null || request.getFilePath().isBlank()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("filePath 不能为空"));
         }
 
         Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         if (video.getTmdbId() == null) {
             return ResponseEntity.badRequest().body(ApiResponse.error("视频没有 TMDB ID，无法设置 logo"));
         }
@@ -723,8 +764,10 @@ public class VideoController {
     @PostMapping("/{id:\\d+}/frames")
     @Operation(summary = "生成截帧候选列表", description = "截取视频多个位置的关键帧作为封面候选，返回候选列表供前端预览选择")
     public ResponseEntity<ApiResponse<Map<String, Object>>> generateFrameCandidates(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
+            @Parameter(description = "视频ID") @PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         Path cacheDir = getFramesCacheDir(video);
         try {
             // 清理旧候选
@@ -784,8 +827,11 @@ public class VideoController {
     @Operation(summary = "选定截帧作为封面", description = "将指定候选帧设置为视频的竖屏封面、横屏背景图，或所属系列的横屏背景图")
     public ResponseEntity<ApiResponse<Map<String, Object>>> selectFrame(
             @Parameter(description = "视频ID") @PathVariable Long id,
-            @RequestBody com.fryfrog.hub.video.dto.FrameSelectRequest request) {
+            @RequestBody com.fryfrog.hub.video.dto.FrameSelectRequest request,
+            HttpServletRequest httpRequest) {
+        requireAdmin(httpRequest);
         Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         Path cacheDir = getFramesCacheDir(video);
         Path framePath = cacheDir.resolve("frame-" + request.getIndex() + ".jpg");
         if (!Files.exists(framePath)) {

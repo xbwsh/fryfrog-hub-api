@@ -4,8 +4,11 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PipelineProgressDTO;
 import com.fryfrog.hub.common.dto.ScrapeProgress;
 import com.fryfrog.hub.common.model.MediaLibrary;
+import com.fryfrog.hub.common.exception.ForbiddenException;
+import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
+import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.music.service.MusicScanService;
 import com.fryfrog.hub.video.service.MediaLibraryBrowseService;
 import com.fryfrog.hub.video.service.VideoPipelineService;
@@ -13,6 +16,7 @@ import com.fryfrog.hub.video.service.VideoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -33,14 +37,23 @@ public class MediaLibraryController {
     private final VideoPipelineService pipelineService;
     private final MediaLibraryBrowseService browseService;
     private final MusicScanService musicScanService;
+    private final UserService userService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, UserService userService) {
         this.service = service;
         this.videoService = videoService;
         this.progressService = progressService;
         this.pipelineService = pipelineService;
         this.browseService = browseService;
         this.musicScanService = musicScanService;
+        this.userService = userService;
+    }
+
+    private void requireAdmin(HttpServletRequest request) {
+        long userId = UserContext.currentUserId(request);
+        if (!userService.isAdmin(userId)) {
+            throw new ForbiddenException("需要管理员权限");
+        }
     }
 
     // ── CRUD ──
@@ -63,7 +76,8 @@ public class MediaLibraryController {
 
     @PostMapping
     @Operation(summary = "创建资源库")
-    public ResponseEntity<ApiResponse<MediaLibrary>> create(@RequestBody MediaLibrary library) {
+    public ResponseEntity<ApiResponse<MediaLibrary>> create(@RequestBody MediaLibrary library, HttpServletRequest request) {
+        requireAdmin(request);
         return ResponseEntity.ok(ApiResponse.success(service.createLibrary(library)));
     }
 
@@ -71,7 +85,9 @@ public class MediaLibraryController {
     @Operation(summary = "更新资源库")
     public ResponseEntity<ApiResponse<MediaLibrary>> update(
             @PathVariable Long id,
-            @RequestBody MediaLibrary library) {
+            @RequestBody MediaLibrary library,
+            HttpServletRequest request) {
+        requireAdmin(request);
         MediaLibrary existing = service.getLibraryById(id);
         boolean oldAdult = Boolean.TRUE.equals(existing.getIsAdult());
         MediaLibrary saved = service.updateLibrary(id, library);
@@ -88,14 +104,16 @@ public class MediaLibraryController {
 
     @DeleteMapping("/{id}")
     @Operation(summary = "删除资源库")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> delete(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> delete(@PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         service.deleteLibrary(id);
         return ResponseEntity.ok(ApiResponse.success(Map.of("deleted", id)));
     }
 
     @PutMapping("/{id}/toggle")
     @Operation(summary = "启用/禁用资源库")
-    public ResponseEntity<ApiResponse<MediaLibrary>> toggle(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<MediaLibrary>> toggle(@PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         return ResponseEntity.ok(ApiResponse.success(service.toggleLibrary(id)));
     }
 
@@ -103,7 +121,8 @@ public class MediaLibraryController {
 
     @PostMapping("/scan")
     @Operation(summary = "扫描所有启用的资源库", description = "扫描视频资源库（异步执行）")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> scanAll() {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> scanAll(HttpServletRequest request) {
+        requireAdmin(request);
         log.info("Starting full library scan...");
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -129,7 +148,8 @@ public class MediaLibraryController {
     @PostMapping("/{id}/scan")
     @Operation(summary = "扫描指定资源库", description = "根据资源库类型扫描视频资源（异步执行）")
     public ResponseEntity<ApiResponse<Map<String, Object>>> scanById(
-            @Parameter(description = "资源库ID") @PathVariable Long id) {
+            @Parameter(description = "资源库ID") @PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
         MediaLibrary library = service.getLibraryById(id);
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -156,11 +176,14 @@ public class MediaLibraryController {
     @GetMapping("/scan/progress")
     @Operation(summary = "获取扫描进度", description = "返回指定资源库的扫描进度，不传 libraryId 时返回全部资源库的进度")
     public ResponseEntity<ApiResponse<List<ScrapeProgress>>> getScanProgress(
-            @Parameter(description = "资源库ID，可选") @RequestParam(required = false) Long libraryId) {
+            @Parameter(description = "资源库ID，可选") @RequestParam(required = false) Long libraryId, HttpServletRequest request) {
         if (libraryId != null) {
+            if (!service.isVisibleToCurrentUser(libraryId)) {
+                throw new com.fryfrog.hub.common.exception.ResourceNotFoundException("MediaLibrary", "id", libraryId);
+            }
             return ResponseEntity.ok(ApiResponse.success(List.of(progressService.getProgress("scan:" + libraryId))));
         }
-        List<ScrapeProgress> progressList = service.getEnabledLibraries().stream()
+        List<ScrapeProgress> progressList = service.getVisibleLibraries().stream()
                 .map(lib -> progressService.getProgress("scan:" + lib.getId()))
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(progressList));
@@ -169,7 +192,10 @@ public class MediaLibraryController {
     @GetMapping("/{id}/pipeline-progress")
     @Operation(summary = "获取流水线聚合进度", description = "返回指定资源库扫描+刮削+资产生成的整体进度，前端进度条用")
     public ResponseEntity<ApiResponse<PipelineProgressDTO>> getPipelineProgress(
-            @Parameter(description = "资源库ID") @PathVariable Long id) {
+            @Parameter(description = "资源库ID") @PathVariable Long id, HttpServletRequest request) {
+        if (!service.isVisibleToCurrentUser(id)) {
+            throw new com.fryfrog.hub.common.exception.ResourceNotFoundException("MediaLibrary", "id", id);
+        }
         MediaLibrary library = service.getLibraryById(id);
         boolean scrapingEnabled = library.getEnableScraping() == null || library.getEnableScraping();
 
