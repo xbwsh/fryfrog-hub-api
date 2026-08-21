@@ -123,9 +123,9 @@ public class MusicScanService {
         String dirArtist = parent != null && parent.getParent() != null
                 ? parent.getParent().getFileName().toString() : null;
 
-        String title = firstNonBlank(tags.get("title"), stripExtension(path.getFileName().toString()));
-        String artistName = firstNonBlank(tags.get("artist"), tags.get("album_artist"), dirArtist, "未知歌手");
-        String albumName = firstNonBlank(tags.get("album"), dirAlbum, UNKNOWN_ALBUM);
+        String title = firstNonBlank(sanitizeTag(tags.get("title")), stripExtension(path.getFileName().toString()));
+        String artistName = firstNonBlank(sanitizeTag(tags.get("artist")), sanitizeTag(tags.get("album_artist")), dirArtist, "未知歌手");
+        String albumName = firstNonBlank(sanitizeTag(tags.get("album")), dirAlbum, UNKNOWN_ALBUM);
 
         MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
         MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
@@ -374,6 +374,23 @@ public class MusicScanService {
             if (v != null && !v.isBlank()) return v.trim();
         }
         return null;
+    }
+
+    /**
+     * 标签清洗：若标签值由大量替换符（�）/问号/菱形占位组成且几乎无可读字符，
+     * 视为乱码返回 null，让调用方回退到下一优先级（如文件名）。
+     */
+    private static String sanitizeTag(String value) {
+        if (value == null || value.isBlank()) return null;
+        String trimmed = value.trim();
+        int total = trimmed.length();
+        long bad = trimmed.chars().filter(c ->
+                c == '\uFFFD' || c == '?' || c == '\u25C6' || c == '\u25C7' || c == '\u00A4').count();
+        // 超过一半是占位符即视为无效标签
+        if (total > 0 && bad * 2 >= total) {
+            return null;
+        }
+        return trimmed;
     }
 
     private static Integer parseInt(String... values) {

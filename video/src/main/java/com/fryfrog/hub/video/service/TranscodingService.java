@@ -181,7 +181,44 @@ public class TranscodingService {
         var tags = (Map<String, String>) result.computeIfAbsent(
                 "tags", ignored -> new java.util.LinkedHashMap<String, String>());
         node.path("tags").fields().forEachRemaining(entry ->
-                tags.put(entry.getKey(), entry.getValue().asText("")));
+                tags.put(entry.getKey(), fixMojibake(entry.getValue().asText(""))));
+    }
+
+    /**
+     * 修复老音乐文件常见的标签乱码：ID3v2.3 时代中文常以 GBK/Big5 字节写入，
+     * ffprobe 按 UTF-8 解读后产生 U+FFFD（�）或 CJK 兼容区错字。
+     * 策略：
+     * 1) 含 U+FFFD 时，把字符串按 UTF-8 编码回字节，再依次尝试 GBK/Big5 解码，
+     *    取能无 � 完整解码的第一个；
+     * 2) 全部失败则返回原串。
+     */
+    private static String fixMojibake(String raw) {
+        if (raw == null || raw.isEmpty()) return raw;
+        if (!raw.contains("\uFFFD")) return raw;
+
+        byte[] bytes;
+        try {
+            bytes = raw.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return raw;
+        }
+        String[] candidates = {"GBK", "Big5", "SHIFT_JIS", "EUC-KR"};
+        for (String charset : candidates) {
+            try {
+                java.nio.charset.Charset cs = java.nio.charset.Charset.forName(charset);
+                // REPLACE 行为会引入新 �，用 report 逐个验证
+                java.nio.charset.CharsetDecoder decoder = cs.newDecoder()
+                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
+                String decoded = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+                if (!decoded.contains("\uFFFD")) {
+                    return decoded;
+                }
+            } catch (Exception ignored) {
+                // 该字符集解不出，尝试下一个
+            }
+        }
+        return raw;
     }
 
     /** Extract the first embedded audio artwork into a JPEG cache file. */
