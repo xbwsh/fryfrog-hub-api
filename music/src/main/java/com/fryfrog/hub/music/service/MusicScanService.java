@@ -290,11 +290,27 @@ public class MusicScanService {
             log.info("[MusicScan] Mojibake metadata detected, forcing rescan: {}", path.getFileName());
             return true;
         }
+        // 占位值强制重扫：首次刮削缺失时回退为目录名/data·music 或 未知歌手/未知专辑，
+        // 手动补标签后文件大小未变时仍需刷新
+        if (isPlaceholder(song.getArtistName()) || isPlaceholder(song.getAlbumName())) {
+            log.info("[MusicScan] Placeholder metadata detected, forcing rescan: {}", path.getFileName());
+            return true;
+        }
         return false;
     }
 
     private static boolean isMojibake(String s) {
         return s != null && (s.contains("\uFFFD") || s.contains("锟"));
+    }
+
+    private static final java.util.Set<String> PLACEHOLDER_NAMES = java.util.Set.of(
+            "data", "music", "media", "library", "vol1", "1000",
+            "未知歌手", "未知专辑");
+
+    private static boolean isPlaceholder(String s) {
+        if (s == null) return false;
+        String lower = s.trim().toLowerCase(java.util.Locale.ROOT);
+        return PLACEHOLDER_NAMES.contains(lower) || PLACEHOLDER_NAMES.contains(s.trim());
     }
 
     private String findLyrics(Path songDir, Path songPath) {
