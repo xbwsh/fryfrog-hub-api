@@ -199,11 +199,6 @@ public class MusicScanService {
     }
 
     private void ensureEmbeddedCover(MusicAlbum album, String audioPath, Long libraryId) {
-        if (album.getCoverArtPath() != null && Files.exists(Paths.get(album.getCoverArtPath()))) {
-            log.info("[MusicCover] Existing cover reused: albumId={}, path={}",
-                    album.getId(), album.getCoverArtPath());
-            return;
-        }
         if (album.getId() == null || libraryId == null) {
             log.warn("[MusicCover] Cannot extract embedded cover: albumId={}, libraryId={}, audio={}",
                     album.getId(), libraryId, audioPath);
@@ -218,14 +213,26 @@ public class MusicScanService {
                 log.warn("[MusicCover] Refusing cover path outside library: {}", cachePath);
                 return;
             }
-            log.info("[MusicCover] No directory cover; checking embedded cover: albumId={}, audio={}, cache={}",
-                    album.getId(), audioPath, cachePath);
+            // 变动检测：音频文件的修改时间新于缓存图 → 内嵌封面已更新，重新抽取
+            Path audio = Paths.get(audioPath);
             if (Files.exists(cachePath)) {
-                log.info("[MusicCover] Embedded cover cache already exists: albumId={}, path={}",
-                        album.getId(), cachePath);
-                album.setCoverArtPath(cachePath.toString());
-                albumRepository.save(album);
-            } else if (transcodingService.extractEmbeddedAudioCover(audioPath, cachePath.toString())) {
+                long cacheMtime = Files.getLastModifiedTime(cachePath).toMillis();
+                long audioMtime = Files.getLastModifiedTime(audio).toMillis();
+                if (cacheMtime >= audioMtime) {
+                    log.debug("[MusicCover] Embedded cover cache up-to-date: albumId={}", album.getId());
+                    if (!cachePath.toString().equals(album.getCoverArtPath())) {
+                        album.setCoverArtPath(cachePath.toString());
+                        albumRepository.save(album);
+                    }
+                    return;
+                }
+                log.info("[MusicCover] Audio newer than cached cover, re-extracting: albumId={}, audio={}",
+                        album.getId(), audioPath);
+            } else {
+                log.info("[MusicCover] No directory cover; checking embedded cover: albumId={}, audio={}",
+                        album.getId(), audioPath);
+            }
+            if (transcodingService.extractEmbeddedAudioCover(audioPath, cachePath.toString())) {
                 log.info("[MusicCover] Embedded cover extracted successfully: albumId={}, path={}",
                         album.getId(), cachePath);
                 album.setCoverArtPath(cachePath.toString());
@@ -245,16 +252,28 @@ public class MusicScanService {
             log.warn("[MusicCover] Cannot check cover: song has no album, audio={}", audioPath);
             return;
         }
-        if (album.getCoverArtPath() == null || !Files.exists(Paths.get(album.getCoverArtPath()))) {
-            Path directoryCover = findCover(albumDir);
-            if (directoryCover != null) {
-                log.info("[MusicCover] Album directory cover found: albumId={}, path={}",
+        String current = album.getCoverArtPath();
+        boolean currentIsDirCover = current != null && !current.contains(".metadata/music-covers");
+
+        if (current != null && Files.exists(Paths.get(current)) && currentIsDirCover) {
+            // 目录封面是原路径直读：用户覆盖文件内容即时生效，无需处理；
+            // 也不回退内嵌（目录优先级更高）
+            return;
+        }
+
+        // 当前无封面 / 是内嵌缓存：查找目录封面（后添加的 cover.jpg 可被采纳升级）
+        Path directoryCover = findCover(albumDir);
+        if (directoryCover != null) {
+            if (!directoryCover.toString().equals(current)) {
+                log.info("[MusicCover] Album directory cover adopted: albumId={}, path={}",
                         album.getId(), directoryCover);
                 album.setCoverArtPath(directoryCover.toString());
                 albumRepository.save(album);
-                return;
             }
+            return;
         }
+
+        // 无目录封面 → 内嵌封面（按音频 mtime 判断是否重抽）
         ensureEmbeddedCover(album, audioPath, libraryId);
     }
 
