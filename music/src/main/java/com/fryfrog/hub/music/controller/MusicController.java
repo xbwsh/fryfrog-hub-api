@@ -516,9 +516,8 @@ public class MusicController {
         dto.setArtistId(album.getArtist() != null ? album.getArtist().getId() : null);
         dto.setYear(album.getYear());
         dto.setGenre(album.getGenre());
-        if (album.getCoverArtPath() != null && Files.exists(Paths.get(album.getCoverArtPath()))) {
-            dto.setCoverUrl(MediaUrlSigner.sign("/api/v1/music/albums/" + album.getId() + "/cover"));
-        }
+        // 封面 URL 始终下发：服务端 getAlbumCover 会优先文件、回退到音频内嵌直读
+        dto.setCoverUrl(MediaUrlSigner.sign("/api/v1/music/albums/" + album.getId() + "/cover"));
         dto.setTrackCount(album.getTrackCount());
         dto.setDurationSeconds(songs.stream().mapToInt(s -> s.getDurationSeconds() == null ? 0 : s.getDurationSeconds().intValue()).sum());
         dto.setStarred(favoriteService.isStarred(userId, MusicFavoriteService.TYPE_ALBUM, album.getId()));
@@ -560,10 +559,8 @@ public class MusicController {
         dto.setYear(song.getYear());
         dto.setFileSize(song.getFileSize());
         dto.setStreamUrl(MediaUrlSigner.sign("/api/v1/music/songs/" + song.getId() + "/stream"));
-        if (song.getAlbum() != null && song.getAlbum().getCoverArtPath() != null
-                && Files.exists(Paths.get(song.getAlbum().getCoverArtPath()))) {
-            dto.setCoverUrl(MediaUrlSigner.sign("/api/v1/music/songs/" + song.getId() + "/cover"));
-        }
+        // 单曲/专辑封面统一走专辑直读链路（文件或音频内嵌）
+        dto.setCoverUrl(MediaUrlSigner.sign("/api/v1/music/songs/" + song.getId() + "/cover"));
         if ((song.getLyricsContent() != null && !song.getLyricsContent().isBlank())
                 || (song.getLyricsPath() != null && Files.exists(Paths.get(song.getLyricsPath())))) {
             dto.setLyricsUrl(MediaUrlSigner.sign("/api/v1/music/songs/" + song.getId() + "/lyrics"));
