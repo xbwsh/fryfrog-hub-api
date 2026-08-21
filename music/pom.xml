@@ -29,6 +29,13 @@
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-xml</artifactId>
         </dependency>
+        <!-- 直接解析音频文件标签（ID3/Vorbis/MP4/WAV LIST），绕过 ffprobe 的 UTF-8 净化，
+             修复 GBK/Big5 老标签乱码 -->
+        <dependency>
+            <groupId>net.jthink</groupId>
+            <artifactId>jaudiotagger</artifactId>
+            <version>3.0.1</version>
+        </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>

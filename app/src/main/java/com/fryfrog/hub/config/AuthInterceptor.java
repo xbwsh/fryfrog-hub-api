@@ -78,6 +78,8 @@ public class AuthInterceptor implements HandlerInterceptor {
         Long userId = authManager.getUserId(extractToken(request));
         if (userId != null) {
             request.setAttribute(UserContext.USER_ID_ATTR, userId);
+            // 写入 MDC：访问日志与该请求全部业务日志携带 user=ID
+            org.slf4j.MDC.put(com.fryfrog.hub.common.config.TraceIdFilter.USER_ID, String.valueOf(userId));
             if (!userService.isAdmin(userId) && requiresAdmin(request, path)) {
                 return reject(response, HttpServletResponse.SC_FORBIDDEN, "需要管理员权限");
             }

@@ -32,6 +32,7 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USERNAME=${DB_USERNAME}
       - DB_PASSWORD=${DB_PASSWORD}
+      - LOG_HOME=/data/logs
     volumes:
       - ./db:/data
       # - /your/video/path:/data/media/video

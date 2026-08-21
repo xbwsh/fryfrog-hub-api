@@ -87,12 +87,19 @@ public class PeriodicScanScheduler implements ApplicationListener<ContextRefresh
             log.debug("[Scheduler] Skipping periodic scan: busy");
             return;
         }
-        for (Runnable task : scanTasks) {
-            try {
-                task.run();
-            } catch (Exception e) {
-                log.warn("Periodic scan task failed: {}", e.getMessage());
+        // 后台线程无 HTTP 请求，自设合成 traceId（规范 docs/LOGGING.md §6.5）
+        org.slf4j.MDC.put(com.fryfrog.hub.common.config.TraceIdFilter.TRACE_ID,
+                "sched-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 6));
+        try {
+            for (Runnable task : scanTasks) {
+                try {
+                    task.run();
+                } catch (Exception e) {
+                    log.warn("[Scheduler] Periodic scan task failed: {}", e.getMessage());
+                }
             }
+        } finally {
+            org.slf4j.MDC.clear();
         }
     }
 

@@ -44,6 +44,7 @@ public class MusicScanService {
     private final TranscodingService transcodingService;
     private final ScrapeProgressService progressService;
     private final MediaLibraryService mediaLibraryService;
+    private final MusicTagReaderService tagReaderService;
 
     /**
      * 扫描目录并批量入库。
@@ -117,6 +118,21 @@ public class MusicScanService {
         @SuppressWarnings("unchecked")
         Map<String, String> tags = (Map<String, String>) info.getOrDefault("tags", Map.of());
 
+        // jaudiotagger 直读标签（绕过 ffprobe 的 UTF-8 净化），优先于 ffprobe 值
+        Map<String, String> direct = tagReaderService.readTags(path.toFile());
+        String dTitle = sanitizeTag(direct.get("title"));
+        if (dTitle != null) tags.put("title", dTitle);
+        String dArtist = sanitizeTag(direct.get("artist"));
+        if (dArtist != null) tags.put("artist", dArtist);
+        String dAlbum = sanitizeTag(direct.get("album"));
+        if (dAlbum != null) tags.put("album", dAlbum);
+        String dAlbumArtist = sanitizeTag(direct.get("albumArtist"));
+        if (dAlbumArtist != null && tags.get("album_artist") == null) tags.put("album_artist", dAlbumArtist);
+        if (tags.get("track") == null && direct.get("track") != null) tags.put("track", direct.get("track"));
+        if (tags.get("disc") == null && direct.get("disc") != null) tags.put("disc", direct.get("disc"));
+        if (tags.get("genre") == null && direct.get("genre") != null) tags.put("genre", direct.get("genre"));
+        if (tags.get("year") == null && direct.get("year") != null) tags.put("year", direct.get("year"));
+
         // 目录推断：root/歌手/专辑/曲目.ext
         Path parent = path.getParent();
         String dirAlbum = parent != null ? parent.getFileName().toString() : null;
@@ -126,6 +142,20 @@ public class MusicScanService {
         String title = firstNonBlank(sanitizeTag(tags.get("title")), stripExtension(path.getFileName().toString()));
         String artistName = firstNonBlank(sanitizeTag(tags.get("artist")), sanitizeTag(tags.get("album_artist")), dirArtist, "未知歌手");
         String albumName = firstNonBlank(sanitizeTag(tags.get("album")), dirAlbum, UNKNOWN_ALBUM);
+
+        // 兜底：文件名「歌手-标题」解析。标签缺失/乱码回退后仍不可用时，
+        // 从文件名提取（如 周杰伦-蒲公英的约定.wav → 周杰伦 / 蒲公英的约定），
+        // 避免根目录散落文件被推断成 dirArtist=media-library、dirAlbum=music。
+        String[] fromFileName = parseArtistTitleFromFileName(stripExtension(path.getFileName().toString()));
+        if (fromFileName != null) {
+            if ("未知歌手".equals(artistName) || UNKNOWN_ALBUM.equals(albumName) && dirAlbum == null) {
+                artistName = fromFileName[0];
+            }
+            if (title.equals(stripExtension(path.getFileName().toString())) && fromFileName[1] != null) {
+                // 标题来自文件名整体时，优先取「-」右侧部分
+                title = fromFileName[1];
+            }
+        }
 
         MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
         MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
@@ -299,7 +329,18 @@ public class MusicScanService {
     private boolean isChanged(MusicSong song, Path path) {
         long size = path.toFile().length();
         if (!Objects.equals(song.getFileSize(), size)) return true;
+        // 存量乱码记录强制重扫，让新标签修复逻辑覆盖：
+        // - U+FFFD：ffprobe 净化产物
+        // - 「锟」：GBK 误还原（锟斤拷）的标志性字符，真实歌名几乎不会出现
+        if (isMojibake(song.getTitle()) || isMojibake(song.getArtistName()) || isMojibake(song.getAlbumName())) {
+            log.info("[MusicScan] Mojibake metadata detected, forcing rescan: {}", path.getFileName());
+            return true;
+        }
         return false;
+    }
+
+    private static boolean isMojibake(String s) {
+        return s != null && (s.contains("\uFFFD") || s.contains("锟"));
     }
 
     private String findLyrics(Path songDir, Path songPath) {
@@ -362,6 +403,20 @@ public class MusicScanService {
     private static String stripExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /**
+     * 从「歌手-标题」型文件名解析（首个 - 分隔）。
+     * 返回 [artist, title]；不含分隔符或任一侧为空返回 null。
+     */
+    private static String[] parseArtistTitleFromFileName(String base) {
+        if (base == null) return null;
+        int idx = base.indexOf('-');
+        if (idx <= 0 || idx >= base.length() - 1) return null;
+        String artist = base.substring(0, idx).trim();
+        String title = base.substring(idx + 1).trim();
+        if (artist.isEmpty() || title.isEmpty()) return null;
+        return new String[]{artist, title};
     }
 
     private static String sortName(String name) {

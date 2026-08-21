@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+@lombok.extern.slf4j.Slf4j
 @Component
 public class AuthManager {
 
@@ -54,6 +55,7 @@ public class AuthManager {
         synchronized (attempt) {
             if (attempt.lockUntil > System.currentTimeMillis()) {
                 long retryAfter = (attempt.lockUntil - System.currentTimeMillis() + 999) / 1000;
+                log.warn("[Auth] Login rejected (locked): username={}, ip={}, retryAfter={}s", username, ip, retryAfter);
                 return new LoginResult(null, "LOCKED", retryAfter);
             }
         }
@@ -61,6 +63,7 @@ public class AuthManager {
         User user = userService.findByUsername(username).orElse(null);
         if (user == null || !Boolean.TRUE.equals(user.getEnabled()) || !userService.verifyPassword(user, password)) {
             recordFailure(attempt);
+            log.warn("[Auth] Login failed: username={}, ip={}", username, ip);
             return LoginResult.fail("INVALID");
         }
 
@@ -77,6 +80,7 @@ public class AuthManager {
                 .expiresAt(LocalDateTime.now().plusSeconds(tokenTtlSeconds))
                 .build());
         userService.updateLastLogin(user.getId(), ip);
+        log.info("[Auth] Login success: username={}, userId={}, ip={}", username, user.getId(), ip);
         return new LoginResult(token, null, 0);
     }
 
