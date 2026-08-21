@@ -1,6 +1,5 @@
 package com.fryfrog.hub.music.service;
 
-import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.music.model.MusicAlbum;
 import com.fryfrog.hub.music.model.MusicArtist;
@@ -109,7 +108,7 @@ public class MusicScanService {
         if (existing != null && !isChanged(existing, path)) {
             log.info("[MusicScan] Metadata unchanged; checking cover: {}", absolutePath);
             ensureLyrics(existing, absolutePath, path.getParent());
-            ensureAlbumCover(existing.getAlbum(), path.getParent());
+            ensureAlbumCover(existing.getAlbum());
             return existing;
         }
 
@@ -158,7 +157,7 @@ public class MusicScanService {
 
         MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
         MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
-        ensureAlbumCover(album, parent);
+        ensureAlbumCover(album);
 
         MusicSong song = existing != null ? existing : new MusicSong();
         song.setTitle(title);
@@ -198,34 +197,24 @@ public class MusicScanService {
     }
 
     /**
-     * 专辑封面只认目录图片文件（约定名 / 专辑同名 / 任意图片，支持 webp），
-     * 不再从音频内嵌图抽取——封面统一由外部刮削工具（如 music-tag-web）管理。
-     * 历史内嵌缓存路径（.metadata/music-covers）在扫描时自动废弃。
+     * 专辑封面策略：
+     * 1. 目录图片文件优先（约定名 / 专辑同名 / 任意图片，支持 webp）——外部刮削工具产物
+     * 2. 无目录图时，用 jaudiotagger 直读音频内嵌封面（music-tag-web 可写入文件内部），
+     *  内嵌封面不落地缓存文件，封面请求时由 MusicController 直读音频内该专辑的首个曲目嵌入图。
+     *  此处仅清理历史 .metadata/music-covers 遗留引用（无需在文件系统写任何东西）。
      */
-    private void ensureAlbumCover(MusicAlbum album, Path albumDir) {
+    private void ensureAlbumCover(MusicAlbum album) {
         if (album == null) {
             log.warn("[MusicCover] Cannot check cover: song has no album");
             return;
         }
         String current = album.getCoverArtPath();
-        Path directoryCover = findCover(albumDir, album.getTitle());
-        if (directoryCover == null) directoryCover = findAnyCover(albumDir);
-        String target = directoryCover != null ? directoryCover.toString() : null;
-
-        if (Objects.equals(current, target)) {
-            // 目录封面原路径直读：覆盖文件内容即时生效，无需处理
+        if (current == null || !current.contains(".metadata/music-covers")) {
             return;
         }
-        if (current != null && current.contains(".metadata/music-covers")) {
-            log.info("[MusicCover] Abandoning legacy embedded cover cache: albumId={}", album.getId());
-        }
-        album.setCoverArtPath(target);
+        album.setCoverArtPath(null);
         albumRepository.save(album);
-        if (target != null) {
-            log.info("[MusicCover] Album directory cover adopted: albumId={}, path={}", album.getId(), target);
-        } else {
-            log.info("[MusicCover] No cover file found for album {}, cleared stale reference", album.getId());
-        }
+        log.info("[MusicCover] Cleared legacy embedded cover cache reference: albumId={}", album.getId());
     }
 
     private void ensureLyrics(MusicSong song, String audioPath, Path songDir) {
@@ -286,14 +275,7 @@ public class MusicScanService {
                     album.setLibraryId(libraryId);
                     album.setGenre(firstNonBlank(tags.get("genre"), null));
                     album.setYear(parseYear(tags.get("date"), tags.get("year")));
-                    if (albumDir != null) {
-                        Path cover = findCover(albumDir, title);
-                        if (cover == null) cover = findAnyCover(albumDir);
-                        if (cover != null) {
-                            log.info("[MusicCover] Album directory cover found: album={}, path={}", title, cover);
-                            album.setCoverArtPath(cover.toString());
-                        }
-                    }
+                    // 封面由 ensureAlbumCover 统一通过内嵌直读设置，此处不预设目录封面
                     return albumRepository.save(album);
                 });
     }

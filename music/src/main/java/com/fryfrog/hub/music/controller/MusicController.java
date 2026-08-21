@@ -28,6 +28,7 @@ import com.fryfrog.hub.music.service.MusicPlaylistService;
 import com.fryfrog.hub.music.service.MusicQueryService;
 import com.fryfrog.hub.music.service.MusicScanService;
 import com.fryfrog.hub.music.service.MusicStreamService;
+import com.fryfrog.hub.music.service.MusicTagReaderService;
 import com.fryfrog.hub.music.service.MusicOrganizeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -71,6 +72,7 @@ public class MusicController {
     private final UserService userService;
     private final MusicArtistRepository artistRepository;
     private final MusicAlbumRepository albumRepository;
+    private final MusicTagReaderService tagReaderService;
 
     private void requireAdmin(HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
@@ -223,23 +225,31 @@ public class MusicController {
     }
 
     @GetMapping("/songs/{id:\\d+}/cover")
-    @Operation(summary = "获取单曲封面", description = "返回所属专辑的封面")
+    @Operation(summary = "获取单曲封面", description = "返回所属专辑的封面（直读音频内嵌图）")
     public ResponseEntity<Resource> getSongCover(@Parameter(description = "单曲ID") @PathVariable Long id) {
         MusicSong song = requireSong(id);
-        if (song.getAlbum() == null || song.getAlbum().getCoverArtPath() == null) {
-            return ResponseEntity.notFound().build();
+        // 优先目录型 coverArtPath 的存量（若仍指向真实文件）；否则直读该曲文件内嵌图
+        if (song.getAlbum() != null && song.getAlbum().getCoverArtPath() != null
+                && Files.exists(Paths.get(song.getAlbum().getCoverArtPath()))) {
+            return coverFileResponse(Paths.get(song.getAlbum().getCoverArtPath()));
         }
-        return coverFileResponse(Paths.get(song.getAlbum().getCoverArtPath()));
+        return embeddedCoverResponse(song.getFilePath());
     }
 
     @GetMapping("/albums/{id:\\d+}/cover")
-    @Operation(summary = "获取专辑封面")
+    @Operation(summary = "获取专辑封面", description = "直读音频内嵌封面")
     public ResponseEntity<Resource> getAlbumCover(@Parameter(description = "专辑ID") @PathVariable Long id) {
         MusicAlbum album = requireAlbum(id);
-        if (album.getCoverArtPath() == null) {
-            return ResponseEntity.notFound().build();
+        if (album.getCoverArtPath() != null && Files.exists(Paths.get(album.getCoverArtPath()))) {
+            return coverFileResponse(Paths.get(album.getCoverArtPath()));
         }
-        return coverFileResponse(Paths.get(album.getCoverArtPath()));
+        // 专辑无目录封面 → 取该专辑任一曲目的内嵌图直读
+        List<MusicSong> songs = queryService.getSongsByAlbum(id);
+        for (MusicSong s : songs) {
+            ResponseEntity<Resource> resp = embeddedCoverResponse(s.getFilePath());
+            if (resp.getStatusCode().is2xxSuccessful()) return resp;
+        }
+        return ResponseEntity.notFound().build();
     }
 
     @GetMapping("/artists/{id:\\d+}/cover")
@@ -574,6 +584,24 @@ public class MusicController {
         else if (name.endsWith(".webp")) type = MediaType.parseMediaType("image/webp");
         return ResponseEntity.ok().contentType(type)
                 .body(new FileSystemResource(path.toFile()));
+    }
+
+    /** 直读音频文件内嵌封面；无内嵌图返回 404。 */
+    private ResponseEntity<Resource> embeddedCoverResponse(String filePath) {
+        if (filePath == null) return ResponseEntity.notFound().build();
+        var art = tagReaderService.readEmbeddedArtwork(new java.io.File(filePath));
+        if (art == null || art.data() == null || art.data().length == 0) {
+            return ResponseEntity.notFound().build();
+        }
+        String ext = art.extension();
+        MediaType type = switch (ext) {
+            case "png" -> MediaType.IMAGE_PNG;
+            case "webp" -> MediaType.parseMediaType("image/webp");
+            case "gif" -> MediaType.parseMediaType("image/gif");
+            default -> MediaType.IMAGE_JPEG;
+        };
+        return ResponseEntity.ok().contentType(type)
+                .body(new ByteArrayResource(art.data()));
     }
 
     private static String starType(String type) {

@@ -11,6 +11,7 @@ import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -56,6 +57,54 @@ public class MusicTagReaderService {
             log.debug("[TagReader] Failed to read tags: file={}, error={}", file.getName(), e.getMessage());
         }
         return out;
+    }
+
+    /** 内嵌封面图：原始字节 + 推断扩展名；无内嵌图返回 null。 */
+    public record EmbeddedArtwork(byte[] data, String extension) {}
+
+    /**
+     * 直读音频文件内嵌封面（music-tag-web 等工具写入的专辑图）。
+     * 纯 Java 解析，无需 ffmpeg 子进程。
+     */
+    public EmbeddedArtwork readEmbeddedArtwork(File file) {
+        try {
+            AudioFile audio = AudioFileIO.read(file);
+            Tag tag = audio.getTag();
+            if (tag == null || tag.isEmpty()) return null;
+            var artwork = tag.getFirstArtwork();
+            if (artwork == null || artwork.getBinaryData() == null || artwork.getBinaryData().length == 0) {
+                return null;
+            }
+            return new EmbeddedArtwork(artwork.getBinaryData(), extensionOf(artwork));
+        } catch (Exception e) {
+            log.debug("[TagReader] Failed to read embedded artwork: file={}, error={}", file.getName(), e.getMessage());
+            return null;
+        }
+    }
+
+    private static String extensionOf(org.jaudiotagger.tag.images.Artwork artwork) {
+        // 优先 mimeType（image/webp → webp），退化用描述/图片类型推断，默认 jpg
+        String mime = artwork.getMimeType();
+        if (mime != null) {
+            String sub = mime.toLowerCase();
+            int slash = sub.indexOf('/');
+            if (slash > 0 && slash + 1 < sub.length()) {
+                sub = sub.substring(slash + 1);
+                if (sub.equals("jpeg")) return "jpg";
+                if (List.of("jpg", "png", "webp", "gif", "bmp").contains(sub)) return sub;
+            }
+        }
+        String desc = artwork.getDescription();
+        if (desc != null) {
+            String lower = desc.toLowerCase();
+            for (String ext : List.of("webp", "png", "jpg", "jpeg", "gif", "bmp")) {
+                if (lower.endsWith("." + ext)) return ext.equals("jpeg") ? "jpg" : ext;
+            }
+        }
+        // PNG 魔数兜底
+        byte[] d = artwork.getBinaryData();
+        if (d != null && d.length > 8 && (d[0] & 0xFF) == 0x89 && d[1] == 'P') return "png";
+        return "jpg";
     }
 
     private static void put(Map<String, String> map, String key, String value) {
