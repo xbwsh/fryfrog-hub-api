@@ -261,8 +261,9 @@ public class MusicScanService {
             return;
         }
 
-        // 当前无封面 / 是内嵌缓存：查找目录封面（后添加的 cover.jpg 可被采纳升级）
-        Path directoryCover = findCover(albumDir);
+        // 当前无封面 / 是内嵌缓存：查找目录封面（约定名 → 专辑同名 → 任意图片）
+        Path directoryCover = findCover(albumDir, album.getTitle());
+        if (directoryCover == null) directoryCover = findAnyCover(albumDir);
         if (directoryCover != null) {
             if (!directoryCover.toString().equals(current)) {
                 log.info("[MusicCover] Album directory cover adopted: albumId={}, path={}",
@@ -313,7 +314,8 @@ public class MusicScanService {
                     artist.setSortName(sortName(name));
                     artist.setLibraryId(libraryId);
                     if (artistDir != null) {
-                        Path cover = findCover(artistDir);
+                        Path cover = findCover(artistDir, name);
+                        if (cover == null) cover = findAnyCover(artistDir);
                         if (cover != null) {
                             log.info("[MusicCover] Artist directory cover found: artist={}, path={}", name, cover);
                             artist.setCoverArtPath(cover.toString());
@@ -335,7 +337,8 @@ public class MusicScanService {
                     album.setGenre(firstNonBlank(tags.get("genre"), null));
                     album.setYear(parseYear(tags.get("date"), tags.get("year")));
                     if (albumDir != null) {
-                        Path cover = findCover(albumDir);
+                        Path cover = findCover(albumDir, title);
+                        if (cover == null) cover = findAnyCover(albumDir);
                         if (cover != null) {
                             log.info("[MusicCover] Album directory cover found: album={}, path={}", title, cover);
                             album.setCoverArtPath(cover.toString());
@@ -392,18 +395,54 @@ public class MusicScanService {
         return null;
     }
 
-    private Path findCover(Path dir) {
+    /** 支持的封面图片扩展名（含 music-tag-web 刮削产物 webp） */
+    private static final Set<String> COVER_EXTENSIONS = Set.of("jpg", "jpeg", "png", "webp");
+
+    /**
+     * 查找专辑目录封面，优先级：
+     * 1. 约定名 cover/folder/front/album.{jpg,jpeg,png,webp}
+     * 2. 专辑同名文件（music-tag-web 刮削产物：{专辑名}.webp/jpg/png）
+     * 3. 目录下任意图片文件兜底
+     */
+    private Path findCover(Path dir, String albumTitle) {
         if (dir == null || !Files.isDirectory(dir)) return null;
-        for (String name : new String[]{"cover.jpg", "cover.png", "folder.jpg", "front.jpg", "album.jpg"}) {
-            Path candidate = dir.resolve(name);
-            if (Files.exists(candidate)) return candidate;
+        for (String base : new String[]{"cover", "folder", "front", "album"}) {
+            for (String ext : COVER_EXTENSIONS) {
+                Path candidate = dir.resolve(base + "." + ext);
+                if (Files.exists(candidate)) return candidate;
+            }
         }
-        // 兜底：目录下任意 jpg/png 图片（排除 artist 专辑封面以外的同名封面优先）
+        // 专辑同名封面：{专辑名}.{ext}（大小写不敏感）
+        if (albumTitle != null && !albumTitle.isBlank()) {
+            try (Stream<Path> files = Files.list(dir)) {
+                String want = albumTitle.trim();
+                return files.filter(Files::isRegularFile)
+                        .filter(p -> {
+                            String name = p.getFileName().toString();
+                            int dot = name.lastIndexOf('.');
+                            if (dot <= 0) return false;
+                            String ext = name.substring(dot + 1).toLowerCase();
+                            if (!COVER_EXTENSIONS.contains(ext)) return false;
+                            return stripExtension(name).equalsIgnoreCase(want);
+                        })
+                        .findFirst()
+                        .orElse(null);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** 兜底：目录下任意图片文件 */
+    private Path findAnyCover(Path dir) {
+        if (dir == null || !Files.isDirectory(dir)) return null;
         try (Stream<Path> files = Files.list(dir)) {
             return files.filter(Files::isRegularFile)
                     .filter(p -> {
                         String n = p.getFileName().toString().toLowerCase();
-                        return n.endsWith(".jpg") || n.endsWith(".png");
+                        int dot = n.lastIndexOf('.');
+                        return dot > 0 && COVER_EXTENSIONS.contains(n.substring(dot + 1));
                     })
                     .sorted()
                     .findFirst()

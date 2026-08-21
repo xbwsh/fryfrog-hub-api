@@ -45,6 +45,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -225,25 +226,20 @@ public class MusicController {
     @Operation(summary = "获取单曲封面", description = "返回所属专辑的封面")
     public ResponseEntity<Resource> getSongCover(@Parameter(description = "单曲ID") @PathVariable Long id) {
         MusicSong song = requireSong(id);
-        if (song.getAlbum() == null || song.getAlbum().getCoverArtPath() == null
-                || !Files.exists(Paths.get(song.getAlbum().getCoverArtPath()))) {
+        if (song.getAlbum() == null || song.getAlbum().getCoverArtPath() == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
-                .body(new FileSystemResource(Paths.get(song.getAlbum().getCoverArtPath()).toFile()));
+        return coverFileResponse(Paths.get(song.getAlbum().getCoverArtPath()));
     }
 
     @GetMapping("/albums/{id:\\d+}/cover")
     @Operation(summary = "获取专辑封面")
     public ResponseEntity<Resource> getAlbumCover(@Parameter(description = "专辑ID") @PathVariable Long id) {
         MusicAlbum album = requireAlbum(id);
-        if (album.getCoverArtPath() == null || !Files.exists(Paths.get(album.getCoverArtPath()))) {
+        if (album.getCoverArtPath() == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
-                .body(new FileSystemResource(Paths.get(album.getCoverArtPath()).toFile()));
+        return coverFileResponse(Paths.get(album.getCoverArtPath()));
     }
 
     @GetMapping("/artists/{id:\\d+}/cover")
@@ -566,6 +562,19 @@ public class MusicController {
     }
 
     // ── 工具 ──
+
+    /** 封面文件响应：按扩展名推断 Content-Type（支持 jpg/png/webp），缺失返回 404 */
+    private ResponseEntity<Resource> coverFileResponse(Path path) {
+        if (!Files.exists(path)) {
+            return ResponseEntity.notFound().build();
+        }
+        String name = path.getFileName().toString().toLowerCase();
+        MediaType type = MediaType.IMAGE_JPEG;
+        if (name.endsWith(".png")) type = MediaType.IMAGE_PNG;
+        else if (name.endsWith(".webp")) type = MediaType.parseMediaType("image/webp");
+        return ResponseEntity.ok().contentType(type)
+                .body(new FileSystemResource(path.toFile()));
+    }
 
     private static String starType(String type) {
         return switch (type) {
