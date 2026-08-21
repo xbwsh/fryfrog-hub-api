@@ -43,7 +43,6 @@ public class MusicScanService {
     private final MusicCleanupService cleanupService;
     private final TranscodingService transcodingService;
     private final ScrapeProgressService progressService;
-    private final MediaLibraryService mediaLibraryService;
     private final MusicTagReaderService tagReaderService;
 
     /**
@@ -110,7 +109,7 @@ public class MusicScanService {
         if (existing != null && !isChanged(existing, path)) {
             log.info("[MusicScan] Metadata unchanged; checking cover: {}", absolutePath);
             ensureLyrics(existing, absolutePath, path.getParent());
-            ensureAlbumCover(existing.getAlbum(), path.getParent(), absolutePath, libraryId);
+            ensureAlbumCover(existing.getAlbum(), path.getParent());
             return existing;
         }
 
@@ -159,7 +158,7 @@ public class MusicScanService {
 
         MusicArtist artist = getOrCreateArtist(artistName, libraryId, parent != null ? parent.getParent() : null);
         MusicAlbum album = getOrCreateAlbum(albumName, artist, tags, libraryId, parent);
-        ensureAlbumCover(album, parent, absolutePath, libraryId);
+        ensureAlbumCover(album, parent);
 
         MusicSong song = existing != null ? existing : new MusicSong();
         song.setTitle(title);
@@ -198,84 +197,35 @@ public class MusicScanService {
         return songRepository.save(song);
     }
 
-    private void ensureEmbeddedCover(MusicAlbum album, String audioPath, Long libraryId) {
-        if (album.getId() == null || libraryId == null) {
-            log.warn("[MusicCover] Cannot extract embedded cover: albumId={}, libraryId={}, audio={}",
-                    album.getId(), libraryId, audioPath);
-            return;
-        }
-        try {
-            Path libraryRoot = Paths.get(mediaLibraryService.getLibraryById(libraryId).getPath())
-                    .toAbsolutePath().normalize();
-            Path cachePath = libraryRoot.resolve(".metadata/music-covers")
-                    .resolve(album.getId() + ".jpg").normalize();
-            if (!cachePath.startsWith(libraryRoot)) {
-                log.warn("[MusicCover] Refusing cover path outside library: {}", cachePath);
-                return;
-            }
-            // 变动检测：音频文件的修改时间新于缓存图 → 内嵌封面已更新，重新抽取
-            Path audio = Paths.get(audioPath);
-            if (Files.exists(cachePath)) {
-                long cacheMtime = Files.getLastModifiedTime(cachePath).toMillis();
-                long audioMtime = Files.getLastModifiedTime(audio).toMillis();
-                if (cacheMtime >= audioMtime) {
-                    log.debug("[MusicCover] Embedded cover cache up-to-date: albumId={}", album.getId());
-                    if (!cachePath.toString().equals(album.getCoverArtPath())) {
-                        album.setCoverArtPath(cachePath.toString());
-                        albumRepository.save(album);
-                    }
-                    return;
-                }
-                log.info("[MusicCover] Audio newer than cached cover, re-extracting: albumId={}, audio={}",
-                        album.getId(), audioPath);
-            } else {
-                log.info("[MusicCover] No directory cover; checking embedded cover: albumId={}, audio={}",
-                        album.getId(), audioPath);
-            }
-            if (transcodingService.extractEmbeddedAudioCover(audioPath, cachePath.toString())) {
-                log.info("[MusicCover] Embedded cover extracted successfully: albumId={}, path={}",
-                        album.getId(), cachePath);
-                album.setCoverArtPath(cachePath.toString());
-                albumRepository.save(album);
-            } else {
-                log.warn("[MusicCover] No embedded cover extracted: albumId={}, audio={}",
-                        album.getId(), audioPath);
-            }
-        } catch (Exception e) {
-            log.warn("[MusicCover] Embedded cover extraction failed: albumId={}, audio={}, message={}",
-                    album.getId(), audioPath, e.getMessage(), e);
-        }
-    }
-
-    private void ensureAlbumCover(MusicAlbum album, Path albumDir, String audioPath, Long libraryId) {
+    /**
+     * 专辑封面只认目录图片文件（约定名 / 专辑同名 / 任意图片，支持 webp），
+     * 不再从音频内嵌图抽取——封面统一由外部刮削工具（如 music-tag-web）管理。
+     * 历史内嵌缓存路径（.metadata/music-covers）在扫描时自动废弃。
+     */
+    private void ensureAlbumCover(MusicAlbum album, Path albumDir) {
         if (album == null) {
-            log.warn("[MusicCover] Cannot check cover: song has no album, audio={}", audioPath);
+            log.warn("[MusicCover] Cannot check cover: song has no album");
             return;
         }
         String current = album.getCoverArtPath();
-        boolean currentIsDirCover = current != null && !current.contains(".metadata/music-covers");
-
-        if (current != null && Files.exists(Paths.get(current)) && currentIsDirCover) {
-            // 目录封面是原路径直读：用户覆盖文件内容即时生效，无需处理；
-            // 也不回退内嵌（目录优先级更高）
-            return;
-        }
-
-        // 当前无封面 / 是内嵌缓存：查找目录封面（约定名 → 专辑同名 → 任意图片）
         Path directoryCover = findCover(albumDir, album.getTitle());
         if (directoryCover == null) directoryCover = findAnyCover(albumDir);
-        if (directoryCover != null) {
-            if (!directoryCover.toString().equals(current)) {
-                log.info("[MusicCover] Album directory cover adopted: albumId={}, path={}",
-                        album.getId(), directoryCover);
-                album.setCoverArtPath(directoryCover.toString());
-                albumRepository.save(album);
-            }
+        String target = directoryCover != null ? directoryCover.toString() : null;
+
+        if (Objects.equals(current, target)) {
+            // 目录封面原路径直读：覆盖文件内容即时生效，无需处理
             return;
         }
-
-        // 无目录封面 → 内嵌封面（按音频 mtime 判断是否重抽）
-        ensureEmbeddedCover(album, audioPath, libraryId);
+        if (current != null && current.contains(".metadata/music-covers")) {
+            log.info("[MusicCover] Abandoning legacy embedded cover cache: albumId={}", album.getId());
+        }
+        album.setCoverArtPath(target);
+        albumRepository.save(album);
+        if (target != null) {
+            log.info("[MusicCover] Album directory cover adopted: albumId={}, path={}", album.getId(), target);
+        } else {
+            log.info("[MusicCover] No cover file found for album {}, cleared stale reference", album.getId());
+        }
     }
 
     private void ensureLyrics(MusicSong song, String audioPath, Path songDir) {
