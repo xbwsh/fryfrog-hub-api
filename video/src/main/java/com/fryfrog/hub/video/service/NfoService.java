@@ -287,15 +287,9 @@ public class NfoService {
                     .append("</uniqueid>\n");
         }
 
-        // 观看状态
-        if (video.getWatchProgress() != null) {
-            boolean watched = Boolean.TRUE.equals(video.getWatchProgress().getCompleted());
-            appendField(sb, "watched", watched ? "true" : "false");
-            appendField(sb, "playcount", watched ? 1 : 0);
-        } else {
-            appendField(sb, "watched", "false");
-            appendField(sb, "playcount", 0);
-        }
+        // 观看状态：进度按用户隔离，NFO 是全局共享文件，不写入任何单用户的观看状态
+        appendField(sb, "watched", "false");
+        appendField(sb, "playcount", 0);
 
         // 成人内容标记
         if (Boolean.TRUE.equals(video.getIsAdult())) {
@@ -376,7 +370,9 @@ public class NfoService {
     }
 
     private String cleanTitle(String title) {
-        String cleaned = com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title);
+        // cleanForSearch 去除标题噪音后，还需移除文件系统非法字符（Windows 的 : ? " 等）
+        String cleaned = com.fryfrog.hub.common.util.TitleCleaner.sanitizeFolderName(
+                com.fryfrog.hub.common.util.TitleCleaner.cleanForSearch(title));
         return (cleaned == null || cleaned.isBlank()) ? "Unknown" : cleaned;
     }
 
@@ -665,12 +661,13 @@ public class NfoService {
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         if (videoDir != null) {
             // poster：优先 poster.jpg，其次 NFO 的 <thumb> 引用
+            // NFO 内容不可信（可来自磁盘上的任意文件），必须校验引用路径未逃逸出视频目录
             Path poster = videoDir.resolve("poster.jpg");
             if (Files.exists(poster)) {
                 video.setCoverArtPath(poster.toString());
             } else if (data.thumb != null && !data.thumb.isBlank()) {
-                Path fromNfo = videoDir.resolve(data.thumb);
-                if (Files.exists(fromNfo)) {
+                Path fromNfo = videoDir.resolve(data.thumb).normalize();
+                if (fromNfo.startsWith(videoDir) && Files.exists(fromNfo)) {
                     video.setCoverArtPath(fromNfo.toString());
                 }
             }
@@ -679,8 +676,8 @@ public class NfoService {
             if (Files.exists(fanart)) {
                 video.setBackdropLocalPath(fanart.toString());
             } else if (data.fanart != null && !data.fanart.isBlank()) {
-                Path fromNfo = videoDir.resolve(data.fanart);
-                if (Files.exists(fromNfo)) {
+                Path fromNfo = videoDir.resolve(data.fanart).normalize();
+                if (fromNfo.startsWith(videoDir) && Files.exists(fromNfo)) {
                     video.setBackdropLocalPath(fromNfo.toString());
                 }
             }

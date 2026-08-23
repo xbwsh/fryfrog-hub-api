@@ -9,6 +9,7 @@ import com.fryfrog.hub.video.dto.TmdbTvImages;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.client.HttpClientErrorException;
@@ -52,8 +53,8 @@ public class TmdbService {
     private final Cache<String, TmdbTvImages> imagesCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
 
-    public TmdbService(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
+    public TmdbService(@Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate) {
+        this.restTemplate = scraperRestTemplate;
     }
 
     private String getApiKey() {
@@ -142,10 +143,14 @@ public class TmdbService {
                 }
                 return results != null ? results : List.of();
             }
+            throw new IllegalStateException("TMDB movie search returned status " + response.getStatusCode());
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Failed to search movies on TMDB: {}", e.getMessage(), e);
+            // 网络失败必须抛出而非返回空列表：上层会把"无结果"的视频移入未识别目录
+            log.error("Failed to search movies on TMDB: {}", e.getMessage());
+            throw new IllegalStateException("TMDB movie search failed: " + e.getMessage(), e);
         }
-        return List.of();
     }
 
     public List<TmdbSearchResult.TmdbSearchItem> searchTv(String query) {
@@ -185,10 +190,14 @@ public class TmdbService {
                 }
                 return results != null ? results : List.of();
             }
+            throw new IllegalStateException("TMDB tv search returned status " + response.getStatusCode());
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Failed to search TV shows on TMDB: {}", e.getMessage(), e);
+            // 网络失败必须抛出而非返回空列表：上层会把"无结果"的视频移入未识别目录
+            log.error("Failed to search TV shows on TMDB: {}", e.getMessage());
+            throw new IllegalStateException("TMDB tv search failed: " + e.getMessage(), e);
         }
-        return List.of();
     }
 
     public TmdbMovieDetail getMovieDetail(Long movieId) {

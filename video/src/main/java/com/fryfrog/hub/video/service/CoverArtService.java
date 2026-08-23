@@ -3,6 +3,7 @@ package com.fryfrog.hub.video.service;
 import com.fryfrog.hub.video.model.Video;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -21,6 +22,7 @@ import java.nio.file.StandardCopyOption;
 @Slf4j
 public class CoverArtService {
 
+    @Qualifier("scraperRestTemplate")
     private final RestTemplate restTemplate;
     private final NfoService nfoService;
 

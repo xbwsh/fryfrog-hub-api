@@ -80,13 +80,15 @@ public class SeriesController {
     }
 
     @GetMapping
-    @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立电影），支持分页")
+    @Operation(summary = "获取所有系列", description = "返回所有视频系列列表（含独立视频），支持分页")
     public ResponseEntity<ApiResponse<PageResponse<SeriesListDTO>>> getAllSeries(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
-        long seriesCount = seriesService.count();
+        // 全量只加载一次，count 与分页共用，避免两次独立查询结果不一致导致页错位
+        List<VideoSeries> allSeries = seriesService.getAllSeries();
+        long seriesCount = allSeries.size();
         long standaloneCount = videoRepository.countBySeriesIsNull();
         long total = seriesCount + standaloneCount;
 
@@ -104,9 +106,8 @@ public class SeriesController {
         long standaloneStart = Math.max(0, start - seriesCount);
         long standaloneEnd = Math.max(0, end - seriesCount);
 
-        // 系列（通常数量少，加载全部）
+        // 系列（通常数量少，内存分页）
         if (start < seriesCount) {
-            List<VideoSeries> allSeries = seriesService.getAllSeries();
             Map<Long, Boolean> seriesFav = favoriteService.statusMap(userId, Favorite.TYPE_SERIES,
                     allSeries.stream().map(VideoSeries::getId).toList());
             List<VideoSeries> pagedSeries = allSeries.subList(
@@ -196,6 +197,11 @@ public class SeriesController {
             @Parameter(description = "收藏状态") @RequestParam boolean status,
             HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
+        // 收藏目标必须对当前用户可见（至少一集属于可见库），先校验再写入
+        VideoSeries target = seriesService.getSeriesById(id).orElse(null);
+        if (target != null && target.getVideos().stream().noneMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()))) {
+            throw new ResourceNotFoundException("Series", "id", id);
+        }
         favoriteService.setFavorite(userId, Favorite.TYPE_SERIES, id, status);
         VideoSeries series = seriesService.getSeriesById(id)
                 .orElseThrow(() -> new RuntimeException("Series not found: " + id));

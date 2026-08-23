@@ -110,13 +110,13 @@ public class VideoSeries extends BaseEntity {
     @com.fasterxml.jackson.annotation.JsonGetter("coverUrl")
     public String getCoverUrl() {
         if (getId() == null) return null;
-        return "/api/v1/video/series/" + getId() + "/cover";
+        return com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/series/" + getId() + "/cover");
     }
 
     @com.fasterxml.jackson.annotation.JsonGetter("fanartUrl")
     public String getFanartUrl() {
         if (getId() == null) return null;
-        return "/api/v1/video/series/" + getId() + "/fanart";
+        return com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/series/" + getId() + "/fanart");
     }
 
     @com.fasterxml.jackson.annotation.JsonGetter("logoUrl")
@@ -124,6 +124,7 @@ public class VideoSeries extends BaseEntity {
         if (getId() == null) return null;
         if (logoLocalPath == null) return null;
         if (!java.nio.file.Files.exists(java.nio.file.Paths.get(logoLocalPath))) return null;
-        return "/api/v1/video/series/" + getId() + "/logo";
+        // 与 cover/fanart 一致输出签名 URL，<img> 无需携带 Authorization 头
+        return com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/series/" + getId() + "/logo");
     }
 }

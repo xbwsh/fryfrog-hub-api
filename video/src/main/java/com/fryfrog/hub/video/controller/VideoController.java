@@ -62,6 +62,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -88,6 +89,10 @@ public class VideoController {
     private final MediaLibraryService mediaLibraryService;
     private final TmdbService tmdbService;
     private final UserService userService;
+
+    /** M3U 等对外 URL 的基地址覆盖（反向代理/NAT 场景），环境变量 VIDEO_BASE_URL */
+    @org.springframework.beans.factory.annotation.Value("${video.base-url:${VIDEO_BASE_URL:}}")
+    private String baseUrlConfig;
 
     private void requireAdmin(HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
@@ -186,6 +191,8 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id,
             @Parameter(description = "收藏状态") @RequestParam boolean status,
             HttpServletRequest request) {
+        // 收藏目标必须对当前用户可见，防止受限用户借 ID 探测其他库内容
+        requireLibraryVisible(service.getVideoById(id).getLibraryId(), id, "Video");
         long userId = UserContext.currentUserId(request);
         service.setFavorite(userId, id, status);
         return ResponseEntity.ok(ApiResponse.success(toDTO(service.getVideoById(id), request)));
@@ -195,6 +202,8 @@ public class VideoController {
     @Operation(summary = "获取视频演员列表", description = "返回指定视频的演员信息列表")
     public ResponseEntity<ApiResponse<List<VideoActor>>> getActors(
             @Parameter(description = "视频ID") @PathVariable Long id) {
+        Video video = service.getVideoById(id);
+        requireLibraryVisible(video.getLibraryId(), id, "Video");
         return ResponseEntity.ok(ApiResponse.success(actorRepository.findByVideo_Id(id)));
     }
 
@@ -246,8 +255,12 @@ public class VideoController {
                 String baseName = nfoService.getBaseName(video.getFileName());
                 // v3: 多点采样+内容评分选帧；旧版单帧缓存（-frame.jpg / -frame-v2.jpg）不再使用
                 Path framePath = videoDir.resolve(baseName + "-frame-v3.jpg");
-                if (!Files.exists(framePath)) {
-                    transcodingService.extractFrame(video.getFilePath(), framePath.toString());
+                if (!Files.exists(framePath) && tryBeginFrameGeneration(id)) {
+                    try {
+                        transcodingService.extractFrame(video.getFilePath(), framePath.toString());
+                    } finally {
+                        endFrameGeneration(id);
+                    }
                 }
                 if (Files.exists(framePath)) {
                     return ResponseEntity.ok()
@@ -390,12 +403,25 @@ public class VideoController {
     }
 
     @PostMapping("/tmdb/rescrape-library/{libraryId}")
-    @Operation(summary = "按资源库重新刮削", description = "解绑指定资源库中所有视频的TMDB绑定，然后根据资源库类型重新搜索绑定")
+    @Operation(summary = "按资源库重新刮削", description = "解绑指定资源库中所有视频的TMDB绑定，然后根据资源库类型重新搜索绑定（异步执行，进度见 scrape/progress?module=video）")
     public ResponseEntity<ApiResponse<String>> rescrapeByLibrary(
             @Parameter(description = "资源库ID") @PathVariable Long libraryId, HttpServletRequest request) {
         requireAdmin(request);
         requireLibraryVisible(mediaLibraryService.getLibraryById(libraryId).getId(), libraryId, "MediaLibrary");
-        service.rescrapeByLibrary(libraryId);
+
+        // 暂停 periodic-scan 防止并发冲突；整库解绑+扫描+刮削耗时长，必须异步避免 HTTP 超时
+        scanScheduler.setBusy(true);
+        Thread.startVirtualThread(() -> {
+            try {
+                service.rescrapeByLibrary(libraryId);
+                log.info("[Rescrape] Library {} rescrape completed", libraryId);
+            } catch (Exception e) {
+                log.error("[Rescrape] Library {} rescrape failed: {}", libraryId, e.getMessage(), e);
+            } finally {
+                scanScheduler.setBusy(false);
+            }
+        });
+
         return ResponseEntity.ok(ApiResponse.success("Rescrape started for library " + libraryId));
     }
 
@@ -645,8 +671,12 @@ public class VideoController {
                 if (videoDir != null) {
                     // v3: 多点采样+内容评分选帧；旧版单帧缓存（-fanart-frame.jpg / -v2.jpg）不再使用
                     Path framePath = videoDir.resolve(baseName + "-fanart-frame-v3.jpg");
-                    if (!Files.exists(framePath)) {
-                        transcodingService.extractFrame(video.getFilePath(), framePath.toString(), 1920, 1080);
+                    if (!Files.exists(framePath) && tryBeginFrameGeneration(id)) {
+                        try {
+                            transcodingService.extractFrame(video.getFilePath(), framePath.toString(), 1920, 1080);
+                        } finally {
+                            endFrameGeneration(id);
+                        }
                     }
                     if (Files.exists(framePath)) {
                         return ResponseEntity.ok()
@@ -753,12 +783,24 @@ public class VideoController {
         }
     }
 
+    /** 正在懒生成截帧的视频 ID（防止并发请求对同一视频重复起 FFmpeg） */
+    private static final Set<Long> FRAME_GENERATING = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /**
      * 截帧候选缓存目录：视频同目录下 .frames-{videoId}/
      */
     private Path getFramesCacheDir(Video video) {
         Path videoDir = Paths.get(video.getFilePath()).getParent();
         return videoDir.resolve(".frames-" + video.getId());
+    }
+
+    /** 尝试占用生成权；已在生成的视频直接跳过，由兜底占位图响应 */
+    private boolean tryBeginFrameGeneration(Long videoId) {
+        return FRAME_GENERATING.add(videoId);
+    }
+
+    private void endFrameGeneration(Long videoId) {
+        FRAME_GENERATING.remove(videoId);
     }
 
     @PostMapping("/{id:\\d+}/frames")
@@ -920,6 +962,7 @@ public class VideoController {
     public ResponseEntity<ApiResponse<WatchProgressDTO>> getProgress(
             @Parameter(description = "视频ID") @PathVariable Long id,
             HttpServletRequest request) {
+        requireLibraryVisible(service.getVideoById(id).getLibraryId(), id, "Video");
         long userId = UserContext.currentUserId(request);
         WatchProgress progress = watchProgressService.getProgress(userId, id);
         if (progress == null) {
@@ -934,6 +977,7 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id,
             @Valid @RequestBody UpdatePositionRequest request,
             HttpServletRequest req) {
+        requireLibraryVisible(service.getVideoById(id).getLibraryId(), id, "Video");
         long userId = UserContext.currentUserId(req);
         WatchProgress progress = watchProgressService.updatePosition(userId, id, request.getPosition(), request.getDuration());
         return ResponseEntity.ok(ApiResponse.success(WatchProgressDTO.fromEntity(progress)));
@@ -945,6 +989,7 @@ public class VideoController {
             @Parameter(description = "视频ID") @PathVariable Long id,
             @RequestBody UpdateWatchedRequest request,
             HttpServletRequest req) {
+        requireLibraryVisible(service.getVideoById(id).getLibraryId(), id, "Video");
         long userId = UserContext.currentUserId(req);
         boolean completed = request != null && Boolean.TRUE.equals(request.getCompleted());
         WatchProgress progress = watchProgressService.updateWatched(userId, id, completed);
@@ -956,6 +1001,7 @@ public class VideoController {
     public ResponseEntity<ApiResponse<Void>> deleteProgress(
             @Parameter(description = "视频ID") @PathVariable Long id,
             HttpServletRequest request) {
+        requireLibraryVisible(service.getVideoById(id).getLibraryId(), id, "Video");
         long userId = UserContext.currentUserId(request);
         watchProgressService.deleteProgress(userId, id);
         return ResponseEntity.ok(ApiResponse.success(null));
@@ -1059,29 +1105,30 @@ public class VideoController {
         long fileLength = videoFile.length();
 
         if (rangeHeader == null || !rangeHeader.startsWith("bytes=")) {
-            response.setContentType(contentType);
-            response.setHeader("Accept-Ranges", "bytes");
-            response.setContentLengthLong(fileLength);
-            try (var is = new java.io.FileInputStream(videoFile); var os = response.getOutputStream()) {
-                is.transferTo(os);
-            }
+            writeFullVideo(response, videoFile, contentType, fileLength);
             return;
         }
 
-        String[] ranges = rangeHeader.substring(6).split("-");
-        long start;
-        long end;
-
+        // 标准解析：支持 start-、-suffix、start-end；非法或多段范围返回 416
+        List<org.springframework.http.HttpRange> ranges;
         try {
-            start = Long.parseLong(ranges[0]);
-            end = (ranges.length > 1 && !ranges[1].isEmpty()) ? Long.parseLong(ranges[1]) : fileLength - 1;
-        } catch (NumberFormatException e) {
-            start = 0;
-            end = fileLength - 1;
+            ranges = org.springframework.http.HttpRange.parseRanges(rangeHeader);
+        } catch (IllegalArgumentException e) {
+            sendRangeNotSatisfiable(response, fileLength);
+            return;
+        }
+        if (ranges.size() != 1) {
+            sendRangeNotSatisfiable(response, fileLength);
+            return;
+        }
+        org.springframework.http.HttpRange range = ranges.get(0);
+        long start = range.getRangeStart(fileLength);
+        long end = range.getRangeEnd(fileLength);
+        if (start >= fileLength) {
+            sendRangeNotSatisfiable(response, fileLength);
+            return;
         }
 
-        start = Math.max(0, start);
-        end = Math.min(fileLength - 1, end);
         long contentLength = end - start + 1;
 
         response.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
@@ -1105,6 +1152,21 @@ public class VideoController {
                 os.flush();
             }
         }
+    }
+
+    private void writeFullVideo(jakarta.servlet.http.HttpServletResponse response,
+                                File videoFile, String contentType, long fileLength) throws IOException {
+        response.setContentType(contentType);
+        response.setHeader("Accept-Ranges", "bytes");
+        response.setContentLengthLong(fileLength);
+        try (var is = new java.io.FileInputStream(videoFile); var os = response.getOutputStream()) {
+            is.transferTo(os);
+        }
+    }
+
+    private void sendRangeNotSatisfiable(jakarta.servlet.http.HttpServletResponse response, long fileLength) throws IOException {
+        response.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
+        response.setHeader("Content-Range", "bytes */" + fileLength);
     }
 
     @GetMapping("/{id:\\d+}/stream/transcode")
@@ -1236,27 +1298,52 @@ public class VideoController {
     }
 
     private String getServerBaseUrl(jakarta.servlet.http.HttpServletRequest request) {
+        // 显式配置优先（反向代理/NAT 场景最可靠），环境变量 VIDEO_BASE_URL
+        if (baseUrlConfig != null && !baseUrlConfig.isBlank()) {
+            return baseUrlConfig.replaceAll("/+$", "");
+        }
+
+        // 反向代理透传头优先（X-Forwarded-Host 通常已含非标端口）
+        String scheme = request.getHeader("X-Forwarded-Proto");
+        if (scheme == null || scheme.isBlank()) scheme = request.getScheme();
+        String forwardedHost = request.getHeader("X-Forwarded-Host");
+        if (forwardedHost != null && !forwardedHost.isBlank()) {
+            return scheme + "://" + forwardedHost;
+        }
+
         // 如果请求来自 localhost/127.0.0.1，自动替换为局域网 IP
         String host = request.getServerName();
         if ("localhost".equals(host) || "127.0.0.1".equals(host)) {
-            try {
-                var interfaces = java.net.NetworkInterface.getNetworkInterfaces();
-                while (interfaces.hasMoreElements()) {
-                    var network = interfaces.nextElement();
-                    if (network.isLoopback() || !network.isUp()) continue;
-                    var addresses = network.getInetAddresses();
-                    while (addresses.hasMoreElements()) {
-                        var addr = addresses.nextElement();
-                        if (addr instanceof java.net.Inet4Address) {
-                            host = addr.getHostAddress();
-                            break;
-                        }
-                    }
-                    if (!"localhost".equals(host)) break;
-                }
-            } catch (Exception ignored) {}
+            String lanIp = detectLocalIpv4();
+            if (lanIp != null) host = lanIp;
         }
-        return request.getScheme() + "://" + host + ":" + request.getServerPort();
+        int port;
+        try {
+            String xfPort = request.getHeader("X-Forwarded-Port");
+            port = (xfPort != null && !xfPort.isBlank()) ? Integer.parseInt(xfPort.trim()) : -1;
+        } catch (NumberFormatException e) {
+            port = -1;
+        }
+        if (port <= 0) port = request.getServerPort();
+        return scheme + "://" + host + ":" + port;
+    }
+
+    private String detectLocalIpv4() {
+        try {
+            var interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                var network = interfaces.nextElement();
+                if (network.isLoopback() || !network.isUp()) continue;
+                var addresses = network.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    var addr = addresses.nextElement();
+                    if (addr instanceof java.net.Inet4Address) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private String getContentType(String fileName) {

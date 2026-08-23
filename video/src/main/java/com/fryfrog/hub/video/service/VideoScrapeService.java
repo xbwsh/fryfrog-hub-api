@@ -480,12 +480,14 @@ public class VideoScrapeService {
                 .orElseThrow(() -> new ResourceNotFoundException("Video", "id", videoId));
 
         String title = video.getTitle();
-        log.info("[Bind] Binding series '{}': finding all videos with same title", title);
+        log.info("[Bind] Binding series '{}': finding all videos with same title in same library", title);
 
-        // 找到同标题的所有视频
+        // 找到同标题的所有视频。
+        // 只在同一个媒体库内匹配，避免不同库的同名内容被绑到同一 TMDB 条目并被批量重命名/移动
         List<Video> allVideos = repository.findAll();
         List<Video> seriesVideos = allVideos.stream()
                 .filter(v -> title != null && title.equals(v.getTitle()))
+                .filter(v -> Objects.equals(v.getLibraryId(), video.getLibraryId()))
                 .toList();
 
         log.info("[Bind] Found {} videos in series '{}'", seriesVideos.size(), title);
@@ -791,9 +793,15 @@ public class VideoScrapeService {
             log.debug("[Scrape] Unbound {} videos from library {}, starting re-scrape", bound, libraryId);
         }
 
-        // Step 2: 重新扫描库
-        MediaLibrary library = mediaLibraryService.getLibraryById(libraryId);
-        scanService.scanAndSave(library.getPath(), libraryId);
+        // Step 2: 重新扫描库（libraryId 为空时扫描所有启用库）
+        if (libraryId != null) {
+            MediaLibrary library = mediaLibraryService.getLibraryById(libraryId);
+            scanService.scanAndSave(library.getPath(), libraryId);
+        } else {
+            for (MediaLibrary lib : mediaLibraryService.getEnabledLibraries()) {
+                scanService.scanAndSave(lib.getPath(), lib.getId());
+            }
+        }
 
         // Step 3: 重新刮削
         autoScrapeAll(false);

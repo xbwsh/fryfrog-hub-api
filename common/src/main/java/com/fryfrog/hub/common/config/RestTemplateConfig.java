@@ -72,14 +72,17 @@ public class RestTemplateConfig {
             HttpClientConnectionManager connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
                     .setSSLSocketFactory(sslSocketFactory)
                     .build();
-            RequestConfig requestConfig = RequestConfig.custom()
-                    .setConnectionRequestTimeout(org.apache.hc.core5.util.Timeout.ofMilliseconds(connectTimeout))
-                    .setResponseTimeout(org.apache.hc.core5.util.Timeout.ofMilliseconds(readTimeout))
-                    .build();
-            CloseableHttpClient httpClient = HttpClients.custom()
-                    .setConnectionManager(connectionManager)
-                    .setDefaultRequestConfig(requestConfig)
-                    .build();
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectionRequestTimeout(org.apache.hc.core5.util.Timeout.ofMilliseconds(connectTimeout))
+                .setResponseTimeout(org.apache.hc.core5.util.Timeout.ofMilliseconds(readTimeout))
+                .build();
+        var httpClientBuilder = HttpClients.custom()
+                .setConnectionManager(connectionManager)
+                .setDefaultRequestConfig(requestConfig);
+        if (hasProxy()) {
+            httpClientBuilder.setProxy(new org.apache.hc.core5.http.HttpHost(proxyHost, proxyPort));
+        }
+        CloseableHttpClient httpClient = httpClientBuilder.build();
             HttpComponentsClientHttpRequestFactory factory =
                     new HttpComponentsClientHttpRequestFactory(httpClient);
             return new RestTemplate(factory);

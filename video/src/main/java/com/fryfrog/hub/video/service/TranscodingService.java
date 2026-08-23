@@ -62,10 +62,7 @@ public class TranscodingService {
 
     private boolean checkFfmpegAvailable() {
         try {
-            String[] cmd = isWindows()
-                    ? new String[]{"cmd", "/c", ffmpegPath, "-version"}
-                    : new String[]{ffmpegPath, "-version"};
-            ProcessBuilder pb = new ProcessBuilder(cmd);
+            ProcessBuilder pb = new ProcessBuilder(ffmpegPath, "-version");
             if (libraryDir != null) {
                 pb.environment().put(getLibraryPathEnv(), libraryDir);
             }
@@ -103,10 +100,7 @@ public class TranscodingService {
      */
     public Map<String, Object> probeAudioInfo(String inputPath) {
         try {
-            String[] cmd = isWindows()
-                    ? new String[]{"cmd", "/c", ffprobePath, "-v", "error",
-                    "-print_format", "json", "-show_format", "-show_streams", inputPath}
-                    : new String[]{ffprobePath, "-v", "error",
+            String[] cmd = {ffprobePath, "-v", "error",
                     "-print_format", "json", "-show_format", "-show_streams", inputPath};
 
             ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -115,15 +109,16 @@ public class TranscodingService {
             }
             Process p = pb.redirectErrorStream(true).start();
 
-            byte[] rawOutput;
-            try (var is = p.getInputStream()) {
-                rawOutput = is.readAllBytes();
-            }
-
+            // 先等退出再读输出：进程挂起时 waitFor 超时后强杀，流随之 EOF，避免永久阻塞
             boolean finished = p.waitFor(10, TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
                 return Map.of();
+            }
+
+            byte[] rawOutput;
+            try (var is = p.getInputStream()) {
+                rawOutput = is.readAllBytes();
             }
             if (p.exitValue() != 0 || rawOutput.length == 0) {
                 return Map.of();
@@ -302,7 +297,8 @@ public class TranscodingService {
      */
     public TranscodeResult transcode(String inputPath, String quality, String maxBitrate, String subtitlePath) throws IOException {
         int width = getWidthForQuality(quality);
-        String bitrate = maxBitrate != null ? maxBitrate : getDefaultBitrate(quality);
+        String requested = sanitizeBitrate(maxBitrate);
+        String bitrate = requested != null ? requested : getDefaultBitrate(quality);
         String bufsize = parseBitrate(bitrate) * 2 + "k";
 
         // 先探测时长
@@ -328,13 +324,13 @@ public class TranscodingService {
 
         log.debug("FFmpeg process started, pid={}", process.pid());
 
-        // 后台线程处理 stderr
+        // 后台线程处理 stderr（warning 级别逐行打日志会刷屏，降为 debug）
         Thread.startVirtualThread(() -> {
             try (var err = process.getErrorStream();
                  var reader = new BufferedReader(new InputStreamReader(err))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    log.warn("FFmpeg stderr: {}", line);
+                    log.debug("FFmpeg stderr: {}", line);
                 }
             } catch (IOException ignored) {}
         });
@@ -354,12 +350,7 @@ public class TranscodingService {
      */
     private double probeDuration(String inputPath) {
         try {
-            String[] cmd = isWindows()
-                    ? new String[]{"cmd", "/c", ffprobePath, "-v", "error",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    inputPath}
-                    : new String[]{ffprobePath, "-v", "error",
+            String[] cmd = {ffprobePath, "-v", "error",
                     "-show_entries", "format=duration",
                     "-of", "default=noprint_wrappers=1:nokey=1",
                     inputPath};
@@ -370,15 +361,16 @@ public class TranscodingService {
             }
             Process p = pb.redirectErrorStream(true).start();
 
-            String output;
-            try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
-            }
-
+            // 先等退出再读输出：避免进程挂起时 readAllBytes 永久阻塞、超时保护失效
             boolean finished = p.waitFor(5, TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
                 return 0;
+            }
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             if (p.exitValue() == 0 && !output.isEmpty()) {
@@ -396,13 +388,7 @@ public class TranscodingService {
      */
     public String probeResolution(String inputPath) {
         try {
-            String[] cmd = isWindows()
-                    ? new String[]{"cmd", "/c", ffprobePath, "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=width,height",
-                    "-of", "csv=s=x:p=0",
-                    inputPath}
-                    : new String[]{ffprobePath, "-v", "error",
+            String[] cmd = {ffprobePath, "-v", "error",
                     "-select_streams", "v:0",
                     "-show_entries", "stream=width,height",
                     "-of", "csv=s=x:p=0",
@@ -414,15 +400,16 @@ public class TranscodingService {
             }
             Process p = pb.redirectErrorStream(true).start();
 
-            String output;
-            try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
-            }
-
+            // 先等退出再读输出：避免进程挂起时 readAllBytes 永久阻塞、超时保护失效
             boolean finished = p.waitFor(5, TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
                 return null;
+            }
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             if (p.exitValue() == 0 && !output.isEmpty()) {
@@ -526,16 +513,17 @@ public class TranscodingService {
             pb.redirectErrorStream(true);
             Process p = pb.start();
 
-            String output;
-            try (var is = p.getInputStream()) {
-                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
-            }
-
+            // 先等退出再读输出：避免进程挂起时 readAllBytes 永久阻塞、超时保护失效
             boolean finished = p.waitFor(15, TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
                 log.warn("Frame extraction timed out: {}", inputPath);
                 return false;
+            }
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
             }
 
             if (p.exitValue() == 0 && Files.exists(Paths.get(outputPath))) {
@@ -604,6 +592,15 @@ public class TranscodingService {
         return 8000;
     }
 
+    /**
+     * maxBitrate 白名单校验：仅允许 "8M"、"1.5M"、"500k" 这类格式；
+     * 非法值返回 null（回退到该画质默认码率），避免脏值直接进入 ffmpeg 参数。
+     */
+    private String sanitizeBitrate(String maxBitrate) {
+        if (maxBitrate == null || maxBitrate.isBlank()) return null;
+        return maxBitrate.toLowerCase().matches("\\d+(\\.\\d+)?[mk]") ? maxBitrate.toLowerCase() : null;
+    }
+
     private List<String> buildTranscodeCommand(String inputPath, int width, String bitrate, String bufsize, double duration, String subtitlePath) {
         List<String> cmd = new ArrayList<>();
         cmd.add(ffmpegPath);
@@ -662,12 +659,17 @@ public class TranscodingService {
     }
 
     /**
-     * 滤镜参数中的路径需要转义特殊字符（Windows 盘符冒号、单引号等）
+     * 滤镜参数中的路径需要转义特殊字符（Windows 盘符冒号、单引号、
+     * 滤镜参数分隔符逗号、滤镜链分隔符分号、标签方括号等）
      */
     private String escapeFilterPath(String path) {
         return path.replace("\\", "/")
                 .replace(":", "\\:")
-                .replace("'", "\\'");
+                .replace("'", "\\'")
+                .replace(",", "\\,")
+                .replace(";", "\\;")
+                .replace("[", "\\[")
+                .replace("]", "\\]");
     }
 
     /**
@@ -696,10 +698,6 @@ public class TranscodingService {
             case "360p", "360" -> "1M";
             default -> "8M";
         };
-    }
-
-    private boolean isWindows() {
-        return System.getProperty("os.name").toLowerCase().contains("win");
     }
 
     public record TranscodeResult(Process process, InputStream inputStream) implements Closeable {

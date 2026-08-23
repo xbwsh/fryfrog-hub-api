@@ -164,15 +164,18 @@ public class Video extends BaseEntity {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private List<VideoActor> actorEntities = new ArrayList<>();
 
-    @OneToOne(mappedBy = "video", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    // 观看进度按 (user, video) 唯一，一个视频可有多条记录，
+    // 必须用 OneToMany（OneToOne 在多用户场景会因多行抛 NonUniqueObjectException）
+    @OneToMany(mappedBy = "video", cascade = CascadeType.REMOVE, orphanRemoval = true)
     @com.fasterxml.jackson.annotation.JsonIgnore
-    private WatchProgress watchProgress;
+    private List<WatchProgress> watchProgresses = new ArrayList<>();
 
     @com.fasterxml.jackson.annotation.JsonGetter("logoUrl")
     public String getLogoApiUrl() {
         if (getId() == null) return null;
         if (logoLocalPath == null) return null;
         if (!java.nio.file.Files.exists(java.nio.file.Paths.get(logoLocalPath))) return null;
-        return "/api/v1/video/" + getId() + "/logo";
+        // 与 cover/fanart 一致输出签名 URL，<img> 无需携带 Authorization 头
+        return com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/" + getId() + "/logo");
     }
 }

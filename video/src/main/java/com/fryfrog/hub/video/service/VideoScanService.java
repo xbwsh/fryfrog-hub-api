@@ -9,6 +9,7 @@ import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -57,7 +58,9 @@ public class VideoScanService {
 
     private static final Pattern SE_EP_PATTERN = Pattern.compile("(?i)S(\\d{1,2})E(\\d{1,4})");
     private static final Pattern SEASON_EPISODE_PATTERN = Pattern.compile("(?i)Season\\s*(\\d{1,2})\\s*Episode\\s*(\\d{1,4})");
-    private static final Pattern EP_PATTERN = Pattern.compile("(?i)EP?(\\d{1,4})");
+    // E/EP 集数要求前导分隔符（行首、点、下划线、空格、连字符、左括号），
+    // 避免 "Se7en"、"Re2" 这类标题中的字母+数字被误认为集数
+    private static final Pattern EP_PATTERN = Pattern.compile("(?i)(?:^|[._\\-\\s\\[(])EP?(\\d{1,4})\\b");
     private static final Pattern HASH_PATTERN = Pattern.compile("[＃#](\\d{1,4})$");
     private static final Pattern DASH_NUMBER_PATTERN = Pattern.compile("[-–—]\\s*(\\d{1,4})\\b");
     private static final Pattern TAIL_NUMBER_PATTERN = Pattern.compile("^(.*?)[\\s._\\-　](\\d{1,4})$");
@@ -304,25 +307,25 @@ public class VideoScanService {
     }
 
     /**
-     * 判断是否为电视剧集
+     * 判断是否为电视剧集。
+     * 仅依据文件名中的「强」剧集信号判断（S01E02 / Season-Episode / 分隔符E05 / #12 / 中文紧邻尾数字），
+     * 不使用 DASH/TAIL 等弱兜底模式——否则《Deadpool 2》这类尾部数字的电影会被误判为 tv，
+     * 进而在自动刮削时被强制走 tv 搜索导致匹配错误。
      */
     public boolean isTvEpisode(Video video) {
-        if (video.getSeasonNumber() != null && video.getEpisodeNumber() != null
-                && (video.getSeasonNumber() > 1 || video.getEpisodeNumber() > 1)) {
-            return true;
-        }
-        if (video.getFileName() != null) {
-            String name = video.getFileName();
-            // 匹配明确的剧集模式
-            if (SE_EP_PATTERN.matcher(name).find()) return true;
-            if (SEASON_EPISODE_PATTERN.matcher(name).find()) return true;
-            if (EP_PATTERN.matcher(name).find()) return true;
-            // 匹配 ＃数字 或 #数字 模式（即使集数为1也视为电视剧）
-            if (HASH_PATTERN.matcher(name).find()) return true;
-            // 匹配尾部数字模式（需要集数 > 1 才视为电视剧）
-            if (video.getEpisodeNumber() != null && video.getEpisodeNumber() > 1) return true;
-        }
-        return false;
+        if (video.getFileName() == null) return false;
+        String name = video.getFileName();
+        if (SE_EP_PATTERN.matcher(name).find()) return true;
+        if (SEASON_EPISODE_PATTERN.matcher(name).find()) return true;
+        if (EP_PATTERN.matcher(name).find()) return true;
+        // 带 $ 结尾锚点的模式需对去掉扩展名后的名字匹配，否则 ".mkv" 会挡住锚点
+        String baseName = name.contains(".")
+                ? name.substring(0, name.lastIndexOf('.'))
+                : name;
+        // 匹配 ＃数字 或 #数字 模式
+        if (HASH_PATTERN.matcher(baseName).find()) return true;
+        // 中文标题紧邻尾数字（"某剧12"）视为剧集；英文尾部数字电影不受影响
+        return CJK_TAIL_NUMBER_PATTERN.matcher(baseName).find();
     }
 
     /**
@@ -376,41 +379,47 @@ public class VideoScanService {
         }
     }
 
-    private void cleanupInvalidRecords() {
-        int removed = 0;
-        final int pageSize = 100;
+    /** 无效记录占比超过该阈值时中止清理（挂载断连时几乎所有文件都会"不存在"） */
+    private static final double CLEANUP_INVALID_RATIO_LIMIT = 0.5;
 
-        log.debug("[Cleanup] Starting cleanup...");
-        // Always read page 0 after deletion. Advancing the page number while
-        // deleting causes the next records to shift into an already skipped page.
-        while (true) {
-            org.springframework.data.domain.Page<Video> page = repository.findAll(
-                    org.springframework.data.domain.PageRequest.of(0, pageSize));
-            List<Video> invalidVideos = page.getContent().stream()
+    private void cleanupInvalidRecords() {
+        // 先完整收集无效记录、判断占比，再决定是否删除。
+        // 防止 NFS/SMB 等挂载瞬时断连时把整库记录连同 NFO/封面一起清掉。
+        List<Video> invalidVideos = new ArrayList<>();
+        final int pageSize = 100;
+        int pageNum = 0;
+        Page<Video> page;
+        do {
+            page = repository.findAll(org.springframework.data.domain.PageRequest.of(pageNum++, pageSize));
+            page.getContent().stream()
                     .filter(v -> {
                         if (v.getFilePath() == null) return true;
                         return !Files.exists(Paths.get(v.getFilePath()));
                     })
-                    .toList();
+                    .forEach(invalidVideos::add);
+        } while (page.hasNext());
 
-            if (!invalidVideos.isEmpty()) {
-                log.info("[Cleanup] Found {} invalid records on current page, removing...", invalidVideos.size());
-                for (Video video : invalidVideos) {
-                    cleanupVideoFiles(video);
-                    // 清理关联的演员记录
-                    actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
-                }
-                repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
-                removed += invalidVideos.size();
-            } else {
-                break;
-            }
+        long total = repository.count();
+        if (!invalidVideos.isEmpty() && total > 0
+                && invalidVideos.size() / (double) total > CLEANUP_INVALID_RATIO_LIMIT) {
+            log.error("[Cleanup] {} of {} video records appear missing (ratio > {}), " +
+                            "likely a disconnected/unavailable storage mount. Skipping cleanup this round.",
+                    invalidVideos.size(), total, CLEANUP_INVALID_RATIO_LIMIT);
+            return;
         }
 
-        if (removed > 0) {
+        if (!invalidVideos.isEmpty()) {
+            log.info("[Cleanup] Found {} invalid records, removing...", invalidVideos.size());
+            for (Video video : invalidVideos) {
+                cleanupVideoFiles(video);
+                // 清理关联的演员记录
+                actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
+            }
+            repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
+
             // 清理空系列
             cleanupEmptySeries();
-            log.info("[Cleanup] Removed {} invalid records", removed);
+            log.info("[Cleanup] Removed {} invalid records", invalidVideos.size());
         }
     }
 

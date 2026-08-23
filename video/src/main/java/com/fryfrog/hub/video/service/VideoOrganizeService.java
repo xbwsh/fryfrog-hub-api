@@ -185,6 +185,13 @@ public class VideoOrganizeService {
                 return;
             }
 
+            // 目标物理文件已存在且不是本文件自身（仅大小写变更）时不覆盖，避免丢失用户文件
+            boolean caseOnlyRename = newPath.toString().equalsIgnoreCase(videoPath.toString());
+            if (Files.exists(newPath) && !caseOnlyRename) {
+                log.warn("[Organize] Skip rename {}: target file already exists on disk", newFileName);
+                return;
+            }
+
             String oldBaseName = nfoService.getBaseName(video.getFileName());
             Files.move(videoPath, newPath, StandardCopyOption.REPLACE_EXISTING);
 
@@ -316,13 +323,14 @@ public class VideoOrganizeService {
         }
 
         String extension = TitleCleaner.getFileExtension(video.getFileName());
+        String safeTitle = TitleCleaner.sanitizeFileName(title);
 
         if ("tv".equalsIgnoreCase(video.getMediaType())) {
             int season = video.getSeasonNumber() != null ? video.getSeasonNumber() : 1;
             int episode = video.getEpisodeNumber() != null ? video.getEpisodeNumber() : 1;
-            return String.format("%s - S%02dE%02d.%s", title, season, episode, extension);
+            return String.format("%s - S%02dE%02d.%s", safeTitle, season, episode, extension);
         } else {
-            return title + "." + extension;
+            return safeTitle + "." + extension;
         }
     }
 
@@ -346,8 +354,10 @@ public class VideoOrganizeService {
             stream.filter(Files::isRegularFile)
                     .filter(file -> {
                         String name = file.getFileName().toString().toLowerCase();
-                        String ext = name.substring(name.lastIndexOf('.'));
-                        return SUBTITLE_EXTENSIONS.contains(ext);
+                        // 无扩展名的文件 lastIndexOf 返回 -1，不能直接 substring
+                        int dot = name.lastIndexOf('.');
+                        String ext = dot >= 0 ? name.substring(dot) : "";
+                        return !ext.isEmpty() && SUBTITLE_EXTENSIONS.contains(ext);
                     })
                     .filter(file -> file.getFileName().toString().startsWith(baseName))
                     .forEach(file -> {
