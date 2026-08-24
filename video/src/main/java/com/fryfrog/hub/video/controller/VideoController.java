@@ -241,16 +241,52 @@ public class VideoController {
     public ResponseEntity<Resource> getActorImage(
             @Parameter(description = "演员ID") @PathVariable Long actorId) {
         VideoActor actor = actorRepository.findById(actorId).orElse(null);
-        if (actor == null || actor.getImagePath() == null) {
+        if (actor == null) {
             return ResponseEntity.notFound().build();
         }
-        Path imagePath = Paths.get(actor.getImagePath());
-        if (!Files.exists(imagePath)) {
-            return ResponseEntity.notFound().build();
+        // 优先本地文件
+        if (actor.getImagePath() != null) {
+            Path imagePath = Paths.get(actor.getImagePath());
+            if (Files.exists(imagePath)) {
+                return ResponseEntity.ok()
+                        .contentType(MediaType.IMAGE_JPEG)
+                        .body(new FileSystemResource(imagePath.toFile()));
+            }
         }
-        return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
-                .body(new FileSystemResource(imagePath.toFile()));
+        // 兜底：本地缺失时代理 TMDB 远程图（actor.imageUrl 为 w185 真实地址，@JsonGetter 仅影响序列化）
+        String remoteUrl = actor.getImageUrl();
+        if (remoteUrl != null && !remoteUrl.isBlank()) {
+            try {
+                java.net.URL url = new java.net.URL(remoteUrl);
+                var conn = url.openConnection();
+                conn.setRequestProperty("User-Agent", "FryfrogHub/0.1.0");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                try (var in = conn.getInputStream()) {
+                    byte[] bytes = in.readAllBytes();
+                    if (bytes.length > 0) {
+                        // 回填本地缓存，下次直接命中文件
+                        if (actor.getImagePath() != null) {
+                            try {
+                                Path p = Paths.get(actor.getImagePath());
+                                if (!Files.exists(p)) {
+                                    if (p.getParent() != null) Files.createDirectories(p.getParent());
+                                    Files.write(p, bytes);
+                                }
+                            } catch (Exception e) {
+                                log.debug("Failed to cache actor image {}: {}", actorId, e.getMessage());
+                            }
+                        }
+                        return ResponseEntity.ok()
+                                .contentType(MediaType.IMAGE_JPEG)
+                                .body(new ByteArrayResource(bytes));
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Failed to proxy actor image {} from {}: {}", actorId, remoteUrl, e.getMessage());
+            }
+        }
+        return ResponseEntity.notFound().build();
     }
 
     @GetMapping("/{id:\\d+}/cover")
