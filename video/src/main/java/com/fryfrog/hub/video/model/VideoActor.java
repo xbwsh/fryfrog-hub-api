@@ -40,6 +40,6 @@ public class VideoActor extends BaseEntity {
     @com.fasterxml.jackson.annotation.JsonGetter("imageUrl")
     public String getActorImageUrl() {
         if (getId() == null) return null;
-        return "/api/v1/video/actor/" + getId() + "/image";
+        return com.fryfrog.hub.common.util.MediaUrlSigner.sign("/api/v1/video/actor/" + getId() + "/image");
     }
 }
