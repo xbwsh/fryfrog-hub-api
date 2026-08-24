@@ -15,8 +15,10 @@ import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.model.Favorite;
 import com.fryfrog.hub.video.model.Video;
+import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.model.WatchProgress;
+import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.FavoriteService;
 import com.fryfrog.hub.video.service.NfoService;
@@ -69,6 +71,7 @@ public class SeriesController {
     private final TranscodingService transcodingService;
     private final TmdbService tmdbService;
     private final VideoAssetService videoAssetService;
+    private final VideoActorRepository actorRepository;
     private final com.fryfrog.hub.common.service.ScrapeProgressService scrapeProgressService;
     private final UserService userService;
 
@@ -623,6 +626,30 @@ public class SeriesController {
             log.warn("Failed to set series fanart for {}: {}", id, e.getMessage());
             return ResponseEntity.internalServerError().body(ApiResponse.error("系列背景图设置失败: " + e.getMessage()));
         }
+    }
+
+    @GetMapping("/{id}/actors")
+    @Operation(summary = "获取系列演员列表", description = "返回该系列的演员列表（按首集去重，兼容每集重复存储）")
+    public ResponseEntity<ApiResponse<List<VideoActor>>> getSeriesActors(
+            @Parameter(description = "系列ID") @PathVariable Long id) {
+        var seriesOpt = seriesService.getSeriesById(id);
+        if (seriesOpt.isEmpty()) {
+            throw new ResourceNotFoundException("Series", "id", id);
+        }
+        // 按系列维度聚合去重（sourceActorId 去重，保留首次出现顺序）
+        List<VideoActor> all = actorRepository.findByVideo_Series_Id(id);
+        Map<Long, VideoActor> dedup = new java.util.LinkedHashMap<>();
+        List<VideoActor> noSourceId = new java.util.ArrayList<>();
+        for (VideoActor a : all) {
+            if (a.getSourceActorId() != null) {
+                dedup.putIfAbsent(a.getSourceActorId(), a);
+            } else {
+                noSourceId.add(a);
+            }
+        }
+        List<VideoActor> result = new java.util.ArrayList<>(dedup.values());
+        result.addAll(noSourceId);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PostMapping("/{id}/refresh-season-covers")

@@ -199,9 +199,38 @@ public class VideoController {
     }
 
     @GetMapping("/{id:\\d+}/actors")
-    @Operation(summary = "获取视频演员列表", description = "返回指定视频的演员信息列表")
+    @Operation(summary = "获取视频演员列表", description = "返回指定视频的演员信息列表，兼容系列ID（剧集用系列ID时聚合去重）")
     public ResponseEntity<ApiResponse<List<VideoActor>>> getActors(
-            @Parameter(description = "视频ID") @PathVariable Long id) {
+            @Parameter(description = "视频ID或系列ID") @PathVariable Long id) {
+        // 优先按视频查询（带权限校验，与远端新增校验保持一致）
+        try {
+            Video video = service.getVideoById(id);
+            requireLibraryVisible(video.getLibraryId(), id, "Video");
+            List<VideoActor> actors = actorRepository.findByVideo_Id(id);
+            if (!actors.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.success(actors));
+            }
+            // 视频存在但演员为空，继续尝试系列聚合（兼容ID重叠或旧数据）
+        } catch (ResourceNotFoundException ignored) {
+            // 非视频ID，尝试系列分支
+        }
+        var seriesOpt = seriesService.getSeriesById(id);
+        if (seriesOpt.isPresent()) {
+            List<VideoActor> seriesActors = actorRepository.findByVideo_Series_Id(id);
+            Map<Long, VideoActor> dedup = new java.util.LinkedHashMap<>();
+            List<VideoActor> noSourceId = new java.util.ArrayList<>();
+            for (VideoActor a : seriesActors) {
+                if (a.getSourceActorId() != null) {
+                    dedup.putIfAbsent(a.getSourceActorId(), a);
+                } else {
+                    noSourceId.add(a);
+                }
+            }
+            List<VideoActor> result = new java.util.ArrayList<>(dedup.values());
+            result.addAll(noSourceId);
+            return ResponseEntity.ok(ApiResponse.success(result));
+        }
+        // 既非视频也非系列：若是视频（但演员为空）已在上方返回；此处兜底抛404以保持远端行为
         Video video = service.getVideoById(id);
         requireLibraryVisible(video.getLibraryId(), id, "Video");
         return ResponseEntity.ok(ApiResponse.success(actorRepository.findByVideo_Id(id)));
