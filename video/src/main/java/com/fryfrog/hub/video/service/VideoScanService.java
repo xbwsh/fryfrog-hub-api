@@ -32,7 +32,7 @@ public class VideoScanService {
     private final NfoService nfoService;
     private final ScrapeProgressService progressService;
     private final MediaLibraryService mediaLibraryService;
-    private final TranscodingService transcodingService;
+    private final MediaProbeService probeService;
 
     /**
      * 支持的视频格式（主流媒体服务器通用列表，覆盖 Kodi/Jellyfin/Plex 等常见格式）
@@ -216,7 +216,7 @@ public class VideoScanService {
         // 探测分辨率（仅缺失时，避免重复 I/O）
         if (video.getResolution() == null || video.getResolution().isBlank()) {
             try {
-                String resolution = transcodingService.probeResolution(absolutePath);
+                String resolution = probeService.probeResolution(absolutePath);
                 if (resolution != null) {
                     video.setResolution(resolution);
                 }

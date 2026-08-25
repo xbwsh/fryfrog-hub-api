@@ -7,7 +7,7 @@ import com.fryfrog.hub.music.model.MusicSong;
 import com.fryfrog.hub.music.repository.MusicAlbumRepository;
 import com.fryfrog.hub.music.repository.MusicArtistRepository;
 import com.fryfrog.hub.music.repository.MusicSongRepository;
-import com.fryfrog.hub.video.service.TranscodingService;
+import com.fryfrog.hub.video.service.MediaProbeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,7 +40,7 @@ public class MusicScanService {
     private final MusicAlbumRepository albumRepository;
     private final MusicSongRepository songRepository;
     private final MusicCleanupService cleanupService;
-    private final TranscodingService transcodingService;
+    private final MediaProbeService probeService;
     private final ScrapeProgressService progressService;
     private final MusicTagReaderService tagReaderService;
 
@@ -112,7 +112,7 @@ public class MusicScanService {
             return existing;
         }
 
-        Map<String, Object> info = transcodingService.probeAudioInfo(absolutePath);
+        Map<String, Object> info = probeService.probeAudioInfo(absolutePath);
         @SuppressWarnings("unchecked")
         Map<String, String> tags = (Map<String, String>) info.getOrDefault("tags", Map.of());
 
@@ -218,7 +218,7 @@ public class MusicScanService {
     }
 
     private void ensureLyrics(MusicSong song, String audioPath, Path songDir) {
-        Map<String, Object> info = transcodingService.probeAudioInfo(audioPath);
+        Map<String, Object> info = probeService.probeAudioInfo(audioPath);
         @SuppressWarnings("unchecked")
         Map<String, String> tags = (Map<String, String>) info.getOrDefault("tags", Map.of());
         String lyricsContent = extractEmbeddedLyrics(tags);

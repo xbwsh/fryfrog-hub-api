@@ -21,10 +21,11 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.FavoriteService;
+import com.fryfrog.hub.video.service.FrameCaptureService;
+import com.fryfrog.hub.video.service.MediaProbeService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.TmdbService;
-import com.fryfrog.hub.video.service.TranscodingService;
 import com.fryfrog.hub.video.service.VideoService;
 import com.fryfrog.hub.video.service.WatchProgressService;
 import com.fryfrog.hub.video.service.VideoAssetService;
@@ -68,7 +69,8 @@ public class SeriesController {
     private final WatchProgressService watchProgressService;
     private final FavoriteService favoriteService;
     private final MediaLibraryService mediaLibraryService;
-    private final TranscodingService transcodingService;
+    private final MediaProbeService probeService;
+    private final FrameCaptureService frameCaptureService;
     private final TmdbService tmdbService;
     private final VideoAssetService videoAssetService;
     private final VideoActorRepository actorRepository;
@@ -605,10 +607,10 @@ public class SeriesController {
             Path outputPath = videoDir.resolve(baseName + "-series-fanart.jpg");
 
             // 从该时间点重新截取 1920x1080
-            double duration = transcodingService.getDurationSeconds(video.getFilePath());
+            double duration = probeService.getDurationSeconds(video.getFilePath());
             double[] ratios = {0.12, 0.28, 0.44, 0.60, 0.76, 0.88};
             double pos = duration > 0 ? duration * ratios[request.getIndex()] : 30 + request.getIndex() * 30;
-            boolean ok = transcodingService.captureFrameAt(
+            boolean ok = frameCaptureService.captureFrameAt(
                     video.getFilePath(), outputPath.toString(), 1920, 1080, pos);
             if (!ok) {
                 Files.copy(framePath, outputPath, StandardCopyOption.REPLACE_EXISTING);

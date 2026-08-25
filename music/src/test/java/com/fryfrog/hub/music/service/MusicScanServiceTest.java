@@ -8,7 +8,9 @@ import com.fryfrog.hub.music.model.MusicSong;
 import com.fryfrog.hub.music.repository.MusicAlbumRepository;
 import com.fryfrog.hub.music.repository.MusicArtistRepository;
 import com.fryfrog.hub.music.repository.MusicSongRepository;
-import com.fryfrog.hub.video.service.TranscodingService;
+import com.fryfrog.hub.music.service.MusicScanService;
+import com.fryfrog.hub.music.service.MusicTagReaderService;
+import com.fryfrog.hub.video.service.MediaProbeService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,11 +44,13 @@ class MusicScanServiceTest {
     @Mock
     private MusicCleanupService cleanupService;
     @Mock
-    private TranscodingService transcodingService;
+    private MediaProbeService probeService;
     @Mock
     private ScrapeProgressService progressService;
     @Mock
     private MediaLibraryService mediaLibraryService;
+    @Mock
+    private MusicTagReaderService tagReaderService;
 
     @InjectMocks
     private MusicScanService scanService;
@@ -62,7 +66,7 @@ class MusicScanServiceTest {
 
         when(songRepository.findByFilePath(eq(songFile.toAbsolutePath().normalize().toString())))
                 .thenReturn(Optional.empty());
-        when(transcodingService.probeAudioInfo(any())).thenReturn(Map.of(
+        when(probeService.probeAudioInfo(any())).thenReturn(Map.of(
                 "duration", 247.0,
                 "bitrate", 320000L,
                 "format", "mp3",
@@ -115,7 +119,7 @@ class MusicScanServiceTest {
         Path songFile = songDir.resolve("水星记.flac");
 
         when(songRepository.findByFilePath(any())).thenReturn(Optional.empty());
-        when(transcodingService.probeAudioInfo(any())).thenReturn(Map.of(
+        when(probeService.probeAudioInfo(any())).thenReturn(Map.of(
                 "duration", 200.0,
                 "tags", Map.of() // 无标签，退化为目录名
         ));
@@ -152,7 +156,7 @@ class MusicScanServiceTest {
         Path songFile = songDir.resolve("反方向的钟.wav");
 
         when(songRepository.findByFilePath(any())).thenReturn(Optional.empty());
-        when(transcodingService.probeAudioInfo(any())).thenReturn(Map.of(
+        when(probeService.probeAudioInfo(any())).thenReturn(Map.of(
                 "duration", 257.6,
                 "tags", Map.of(
                         "title", "反方向的钟",

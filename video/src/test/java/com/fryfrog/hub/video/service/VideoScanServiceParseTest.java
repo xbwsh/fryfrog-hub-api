@@ -24,7 +24,7 @@ class VideoScanServiceParseTest {
     @Mock private NfoService nfoService;
     @Mock private ScrapeProgressService progressService;
     @Mock private MediaLibraryService mediaLibraryService;
-    @Mock private TranscodingService transcodingService;
+    @Mock private MediaProbeService probeService;
 
     @InjectMocks
     private VideoScanService service;
