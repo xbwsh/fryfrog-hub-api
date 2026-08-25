@@ -51,7 +51,10 @@ public class AuthManager {
             return LoginResult.fail("INVALID");
         }
 
-        LoginAttempt attempt = attempts.computeIfAbsent(username, k -> new LoginAttempt());
+        LoginAttempt attempt = attempts.computeIfAbsent(username, k -> {
+            purgeStaleAttempts();
+            return new LoginAttempt();
+        });
         synchronized (attempt) {
             if (attempt.lockUntil > System.currentTimeMillis()) {
                 long retryAfter = (attempt.lockUntil - System.currentTimeMillis() + 999) / 1000;
@@ -112,12 +115,27 @@ public class AuthManager {
     private void recordFailure(LoginAttempt attempt) {
         synchronized (attempt) {
             attempt.failures++;
+            attempt.lastFailureAt = System.currentTimeMillis();
             if (attempt.failures >= maxFailures) {
                 attempt.lockUntil = System.currentTimeMillis() + lockMinutes * 60_000;
                 attempt.failures = 0;
             }
         }
     }
+
+    /**
+     * 惰性清理长期无活动的登录失败记录：登录失败的 username 只有在
+     * 成功登录时才被移除，被反复探测/输错密码的用户名会无限累积。
+     * 超过 CLEANUP_AFTER_MS 未再有登录尝试的条目直接移除。
+     */
+    private void purgeStaleAttempts() {
+        if (attempts.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        attempts.entrySet().removeIf(e -> now - e.getValue().lastFailureAt > CLEANUP_AFTER_MS);
+    }
+
+    /** 登录失败记录视为过期的时长（毫秒），超过则移除该用户名的失败状态 */
+    private static final long CLEANUP_AFTER_MS = 24 * 60 * 60 * 1000L;
 
     public record LoginResult(String token, String error, long retryAfterSeconds) {
 
@@ -133,5 +151,6 @@ public class AuthManager {
     private static class LoginAttempt {
         volatile int failures;
         volatile long lockUntil;
+        volatile long lastFailureAt;
     }
 }

@@ -34,6 +34,7 @@ public class MusicPlayStatService {
 
     /** 注册正在播放（getNowPlaying 展示）。 */
     public void registerNowPlaying(long userId, String username, String clientName, long songId, long startedAtMillis) {
+        purgeStaleNowPlaying();
         MusicSong song = songRepository.findById(songId).orElse(null);
         if (song == null) return;
         nowPlaying.put(userId, new NowPlaying(username, clientName, song, startedAtMillis));
@@ -45,8 +46,23 @@ public class MusicPlayStatService {
     }
 
     public List<NowPlaying> getNowPlaying() {
+        purgeStaleNowPlaying();
         return List.copyOf(nowPlaying.values());
     }
+
+    /**
+     * 惰性清理过期「正在播放」条目：客户端崩溃/直接断开时不会调用
+     * clearNowPlaying，条目会永久残留。超过 STALE_MILLIS 未更新的视为
+     * 已断开，移除以释放内存（同时释放持有的 MusicSong 实体引用）。
+     */
+    private void purgeStaleNowPlaying() {
+        if (nowPlaying.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        nowPlaying.entrySet().removeIf(e -> now - e.getValue().startedAtMillis() > STALE_MILLIS);
+    }
+
+    /** 「正在播放」视为过期的时长（毫秒），超过则认为客户端已断开 */
+    private static final long STALE_MILLIS = 2 * 60 * 60 * 1000L;
 
     /** scrobble 提交：累加播放次数并记录最近播放时间。 */
     @Transactional
