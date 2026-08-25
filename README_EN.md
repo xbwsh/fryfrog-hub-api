@@ -29,6 +29,20 @@ Video media backend API service for metadata management and streaming.
 - **Series Management** - Dedicated video series API with cover and fanart
 - **Watch Progress** - Records playback position for resume
 - **File Watching** - Auto-detects new video files and indexes them
+- **Live Transcoding** - 1080p/720p/480p transcoded streaming with subtitle burn-in
+- **External Subtitles** - Lists and serves SRT/ASS/VTT subtitles from the video directory
+- **Frame Selection** - Generates multi-position frame candidates for cover/fanart
+- **Movie Logo** - Fetch/set TMDB wordmark logos (local cache + remote fallback)
+- **Playlist** - Generates series M3U playlists (PotPlayer/IINA compatible)
+
+### Music Module
+
+- **Scan & Index** - Scans music libraries with ffprobe, builds artist/album/song index
+- **Mojibake Repair** - Auto-repairs legacy GBK/Big5 tag encoding
+- **Streaming** - Song streaming with cover art and lyrics
+- **Favorites & Ratings** - Star and rating for songs/albums/artists
+- **Playlists** - Playlist CRUD and bookmarks
+- **Subsonic API** - `/rest` endpoints compatible with Subsonic clients
 
 ### Common Features
 
@@ -57,7 +71,8 @@ Video media backend API service for metadata management and streaming.
 fryfrog-hub-api/
 ├── app/             # Spring Boot entry point + global config/controllers
 ├── common/          # Shared entities, DTOs, utilities
-├── video/           # Video module (TMDB scraping + NFO generation + series management)
+├── video/           # Video module (TMDB scraping + NFO generation + series management + transcoding)
+├── music/           # Music module (scan/index + streaming + Subsonic API)
 └── pom.xml          # Parent POM
 ```
 
@@ -148,17 +163,59 @@ http://localhost:20058/swagger-ui.html
 
 | Method | Path | Description |
 |------|------|------|
-| GET | `/api/v1/video` | Get all videos |
 | GET | `/api/v1/video/{id}` | Get video details |
-| GET | `/api/v1/video/{id}/stream` | Stream video |
-| GET | `/api/v1/video/{id}/cover` | Get cover image |
-| PUT | `/api/v1/video/{id}/favorite` | Toggle favorite status |
+| PUT | `/api/v1/video/{id}/metadata` | Edit video metadata |
+| GET | `/api/v1/video/search/title?q=xxx` | Search by title |
+| GET | `/api/v1/video/search/director?q=xxx` | Search by director |
+| GET | `/api/v1/video/favorites` | Favorite videos |
+| PUT | `/api/v1/video/{id}/favorite?status=true` | Set favorite status |
+| GET | `/api/v1/video/{id}/actors` | Get actors |
+| GET | `/api/v1/video/{id}/nfo` | Get NFO content |
 | GET | `/api/v1/video/{id}/progress` | Get watch progress |
 | PUT | `/api/v1/video/{id}/progress` | Save watch progress |
+| PUT | `/api/v1/video/{id}/watched` | Set watched status |
+| DELETE | `/api/v1/video/{id}/progress` | Clear watch progress |
+
+#### Streaming & Subtitles
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/video/{id}/stream` | Stream video (Range supported) |
+| GET | `/api/v1/video/{id}/stream/transcode?quality=1080p` | Transcoded streaming |
+| GET | `/api/v1/video/{id}/playlist.m3u` | Series M3U playlist |
+| GET | `/api/v1/video/{id}/subtitles` | List external subtitles |
+| GET | `/api/v1/video/{id}/subtitles/{filename}` | Get subtitle file |
+
+#### Image Resources
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/video/{id}/cover` | Get cover image |
+| GET | `/api/v1/video/{id}/fanart` | Get fanart image |
+| GET | `/api/v1/video/actor/{actorId}/image` | Get actor image |
+| GET | `/api/v1/video/{id}/logo` | Get movie logo |
+| GET | `/api/v1/video/{id}/logo-options` | List logo options |
+| POST | `/api/v1/video/{id}/logo` | Set movie logo |
+| POST | `/api/v1/video/{id}/frames` | Generate frame candidates |
+| GET | `/api/v1/video/{id}/frames/{index}` | Get candidate frame |
+| POST | `/api/v1/video/{id}/frames/select` | Select frame as cover/fanart |
+
+#### TMDB Scraping & Batch Tasks (admin)
+
+| Method | Path | Description |
+|------|------|------|
 | GET | `/api/v1/video/tmdb/search?q=xxx` | Search TMDB |
-| POST | `/api/v1/video/{id}/tmdb/bind` | Bind TMDB metadata |
-| POST | `/api/v1/video/tmdb/auto-scrape` | Auto-scrape all videos |
-| POST | `/api/v1/video/scan?path=xxx` | Scan video directory |
+| POST | `/api/v1/video/{id}/tmdb/bind` | Bind TMDB metadata (async) |
+| POST | `/api/v1/video/{id}/tmdb/unbind` | Unbind TMDB metadata |
+| POST | `/api/v1/video/{id}/tmdb/refresh` | Refresh TMDB metadata |
+| POST | `/api/v1/video/tmdb/rescrape-library/{libraryId}` | Rescrape library (async) |
+| POST | `/api/v1/video/refresh-all-actors` | Batch refresh actors (async) |
+| POST | `/api/v1/video/{id}/refresh-logo` | Refresh single movie logo |
+| POST | `/api/v1/video/refresh-all-logos` | Batch refresh logos (async) |
+| POST | `/api/v1/video/refresh-all-resolutions` | Batch probe resolutions (async) |
+| GET | `/api/v1/video/scrape/progress?module=xxx` | Scrape/batch task progress |
+| POST | `/api/v1/video/{id}/nfo` | Generate NFO file (admin) |
+| POST | `/api/v1/video/{id}/covers` | Download covers (admin) |
 
 ### Video Series Endpoints
 
@@ -169,6 +226,48 @@ http://localhost:20058/swagger-ui.html
 | GET | `/api/v1/video/series/{id}` | Get series details |
 | GET | `/api/v1/video/series/{id}/cover` | Get series cover |
 | GET | `/api/v1/video/series/{id}/fanart` | Get series fanart |
+| GET | `/api/v1/video/series/{id}/logo` | Get series logo |
+| GET | `/api/v1/video/series/{id}/logo-options` | List series logo options |
+| POST | `/api/v1/video/series/{id}/refresh-logo` | Refresh series logo |
+| POST | `/api/v1/video/series/{id}/logo` | Set series logo |
+| GET | `/api/v1/video/series/{id}/season/{seasonNumber}/cover` | Get season cover |
+| POST | `/api/v1/video/series/{id}/refresh-season-covers` | Refresh series season assets |
+| POST | `/api/v1/video/series/refresh-all-season-covers` | Batch refresh season covers |
+| PUT | `/api/v1/video/series/{id}/favorite` | Set series favorite |
+| PUT | `/api/v1/video/series/{id}/metadata` | Edit series metadata |
+| GET | `/api/v1/video/series/{id}/actors` | Get series actors |
+| POST | `/api/v1/video/series/{id}/frames/select` | Set series fanart |
+| GET | `/api/v1/video/series/calendar` | Calendar |
+| GET | `/api/v1/video/series/favorites` | Favorite series |
+
+### Music Endpoints
+
+| Method | Path | Description |
+|------|------|------|
+| GET | `/api/v1/music/home` | Home aggregated data |
+| GET | `/api/v1/music/songs` | Song list |
+| GET | `/api/v1/music/songs/{id}` | Song details |
+| GET | `/api/v1/music/songs/{id}/stream` | Song streaming |
+| GET | `/api/v1/music/songs/{id}/cover` | Song cover |
+| GET | `/api/v1/music/songs/{id}/lyrics` | Song lyrics |
+| GET | `/api/v1/music/albums` | Album list |
+| GET | `/api/v1/music/albums/{id}` | Album details |
+| GET | `/api/v1/music/albums/{id}/songs` | Album songs |
+| GET | `/api/v1/music/albums/{id}/cover` | Album cover |
+| GET | `/api/v1/music/artists` | Artist list |
+| GET | `/api/v1/music/artists/{id}` | Artist details |
+| GET | `/api/v1/music/artists/{id}/cover` | Artist cover |
+| GET | `/api/v1/music/genres` | Genre list |
+| GET/POST | `/api/v1/music/playlists` | Playlists list/create |
+| GET/PUT/DELETE | `/api/v1/music/playlists/{id}` | Playlist detail/update/delete |
+| GET/POST/DELETE | `/api/v1/music/bookmarks[/{songId}]` | Bookmarks management |
+| GET/PUT | `/api/v1/music/play-queue` | Play queue get/update |
+| PUT | `/api/v1/music/{type}/{id}/star` | Set star favorite |
+| PUT | `/api/v1/music/{type}/{id}/rating` | Set rating |
+| POST | `/api/v1/music/scrobble` | Report playback |
+| POST | `/api/v1/music/scan` | Scan music library |
+| POST | `/api/v1/music/organize` | Organize music directory |
+| * | `/rest` | Subsonic compatible API |
 
 ### Settings Endpoints
 
@@ -207,9 +306,14 @@ http://localhost:20058/swagger-ui.html
 | `DB_NAME` | `fryfroghub` | Database name |
 | `DB_USERNAME` | - | Database username |
 | `DB_PASSWORD` | - | Database password |
+| `DB_POOL_SIZE` | `10` | Database connection pool size |
 | `AUTH_ENABLED` | `true` | Enable/disable authentication |
-| `AUTH_PASSWORD` | `1234` | Login password |
+| `AUTH_PASSWORD` | - | Initial admin password (empty generates a random one and prints it to logs) |
+| `AUTH_TOKEN_TTL` | `604800` | Token TTL (seconds), default 7 days |
+| `AUTH_LOGIN_MAX_FAILURES` | `5` | Login failure lockout threshold |
+| `AUTH_LOGIN_LOCK_MINUTES` | `15` | Lockout duration (minutes) |
 | `VIDEO_ROOT_PATHS` | - | Video files directory |
+| `VIDEO_BASE_URL` | - | Override external base URL for M3U etc. (reverse proxy/NAT) |
 | `TMDB_API_KEY` | - | TMDB API Key (for video scraping) |
 | `TMDB_LANGUAGE` | `zh-CN` | TMDB language |
 | `TMDB_IMAGE_SIZE` | `original` | TMDB image size |
@@ -224,6 +328,7 @@ http://localhost:20058/swagger-ui.html
 | Type | Format | Description |
 |------|------|------|
 | **Video** | MP4, MKV, AVI, MOV, FLV, WMV, WebM, M4V | Supports Range requests, resume playback |
+| **Music** | MP3, FLAC, WAV, M4A, AAC, OGG, OPUS, WMA, APE, MPC, DSF, etc. | Tag index via ffprobe |
 
 ## Development Guide
 
