@@ -35,6 +35,7 @@ public class VideoFileWatcherService extends AbstractFileWatcherService {
     private final VideoActorRepository actorRepository;
     private final NfoService nfoService;
     private final SeriesService seriesService;
+    private final VideoCleanupService cleanupService;
 
     @Value("${video.root-paths:}")
     private String rootPathsConfig;
@@ -44,13 +45,15 @@ public class VideoFileWatcherService extends AbstractFileWatcherService {
                                    VideoRepository videoRepository,
                                    VideoActorRepository actorRepository,
                                    NfoService nfoService,
-                                   SeriesService seriesService) {
+                                   SeriesService seriesService,
+                                   VideoCleanupService cleanupService) {
         this.pipelineService = pipelineService;
         this.mediaLibraryService = mediaLibraryService;
         this.videoRepository = videoRepository;
         this.actorRepository = actorRepository;
         this.nfoService = nfoService;
         this.seriesService = seriesService;
+        this.cleanupService = cleanupService;
     }
 
     @Override
@@ -127,6 +130,10 @@ public class VideoFileWatcherService extends AbstractFileWatcherService {
         if (video.getSeries() != null) {
             seriesService.removeVideoFromSeries(video);
         }
+
+        // 清理关联数据：观看进度、收藏、截帧候选缓存目录
+        cleanupService.deleteUserData(video.getId());
+        cleanupService.deleteFrameCacheDir(video);
 
         // 删除视频记录
         videoRepository.delete(video);

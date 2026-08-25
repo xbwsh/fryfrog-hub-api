@@ -33,6 +33,7 @@ public class VideoScanService {
     private final ScrapeProgressService progressService;
     private final MediaLibraryService mediaLibraryService;
     private final MediaProbeService probeService;
+    private final VideoCleanupService cleanupService;
 
     /**
      * 支持的视频格式（主流媒体服务器通用列表，覆盖 Kodi/Jellyfin/Plex 等常见格式）
@@ -414,7 +415,11 @@ public class VideoScanService {
                 cleanupVideoFiles(video);
                 // 清理关联的演员记录
                 actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
+                // 清理截帧候选缓存目录
+                cleanupService.deleteFrameCacheDir(video);
             }
+            // 清理关联的观看进度与收藏（按 videoId 批量）
+            cleanupService.deleteUserData(invalidVideos.stream().map(Video::getId).toList());
             repository.deleteAllById(invalidVideos.stream().map(Video::getId).toList());
 
             // 清理空系列

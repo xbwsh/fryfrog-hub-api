@@ -18,4 +18,8 @@ public interface FavoriteRepository extends JpaRepository<Favorite, Long> {
     List<Favorite> findByUserIdAndContentType(Long userId, String contentType);
 
     void deleteByUserIdAndContentTypeAndContentId(Long userId, String contentType, Long contentId);
+
+    void deleteByContentTypeAndContentId(String contentType, Long contentId);
+
+    void deleteByContentTypeAndContentIdIn(String contentType, Collection<Long> contentIds);
 }

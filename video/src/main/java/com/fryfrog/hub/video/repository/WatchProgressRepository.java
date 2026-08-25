@@ -15,5 +15,9 @@ public interface WatchProgressRepository extends JpaRepository<WatchProgress, Lo
 
     List<WatchProgress> findByUserIdAndVideo_IdIn(Long userId, Collection<Long> videoIds);
 
+    void deleteByVideo_Id(Long videoId);
+
+    void deleteByVideo_IdIn(Collection<Long> videoIds);
+
     List<WatchProgress> findByUserIdIsNull();
 }
