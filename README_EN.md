@@ -196,6 +196,7 @@ http://localhost:20058/swagger-ui.html
 | GET | `/api/v1/video/{id}/cover` | Get cover image |
 | GET | `/api/v1/video/{id}/fanart` | Get fanart image |
 | GET | `/api/v1/video/actor/{actorId}/image` | Get actor image |
+| GET | `/api/v1/video/tmdb-image-proxy?path=xxx&size=w500` | Local TMDB image proxy (credit posters) |
 | GET | `/api/v1/video/{id}/logo` | Get movie logo |
 | GET | `/api/v1/video/{id}/logo-options` | List logo options |
 | POST | `/api/v1/video/{id}/logo` | Set movie logo |

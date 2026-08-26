@@ -381,13 +381,24 @@ public class TmdbService {
         return s == null || s.isBlank();
     }
 
-    /**
+/**
      * 按指定尺寸构建 TMDB 图片完整 URL（size 如 w185 / w500 / original）。
      */
     public String buildImageUrl(String path, String size) {
         if (path == null || path.isBlank()) return null;
         String s = (size == null || size.isBlank()) ? getImageSize() : size;
         return IMAGE_BASE_URL + "/" + s + path;
+    }
+
+    /**
+     * 构建本地代理图片 URL（经我们服务器中转，避免前端直连 TMDB）。
+     * 返回相对路径，前端直接 <img> 加载；代理接口负责下载与缓存。
+     */
+    public String buildProxyImageUrl(String path, String size) {
+        if (path == null || path.isBlank()) return null;
+        String s = (size == null || size.isBlank()) ? "w500" : size;
+        String encoded = java.net.URLEncoder.encode(path, java.nio.charset.StandardCharsets.UTF_8);
+        return "/api/v1/video/tmdb-image-proxy?path=" + encoded + "&size=" + s;
     }
 
     public String getPosterUrl(String posterPath) {

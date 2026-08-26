@@ -214,7 +214,7 @@ public class ActorProfileService {
             dto.setDepartment(c.getDepartment());
             dto.setReleaseDate(c.getDisplayDate());
             dto.setYear(c.getYear());
-            dto.setPosterUrl(tmdbService.buildImageUrl(c.getPosterPath(), "w500"));
+            dto.setPosterUrl(tmdbService.buildProxyImageUrl(c.getPosterPath(), "w500"));
             dto.setOverview(c.getOverview());
             dto.setVoteAverage(c.getVoteAverage());
             dto.setVoteCount(c.getVoteCount());

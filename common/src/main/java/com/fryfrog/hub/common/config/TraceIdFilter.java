@@ -39,13 +39,14 @@ public class TraceIdFilter extends OncePerRequestFilter {
 
     /** 静态媒体资源与文档端点不记访问日志（图片墙一次几十个请求会刷屏） */
     private static boolean isQuietPath(String uri) {
-        return uri.startsWith("/api-docs")
+return uri.startsWith("/api-docs")
                 || uri.startsWith("/swagger-ui")
-                || uri.matches(".*/(cover|fanart|image|stream|stream/transcode|lyrics|subtitle/vtt|pages/\\d+)$")
+                || uri.matches(".*/(cover|fanart|stream|stream/transcode|lyrics|subtitle/vtt|pages/\\d+)$")
                 || uri.matches(".*/actor/.*/image$")
                 || uri.matches(".*/character/.*/image$")
                 || uri.matches(".*/artist/image$")
-                || uri.matches(".*/subtitles/.*");
+                || uri.matches(".*/subtitles/.*")
+                || uri.matches(".*/tmdb-image-proxy");
     }
 
     @Override

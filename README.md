@@ -225,6 +225,7 @@ http://localhost:20058/swagger-ui.html
 | GET | `/api/v1/video/{id}/cover` | 获取封面图片 |
 | GET | `/api/v1/video/{id}/fanart` | 获取横屏背景图 |
 | GET | `/api/v1/video/actor/{actorId}/image` | 获取演员头像 |
+| GET | `/api/v1/video/tmdb-image-proxy?path=xxx&size=w500` | TMDB 图片本地代理（作品封面等） |
 | GET | `/api/v1/video/{id}/logo` | 获取电影 Logo |
 | GET | `/api/v1/video/{id}/logo-options` | 查询 Logo 选项 |
 | POST | `/api/v1/video/{id}/logo` | 设置电影 Logo |

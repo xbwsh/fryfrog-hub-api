@@ -163,6 +163,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.matches(".*/stream/transcode")
                 || path.matches(".*/subtitles/.*")
                 || path.matches(".*/subtitle/vtt")
-                || path.matches(".*/lyrics");
+                || path.matches(".*/lyrics")
+                || path.matches(".*/tmdb-image-proxy");
     }
 }

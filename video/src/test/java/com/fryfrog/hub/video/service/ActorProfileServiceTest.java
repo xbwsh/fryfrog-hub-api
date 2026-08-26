@@ -103,8 +103,8 @@ class ActorProfileServiceTest {
         stale.setFetchedAt(LocalDateTime.now().minusDays(10));
         when(repository.findByActorId(5L)).thenReturn(Optional.of(stale));
         when(tmdbService.getPersonDetail(1136406L)).thenReturn(person(1136406L, "Tom Holland", "fresh bio"));
-        when(tmdbService.buildImageUrl(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
-                .thenAnswer(inv -> "https://image.tmdb.org/t/p/w500" + inv.getArgument(0));
+        when(tmdbService.buildProxyImageUrl(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> "/api/v1/video/tmdb-image-proxy?path=" + inv.getArgument(0) + "&size=" + inv.getArgument(1));
 
         ActorDetailDTO dto = service.getActorDetail(actor);
 

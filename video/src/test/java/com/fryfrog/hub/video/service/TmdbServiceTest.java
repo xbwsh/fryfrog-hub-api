@@ -167,6 +167,15 @@ class TmdbServiceTest {
     }
 
     @Test
+    void buildProxyImageUrl_returnsLocalProxyPath() {
+        assertThat(service.buildProxyImageUrl("/abc.jpg", "w500"))
+                .isEqualTo("/api/v1/video/tmdb-image-proxy?path=%2Fabc.jpg&size=w500");
+        assertThat(service.buildProxyImageUrl("/abc.jpg", "w500"))
+                .startsWith("/api/v1/video/tmdb-image-proxy");
+        assertThat(service.buildProxyImageUrl(null, "w500")).isNull();
+    }
+
+    @Test
     void getPersonDetail_returnsDetailFromPrimaryLanguage() {
         TmdbPersonDetail person = new TmdbPersonDetail();
         person.setId(1136406L);
