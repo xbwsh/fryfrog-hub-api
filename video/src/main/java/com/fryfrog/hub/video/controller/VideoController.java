@@ -34,8 +34,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/video")
@@ -141,6 +144,43 @@ public class VideoController {
         long userId = UserContext.currentUserId(request);
         service.setFavorite(userId, id, status);
         return ResponseEntity.ok(ApiResponse.success(support.toDTO(service.getVideoById(id), request)));
+    }
+
+    @GetMapping("/actor/{actorId:\\d+}/works")
+    @Operation(summary = "获取演员作品列表", description = "返回指定演员出演的视频列表，按 TMDB 演员ID优先、姓名兜底聚合，已按当前用户可见媒体库过滤，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> getActorWorks(
+            @Parameter(description = "演员ID") @PathVariable Long actorId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
+        VideoActor actor = actorRepository.findById(actorId).orElse(null);
+        if (actor == null) {
+            throw new ResourceNotFoundException("VideoActor", "id", actorId);
+        }
+        Set<Long> videoIds = new LinkedHashSet<>();
+        if (actor.getSourceActorId() != null) {
+            actorRepository.findBySourceActorId(actor.getSourceActorId())
+                    .forEach(a -> videoIds.add(a.getVideo().getId()));
+        }
+        if (actor.getName() != null && !actor.getName().isBlank()) {
+            actorRepository.findByNameIgnoreCase(actor.getName())
+                    .forEach(a -> videoIds.add(a.getVideo().getId()));
+        }
+        if (videoIds.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.success(PageResponse.of(List.of(), page, size, 0)));
+        }
+        List<Video> videos = videoRepository.findByIdIn(videoIds).stream()
+                .filter(v -> support.isLibraryVisibleToCurrentUser(v.getLibraryId()))
+                .sorted(Comparator
+                        .comparing(Video::getYear, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(Video::getTitle, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+        int total = videos.size();
+        int from = Math.min(page * size, total);
+        int to = Math.min(from + size, total);
+        List<Video> slice = videos.subList(from, to);
+        long userId = UserContext.currentUserId(request);
+        return ResponseEntity.ok(ApiResponse.success(support.toPageDTO(slice, page, size, total, userId)));
     }
 
     @GetMapping("/{id:\\d+}/actors")

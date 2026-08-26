@@ -14,4 +14,8 @@ public interface VideoActorRepository extends JpaRepository<VideoActor, Long> {
     void deleteByVideo_Id(Long videoId);
 
     List<VideoActor> findByVideo_Series_Id(Long seriesId);
+
+    List<VideoActor> findBySourceActorId(Long sourceActorId);
+
+    List<VideoActor> findByNameIgnoreCase(String name);
 }
