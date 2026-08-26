@@ -4,17 +4,21 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
+import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.UpdatePositionRequest;
 import com.fryfrog.hub.video.dto.UpdateWatchedRequest;
 import com.fryfrog.hub.video.dto.VideoDTO;
 import com.fryfrog.hub.video.dto.VideoMetadataUpdateRequest;
 import com.fryfrog.hub.video.dto.WatchProgressDTO;
+import com.fryfrog.hub.video.model.Favorite;
 import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoActor;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
+import com.fryfrog.hub.video.repository.VideoSeriesRepository;
+import com.fryfrog.hub.video.service.FavoriteService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.VideoService;
@@ -35,6 +39,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +57,8 @@ public class VideoController {
     private final WatchProgressService watchProgressService;
     private final VideoActorRepository actorRepository;
     private final VideoRepository videoRepository;
+    private final VideoSeriesRepository seriesRepository;
+    private final FavoriteService favoriteService;
     private final SeriesService seriesService;
     private final VideoControllerSupport support;
 
@@ -147,8 +154,8 @@ public class VideoController {
     }
 
     @GetMapping("/actor/{actorId:\\d+}/works")
-    @Operation(summary = "获取演员作品列表", description = "返回指定演员出演的视频列表，按 TMDB 演员ID优先、姓名兜底聚合，已按当前用户可见媒体库过滤，支持分页")
-    public ResponseEntity<ApiResponse<PageResponse<VideoDTO>>> getActorWorks(
+    @Operation(summary = "获取演员作品列表", description = "返回指定演员出演的作品，按系列聚合（同一剧集只返回一部），独立视频/电影单独返回，按年份降序分页")
+    public ResponseEntity<ApiResponse<PageResponse<SeriesListDTO>>> getActorWorks(
             @Parameter(description = "演员ID") @PathVariable Long actorId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
@@ -171,16 +178,45 @@ public class VideoController {
         }
         List<Video> videos = videoRepository.findByIdIn(videoIds).stream()
                 .filter(v -> support.isLibraryVisibleToCurrentUser(v.getLibraryId()))
-                .sorted(Comparator
-                        .comparing(Video::getYear, Comparator.nullsLast(Comparator.reverseOrder()))
-                        .thenComparing(Video::getTitle, String.CASE_INSENSITIVE_ORDER))
                 .toList();
-        int total = videos.size();
+
+        // 按系列聚合：同系列的剧集折叠为一部作品，独立视频/电影各自为一部
+        Map<Long, List<Video>> episodesBySeries = new LinkedHashMap<>();
+        List<Video> standalone = new ArrayList<>();
+        for (Video v : videos) {
+            if (v.getSeries() != null) {
+                episodesBySeries.computeIfAbsent(v.getSeries().getId(), k -> new ArrayList<>()).add(v);
+            } else {
+                standalone.add(v);
+            }
+        }
+
+        long userId = UserContext.currentUserId(request);
+        List<VideoSeries> seriesList = episodesBySeries.isEmpty()
+                ? List.of()
+                : seriesRepository.findAllById(episodesBySeries.keySet());
+        Map<Long, Boolean> seriesFav = favoriteService.statusMap(userId, Favorite.TYPE_SERIES,
+                seriesList.stream().map(VideoSeries::getId).toList());
+        Map<Long, Boolean> videoFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO,
+                standalone.stream().map(Video::getId).toList());
+
+        List<SeriesListDTO> items = new ArrayList<>();
+        for (VideoSeries s : seriesList) {
+            items.add(SeriesListDTO.fromEntity(s, episodesBySeries.get(s.getId()),
+                    seriesFav.getOrDefault(s.getId(), false)));
+        }
+        for (Video v : standalone) {
+            items.add(SeriesListDTO.fromStandaloneVideo(v, videoFav.getOrDefault(v.getId(), false)));
+        }
+        items.sort(Comparator
+                .comparing(SeriesListDTO::getYear, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(SeriesListDTO::getTitle, String.CASE_INSENSITIVE_ORDER));
+
+        int total = items.size();
         int from = Math.min(page * size, total);
         int to = Math.min(from + size, total);
-        List<Video> slice = videos.subList(from, to);
-        long userId = UserContext.currentUserId(request);
-        return ResponseEntity.ok(ApiResponse.success(support.toPageDTO(slice, page, size, total, userId)));
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(items.subList(from, to), page, size, total)));
     }
 
     @GetMapping("/{id:\\d+}/actors")
