@@ -170,6 +170,9 @@ http://localhost:20058/swagger-ui.html
 | GET | `/api/v1/video/favorites` | Favorite videos |
 | PUT | `/api/v1/video/{id}/favorite?status=true` | Set favorite status |
 | GET | `/api/v1/video/{id}/actors` | Get actors |
+| GET | `/api/v1/video/actor/{actorId}` | Get actor detail (bio/birthday/credits, DB-cached) |
+| GET | `/api/v1/video/actor/{actorId}/works` | Get actor works (grouped by series, paginated) |
+| GET | `/api/v1/video/actor/{actorId}/refresh` | Refresh actor detail cache (admin) |
 | GET | `/api/v1/video/{id}/nfo` | Get NFO content |
 | GET | `/api/v1/video/{id}/progress` | Get watch progress |
 | PUT | `/api/v1/video/{id}/progress` | Save watch progress |

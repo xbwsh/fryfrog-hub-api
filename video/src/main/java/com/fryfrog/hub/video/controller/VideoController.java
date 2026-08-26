@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
+import com.fryfrog.hub.video.dto.ActorDetailDTO;
 import com.fryfrog.hub.video.dto.SeriesListDTO;
 import com.fryfrog.hub.video.dto.UpdatePositionRequest;
 import com.fryfrog.hub.video.dto.UpdateWatchedRequest;
@@ -18,6 +19,7 @@ import com.fryfrog.hub.video.model.WatchProgress;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.repository.VideoSeriesRepository;
+import com.fryfrog.hub.video.service.ActorProfileService;
 import com.fryfrog.hub.video.service.FavoriteService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
@@ -60,6 +62,7 @@ public class VideoController {
     private final VideoSeriesRepository seriesRepository;
     private final FavoriteService favoriteService;
     private final SeriesService seriesService;
+    private final ActorProfileService actorProfileService;
     private final VideoControllerSupport support;
 
     @GetMapping("/{id:\\d+}")
@@ -151,6 +154,50 @@ public class VideoController {
         long userId = UserContext.currentUserId(request);
         service.setFavorite(userId, id, status);
         return ResponseEntity.ok(ApiResponse.success(support.toDTO(service.getVideoById(id), request)));
+    }
+
+    @GetMapping("/actor/{actorId:\\d+}")
+    @Operation(summary = "获取演员详情", description = "返回演员个人信息与作品列表（简介、艺名、生日、出生地、性别、参与作品等），详情落库缓存，过期后从 TMDB 刷新")
+    public ResponseEntity<ApiResponse<ActorDetailDTO>> getActorDetail(
+            @Parameter(description = "演员ID") @PathVariable Long actorId) {
+        VideoActor actor = actorRepository.findById(actorId).orElse(null);
+        if (actor == null) {
+            throw new ResourceNotFoundException("VideoActor", "id", actorId);
+        }
+        // 权限：演员所在视频须对当前用户可见（懒加载代理仅取 ID，不触发初始化）
+        try {
+            Long videoId = actor.getVideo().getId();
+            Video video = videoRepository.findById(videoId).orElse(null);
+            if (video != null) {
+                support.requireLibraryVisible(video.getLibraryId(), actorId, "VideoActor");
+            }
+        } catch (Exception e) {
+            log.debug("[Actor] visibility check failed for actor {}: {}", actorId, e.getMessage());
+        }
+
+        ActorDetailDTO dto = actorProfileService.getActorDetail(actor);
+        // 缓存命中时头像 URL 需用当前 actor 重新签名
+        if (dto.getImageUrl() == null) {
+            dto.setImageUrl(actor.getActorImageUrl());
+        }
+        return ResponseEntity.ok(ApiResponse.success(dto));
+    }
+
+    @GetMapping("/actor/{actorId:\\d+}/refresh")
+    @Operation(summary = "刷新演员详情", description = "强制从 TMDB 重新拉取演员详情并更新缓存")
+    public ResponseEntity<ApiResponse<ActorDetailDTO>> refreshActorDetail(
+            @Parameter(description = "演员ID") @PathVariable Long actorId,
+            HttpServletRequest request) {
+        support.requireAdmin(request);
+        VideoActor actor = actorRepository.findById(actorId).orElse(null);
+        if (actor == null) {
+            throw new ResourceNotFoundException("VideoActor", "id", actorId);
+        }
+        ActorDetailDTO dto = actorProfileService.refreshActorDetail(actor);
+        if (dto.getImageUrl() == null) {
+            dto.setImageUrl(actor.getActorImageUrl());
+        }
+        return ResponseEntity.ok(ApiResponse.success(dto));
     }
 
     @GetMapping("/actor/{actorId:\\d+}/works")

@@ -199,6 +199,9 @@ http://localhost:20058/swagger-ui.html
 | GET | `/api/v1/video/favorites` | 收藏列表 |
 | PUT | `/api/v1/video/{id}/favorite?status=true` | 设置收藏状态 |
 | GET | `/api/v1/video/{id}/actors` | 获取演员列表 |
+| GET | `/api/v1/video/actor/{actorId}` | 获取演员详情（简介/生日/作品，落库缓存） |
+| GET | `/api/v1/video/actor/{actorId}/works` | 获取演员作品列表（按系列聚合，分页） |
+| GET | `/api/v1/video/actor/{actorId}/refresh` | 刷新演员详情缓存（管理员） |
 | GET | `/api/v1/video/{id}/nfo` | 获取 NFO 内容 |
 | GET | `/api/v1/video/{id}/progress` | 获取观看进度 |
 | PUT | `/api/v1/video/{id}/progress` | 保存观看进度 |

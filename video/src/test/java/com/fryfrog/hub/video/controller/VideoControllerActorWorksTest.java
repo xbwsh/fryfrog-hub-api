@@ -11,6 +11,7 @@ import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.repository.VideoActorRepository;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.repository.VideoSeriesRepository;
+import com.fryfrog.hub.video.service.ActorProfileService;
 import com.fryfrog.hub.video.service.FavoriteService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
@@ -57,6 +58,8 @@ class VideoControllerActorWorksTest {
     private FavoriteService favoriteService;
     @Mock
     private SeriesService seriesService;
+    @Mock
+    private ActorProfileService actorProfileService;
     @Mock
     private VideoControllerSupport support;
     @Mock

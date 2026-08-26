@@ -2,6 +2,7 @@ package com.fryfrog.hub.video.service;
 
 import com.fryfrog.hub.video.dto.TmdbEpisodeDetail;
 import com.fryfrog.hub.video.dto.TmdbMovieDetail;
+import com.fryfrog.hub.video.dto.TmdbPersonDetail;
 import com.fryfrog.hub.video.dto.TmdbSearchResult;
 import com.fryfrog.hub.video.dto.TmdbSeasonDetail;
 import com.fryfrog.hub.video.dto.TmdbTvDetail;
@@ -52,6 +53,8 @@ public class TmdbService {
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
     private final Cache<String, TmdbTvImages> imagesCache = Caffeine.newBuilder()
             .expireAfterWrite(5, TimeUnit.MINUTES).build();
+    private final Cache<Long, TmdbPersonDetail> personCache = Caffeine.newBuilder()
+            .expireAfterWrite(30, TimeUnit.MINUTES).build();
 
     public TmdbService(@Qualifier("scraperRestTemplate") RestTemplate scraperRestTemplate) {
         this.restTemplate = scraperRestTemplate;
@@ -327,6 +330,64 @@ public class TmdbService {
             log.warn("Failed to get TV episode detail from TMDB: tvId={}, season={}, episode={}: {}", tvId, seasonNumber, episodeNumber, e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * 获取演员（人物）详情与作品列表（combined_credits）。
+     * 优先配置语言；简介为空时回退备用语言（日文）。
+     * 缓存 30 分钟，人物资料变化不频繁。
+     */
+    public TmdbPersonDetail getPersonDetail(Long personId) {
+        if (!isConfigured()) {
+            throw new IllegalStateException("TMDB API key not configured");
+        }
+        TmdbPersonDetail cached = personCache.getIfPresent(personId);
+        if (cached != null) {
+            return cached;
+        }
+
+        TmdbPersonDetail detail = fetchPersonDetail(personId, getLanguage());
+        if (detail != null && isBlank(detail.getBiography()) && !FALLBACK_LANGUAGE.equalsIgnoreCase(getLanguage())) {
+            TmdbPersonDetail fallback = fetchPersonDetail(personId, FALLBACK_LANGUAGE);
+            if (fallback != null && !isBlank(fallback.getBiography())) {
+                detail = fallback;
+            }
+        }
+        if (detail != null) {
+            personCache.put(personId, detail);
+        }
+        return detail;
+    }
+
+    private TmdbPersonDetail fetchPersonDetail(Long personId, String language) {
+        String url = addLanguageParam(
+                UriComponentsBuilder.fromHttpUrl(BASE_URL + "/person/" + personId)
+                        .queryParam("append_to_response", "combined_credits"),
+                language)
+                .toUriString();
+
+        try {
+            ResponseEntity<TmdbPersonDetail> response = getForEntity(url, TmdbPersonDetail.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                return response.getBody();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get person detail from TMDB: person={}, lang={}: {}", personId, language, e.getMessage());
+        }
+        return null;
+    }
+
+    private boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    /**
+     * 按指定尺寸构建 TMDB 图片完整 URL（size 如 w185 / w500 / original）。
+     */
+    public String buildImageUrl(String path, String size) {
+        if (path == null || path.isBlank()) return null;
+        String s = (size == null || size.isBlank()) ? getImageSize() : size;
+        return IMAGE_BASE_URL + "/" + s + path;
     }
 
     public String getPosterUrl(String posterPath) {

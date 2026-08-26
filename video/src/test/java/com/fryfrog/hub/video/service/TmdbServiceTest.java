@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.video.dto.TmdbPersonDetail;
 import com.fryfrog.hub.video.dto.TmdbTvImages;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,10 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ActiveProfiles("test")
@@ -153,5 +157,62 @@ class TmdbServiceTest {
         assertThat(service.getLogoUrlByPath("/logo.png"))
                 .isEqualTo("https://image.tmdb.org/t/p/w500/logo.png");
         assertThat(service.getLogoUrlByPath(null)).isNull();
+    }
+
+    @Test
+    void buildImageUrl_usesRequestedSize() {
+        assertThat(service.buildImageUrl("/abc.jpg", "w185"))
+                .isEqualTo("https://image.tmdb.org/t/p/w185/abc.jpg");
+        assertThat(service.buildImageUrl(null, "w185")).isNull();
+    }
+
+    @Test
+    void getPersonDetail_returnsDetailFromPrimaryLanguage() {
+        TmdbPersonDetail person = new TmdbPersonDetail();
+        person.setId(1136406L);
+        person.setName("Tom Holland");
+        person.setBiography("English actor.");
+        when(restTemplate.exchange(contains("/person/1136406"), eq(HttpMethod.GET), any(HttpEntity.class), eq(TmdbPersonDetail.class)))
+                .thenReturn(ResponseEntity.ok(person));
+
+        TmdbPersonDetail result = service.getPersonDetail(1136406L);
+
+        assertThat(result.getName()).isEqualTo("Tom Holland");
+        assertThat(result.getBiography()).isEqualTo("English actor.");
+        verify(restTemplate, times(1)).exchange(any(String.class), any(HttpMethod.class), any(), any(Class.class));
+    }
+
+    @Test
+    void getPersonDetail_fallsBackWhenBiographyBlank() {
+        TmdbPersonDetail zh = new TmdbPersonDetail();
+        zh.setId(1136406L);
+        zh.setName("Tom Holland");
+        zh.setBiography("   ");
+        TmdbPersonDetail ja = new TmdbPersonDetail();
+        ja.setId(1136406L);
+        ja.setName("トム・ホランド");
+        ja.setBiography("イギリスの俳優。");
+        when(restTemplate.exchange(contains("/person/1136406"), eq(HttpMethod.GET), any(HttpEntity.class), eq(TmdbPersonDetail.class)))
+                .thenReturn(ResponseEntity.ok(zh), ResponseEntity.ok(ja));
+
+        TmdbPersonDetail result = service.getPersonDetail(1136406L);
+
+        assertThat(result.getBiography()).isEqualTo("イギリスの俳優。");
+        verify(restTemplate, times(2)).exchange(any(String.class), any(HttpMethod.class), any(), any(Class.class));
+    }
+
+    @Test
+    void getPersonDetail_cached_secondCallDoesNotHitNetwork() {
+        TmdbPersonDetail person = new TmdbPersonDetail();
+        person.setId(1136406L);
+        person.setName("Tom Holland");
+        person.setBiography("bio");
+        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(TmdbPersonDetail.class)))
+                .thenReturn(ResponseEntity.ok(person));
+
+        service.getPersonDetail(1136406L);
+        service.getPersonDetail(1136406L);
+
+        verify(restTemplate, times(1)).exchange(any(String.class), any(HttpMethod.class), any(), any(Class.class));
     }
 }
