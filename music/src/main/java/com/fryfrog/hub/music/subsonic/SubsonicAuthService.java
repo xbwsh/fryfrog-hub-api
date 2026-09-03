@@ -2,6 +2,7 @@ package com.fryfrog.hub.music.subsonic;
 
 import com.fryfrog.hub.common.model.User;
 import com.fryfrog.hub.common.repository.UserRepository;
+import com.fryfrog.hub.common.util.SubsonicPasswordEncryptor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -27,11 +28,15 @@ public class SubsonicAuthService {
 
     private final boolean authEnabled;
     private final UserRepository userRepository;
+    private final SubsonicPasswordEncryptor encryptor;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
-    public SubsonicAuthService(@Value("${auth.enabled:true}") boolean authEnabled, UserRepository userRepository) {
+    public SubsonicAuthService(@Value("${auth.enabled:true}") boolean authEnabled,
+                               UserRepository userRepository,
+                               SubsonicPasswordEncryptor encryptor) {
         this.authEnabled = authEnabled;
         this.userRepository = userRepository;
+        this.encryptor = encryptor;
     }
 
     /** 认证通过返回用户；系统认证关闭（AUTH_ENABLED=false）时返回 null（调用方按匿名处理）。 */
@@ -46,7 +51,7 @@ public class SubsonicAuthService {
         if (user == null || !Boolean.TRUE.equals(user.getEnabled())) {
             throw new SubsonicApiException(ERROR_AUTH, "Wrong username or password");
         }
-        String plain = user.getSubsonicPassword();
+        String plain = encryptor.decrypt(user.getSubsonicPassword());
 
         boolean valid = false;
         if (password != null && !password.isBlank()) {

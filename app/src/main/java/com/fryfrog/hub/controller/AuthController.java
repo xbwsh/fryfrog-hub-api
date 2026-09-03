@@ -1,6 +1,8 @@
 package com.fryfrog.hub.controller;
 
+import com.fryfrog.hub.common.dto.ApiResponse;
 import com.fryfrog.hub.common.dto.UserDTO;
+import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.security.UserContext;
 import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.config.AuthManager;
@@ -10,7 +12,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 
@@ -29,9 +30,9 @@ public class AuthController {
 
     @PostMapping("/login")
     @Operation(summary = "登录", description = "用户名+密码登录，返回 token 与用户信息；未传 username 时按 admin 处理（兼容旧单密码登录）")
-    public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> body, HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@RequestBody Map<String, String> body, HttpServletRequest request) {
         if (!authManager.isEnabled()) {
-            return ResponseEntity.ok(Map.of("success", true, "token", "", "message", "Auth disabled"));
+            return ResponseEntity.ok(ApiResponse.success("Auth disabled", Map.of("token", "")));
         }
 
         String username = body.getOrDefault("username", "admin");
@@ -39,47 +40,44 @@ public class AuthController {
         AuthManager.LoginResult result = authManager.login(username, password, request.getRemoteAddr());
 
         if (result.ok()) {
-            return userService.findByUsername(username)
-                    .map(user -> ResponseEntity.ok(Map.of(
-                            "success", true,
-                            "token", result.token(),
-                            "user", UserDTO.from(user))))
-                    .orElseGet(() -> ResponseEntity.ok(Map.of("success", true, "token", result.token())));
+            var data = new java.util.LinkedHashMap<String, Object>();
+            data.put("token", result.token());
+            userService.findByUsername(username).ifPresent(user -> data.put("user", UserDTO.from(user)));
+            return ResponseEntity.ok(ApiResponse.success(data));
         }
 
         if ("LOCKED".equals(result.error())) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                    .body(Map.of("success", false, "message", "登录失败次数过多，请稍后再试",
-                            "retryAfterSeconds", result.retryAfterSeconds()));
+                    .body(ApiResponse.error("登录失败次数过多，请稍后再试"));
         }
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(Map.of("success", false, "message", "用户名或密码错误"));
+                .body(ApiResponse.error("用户名或密码错误"));
     }
 
     @PostMapping("/logout")
     @Operation(summary = "登出", description = "注销当前 token")
-    public ResponseEntity<Map<String, Object>> logout(
+    public ResponseEntity<ApiResponse<Void>> logout(
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             authManager.logout(authHeader.substring(7));
         }
-        return ResponseEntity.ok(Map.of("success", true));
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @GetMapping("/status")
     @Operation(summary = "认证状态", description = "前端判断是否需要登录")
-    public ResponseEntity<Map<String, Object>> status() {
-        return ResponseEntity.ok(Map.of("enabled", authManager.isEnabled()));
+    public ResponseEntity<ApiResponse<Map<String, Boolean>>> status() {
+        return ResponseEntity.ok(ApiResponse.success(Map.of("enabled", authManager.isEnabled())));
     }
 
     @GetMapping("/me")
     @Operation(summary = "当前用户", description = "返回当前登录用户信息")
-    public ResponseEntity<Map<String, Object>> me(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<UserDTO>> me(HttpServletRequest request) {
         Long userId = currentUserId(request);
         if (userId == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+            throw new ResourceNotFoundException("User", "id", "未登录");
         }
-        return ResponseEntity.ok(Map.of("success", true, "user", UserDTO.from(userService.getUser(userId))));
+        return ResponseEntity.ok(ApiResponse.success(UserDTO.from(userService.getUser(userId))));
     }
 
     private Long currentUserId(HttpServletRequest request) {

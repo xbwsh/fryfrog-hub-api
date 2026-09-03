@@ -205,10 +205,7 @@ public class VideoScrapeController {
                 .toList();
 
         // 所有开启刮削媒体库中已绑定 TMDB 的视频（电影 + 剧集）
-        List<Video> videosWithTmdb = videoRepository.findAll().stream()
-                .filter(v -> v.getTmdbId() != null && v.getMediaType() != null)
-                .filter(v -> v.getLibraryId() != null && scrapeEnabledLibraryIds.contains(v.getLibraryId()))
-                .toList();
+        List<Video> videosWithTmdb = videoRepository.findByTmdbBoundAndLibraryIds(scrapeEnabledLibraryIds);
 
         String module = "actors";
         scrapeProgressService.start(module, videosWithTmdb.size());

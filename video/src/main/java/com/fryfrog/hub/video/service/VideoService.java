@@ -123,18 +123,12 @@ public class VideoService {
     // ==================== 用户状态 ====================
 
     public PageResponse<Video> getFavorites(Long userId, int page, int size) {
-        List<Long> favIds = favoriteService.contentIds(userId, Favorite.TYPE_VIDEO);
-        if (favIds.isEmpty()) {
+        List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
+        if (allowedIds.isEmpty()) {
             return PageResponse.of(List.of(), page, size, 0);
         }
-        List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
-        List<Video> enabled = repository.findByIdIn(favIds).stream()
-                .filter(v -> v.getLibraryId() != null && allowedIds.contains(v.getLibraryId()))
-                .sorted(Comparator.comparing(Video::getTitle))
-                .toList();
-        int start = (int) Math.min(page * (long) size, enabled.size());
-        int end = (int) Math.min((page + 1) * (long) size, enabled.size());
-        return PageResponse.of(enabled.subList(start, end), page, size, enabled.size());
+        var result = repository.findFavoritesByUser(userId, Favorite.TYPE_VIDEO, allowedIds, PageRequest.of(page, size));
+        return PageResponse.of(result.getContent(), page, size, result.getTotalElements());
     }
 
     public void setFavorite(Long userId, Long id, boolean status) {

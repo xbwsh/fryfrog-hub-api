@@ -4,6 +4,7 @@ import com.fryfrog.hub.common.exception.BadRequestException;
 import com.fryfrog.hub.common.exception.ResourceNotFoundException;
 import com.fryfrog.hub.common.model.User;
 import com.fryfrog.hub.common.repository.UserRepository;
+import com.fryfrog.hub.common.util.SubsonicPasswordEncryptor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -23,9 +24,11 @@ public class UserService {
 
     private final UserRepository repository;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+    private final SubsonicPasswordEncryptor encryptor;
 
-    public UserService(UserRepository repository) {
+    public UserService(UserRepository repository, SubsonicPasswordEncryptor encryptor) {
         this.repository = repository;
+        this.encryptor = encryptor;
     }
 
     public List<User> findAll() {
@@ -53,7 +56,7 @@ public class UserService {
         User user = new User();
         user.setUsername(username);
         user.setPasswordHash(encoder.encode(rawPassword));
-        user.setSubsonicPassword(rawPassword);
+        user.setSubsonicPassword(encryptor.encrypt(rawPassword));
         user.setNickname(nickname == null || nickname.isBlank() ? DEFAULT_NICKNAME : nickname);
         user.setRole(role != null ? role : User.Role.USER);
         user.setEnabled(true);

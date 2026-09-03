@@ -3,6 +3,7 @@ package com.fryfrog.hub.common.service;
 import com.fryfrog.hub.common.exception.BadRequestException;
 import com.fryfrog.hub.common.model.User;
 import com.fryfrog.hub.common.repository.UserRepository;
+import com.fryfrog.hub.common.util.SubsonicPasswordEncryptor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -25,6 +26,9 @@ class UserServiceTest {
 
     @Mock
     private UserRepository repository;
+
+    @Mock
+    private SubsonicPasswordEncryptor encryptor;
 
     @InjectMocks
     private UserService service;

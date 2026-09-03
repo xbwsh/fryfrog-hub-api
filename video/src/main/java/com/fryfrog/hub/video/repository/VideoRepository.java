@@ -112,4 +112,20 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     @Query("SELECT COUNT(v) FROM Video v WHERE v.series IS NULL AND (v.libraryId IS NULL OR v.libraryId IN :enabledIds)")
     long countBySeriesIsNullAndEnabledLibraries(@Param("enabledIds") List<Long> enabledIds);
+
+    // ==================== 收藏（JOIN Favorite 表，避免内存分页） ====================
+
+    @Query("SELECT v FROM Video v JOIN Favorite f ON v.id = f.contentId " +
+           "WHERE f.userId = :userId AND f.contentType = :contentType " +
+           "AND v.libraryId IN :allowedIds ORDER BY v.title")
+    Page<Video> findFavoritesByUser(@Param("userId") Long userId,
+                                    @Param("contentType") String contentType,
+                                    @Param("allowedIds") List<Long> allowedIds,
+                                    Pageable pageable);
+
+    // ==================== 按条件批量查询（避免 findAll + 内存过滤） ====================
+
+    @Query("SELECT v FROM Video v WHERE v.tmdbId IS NOT NULL AND v.mediaType IS NOT NULL " +
+           "AND v.libraryId IN :libraryIds")
+    List<Video> findByTmdbBoundAndLibraryIds(@Param("libraryIds") List<Long> libraryIds);
 }

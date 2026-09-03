@@ -8,6 +8,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 
 @RestControllerAdvice
 @Slf4j
@@ -53,6 +55,26 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("Invalid value for parameter: " + ex.getName()));
     }
 
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
+        String msg = ex.getBindingResult().getFieldErrors().stream()
+                .map(e -> e.getField() + ": " + e.getDefaultMessage())
+                .reduce((a, b) -> a + "; " + b)
+                .orElse("Validation failed");
+        log.warn("Validation failed: {}", msg);
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(msg));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResponseStatus(ResponseStatusException ex) {
+        log.warn("ResponseStatusException: {} {}", ex.getStatusCode(), ex.getReason());
+        return ResponseEntity
+                .status(ex.getStatusCode())
+                .body(ApiResponse.error(ex.getReason() != null ? ex.getReason() : ex.getStatusCode().toString()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
         Throwable cause = ex;
@@ -60,7 +82,7 @@ public class GlobalExceptionHandler {
             String name = cause.getClass().getSimpleName();
             if (name.contains("Abort") || name.contains("AsyncRequestNotUsable")) {
                 log.debug("Client disconnected: {}", ex.getMessage());
-                return null;
+                return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
             }
             cause = cause.getCause();
         }
