@@ -1,5 +1,7 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.mediacore.service.FFmpegRuntime;
+import com.fryfrog.hub.mediacore.service.MediaProbeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

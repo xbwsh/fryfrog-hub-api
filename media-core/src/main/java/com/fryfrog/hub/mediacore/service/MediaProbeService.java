@@ -1,4 +1,4 @@
-package com.fryfrog.hub.video.service;
+package com.fryfrog.hub.mediacore.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -220,6 +220,55 @@ public class MediaProbeService {
             }
         }
         return raw;
+    }
+
+    /**
+     * 使用 ffprobe 探测音频文件的内嵌章节（M4B/M4A 有声书）。
+     * 返回列表按出现顺序，每项键：start(秒)、end(秒)、title。
+     * 失败或无章节返回空列表。
+     */
+    public List<Map<String, Object>> probeChapters(String inputPath) {
+        try {
+            String[] cmd = {ffmpegRuntime.ffprobePath(), "-v", "error",
+                    "-print_format", "json", "-show_chapters", inputPath};
+
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            ffmpegRuntime.applyLibraryEnv(pb);
+            Process p = pb.redirectErrorStream(true).start();
+
+            boolean finished = p.waitFor(10, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return List.of();
+            }
+
+            String output;
+            try (var is = p.getInputStream()) {
+                output = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
+            }
+            if (p.exitValue() != 0 || output.isEmpty()) {
+                return List.of();
+            }
+
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var root = mapper.readTree(output);
+            var chapters = root.path("chapters");
+            if (!chapters.isArray() || chapters.isEmpty()) {
+                return List.of();
+            }
+            List<Map<String, Object>> result = new java.util.ArrayList<>();
+            for (var ch : chapters) {
+                Map<String, Object> item = new java.util.LinkedHashMap<>();
+                item.put("start", ch.path("start_time").asDouble(0));
+                item.put("end", ch.path("end_time").asDouble(0));
+                item.put("title", fixMojibake(ch.path("tags").path("title").asText("")));
+                result.add(item);
+            }
+            return result;
+        } catch (Exception e) {
+            log.debug("Failed to probe chapters {}: {}", inputPath, e.getMessage());
+            return List.of();
+        }
     }
 
     /**

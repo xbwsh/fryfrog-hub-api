@@ -1,5 +1,6 @@
 package com.fryfrog.hub.video.service;
 
+import com.fryfrog.hub.mediacore.service.MediaProbeService;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;

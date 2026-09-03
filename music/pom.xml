@@ -19,10 +19,10 @@
             <groupId>com.fryfrog</groupId>
             <artifactId>fryfrog-hub-common</artifactId>
         </dependency>
-        <!-- 复用 video 模块的 FFmpeg/ffprobe 探测能力（FFmpegBinaryExtractor + TranscodingService） -->
+        <!-- FFmpeg/ffprobe 探测能力（media-core 模块） -->
         <dependency>
             <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-video</artifactId>
+            <artifactId>fryfrog-hub-media-core</artifactId>
         </dependency>
         <!-- Subsonic 兼容层 XML 输出 -->
         <dependency>

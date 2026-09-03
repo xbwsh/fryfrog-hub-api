@@ -7,7 +7,7 @@ import com.fryfrog.hub.music.model.MusicSong;
 import com.fryfrog.hub.music.repository.MusicAlbumRepository;
 import com.fryfrog.hub.music.repository.MusicArtistRepository;
 import com.fryfrog.hub.music.repository.MusicSongRepository;
-import com.fryfrog.hub.video.service.MediaProbeService;
+import com.fryfrog.hub.mediacore.service.MediaProbeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

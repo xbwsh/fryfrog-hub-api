@@ -10,7 +10,7 @@ import com.fryfrog.hub.music.repository.MusicArtistRepository;
 import com.fryfrog.hub.music.repository.MusicSongRepository;
 import com.fryfrog.hub.music.service.MusicScanService;
 import com.fryfrog.hub.music.service.MusicTagReaderService;
-import com.fryfrog.hub.video.service.MediaProbeService;
+import com.fryfrog.hub.mediacore.service.MediaProbeService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;

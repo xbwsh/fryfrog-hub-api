@@ -21,8 +21,10 @@
 
     <modules>
         <module>common</module>
+        <module>media-core</module>
         <module>video</module>
         <module>music</module>
+        <module>audiobook</module>
         <module>app</module>
     </modules>
 
@@ -48,12 +50,22 @@
             </dependency>
             <dependency>
                 <groupId>com.fryfrog</groupId>
+                <artifactId>fryfrog-hub-media-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fryfrog</groupId>
                 <artifactId>fryfrog-hub-video</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fryfrog</groupId>
                 <artifactId>fryfrog-hub-music</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fryfrog</groupId>
+                <artifactId>fryfrog-hub-audiobook</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

@@ -71,8 +71,10 @@ Video media backend API service for metadata management and streaming.
 fryfrog-hub-api/
 ├── app/             # Spring Boot entry point + global config/controllers
 ├── common/          # Shared entities, DTOs, utilities
+├── media-core/      # Media infrastructure (FFmpeg runtime + ffprobe probing)
 ├── video/           # Video module (TMDB scraping + NFO generation + series management + transcoding)
 ├── music/           # Music module (scan/index + streaming + Subsonic API)
+├── audiobook/       # Audiobook module (directory-aggregated scan + chapter parsing + playback progress)
 └── pom.xml          # Parent POM
 ```
 
@@ -311,6 +313,7 @@ http://localhost:20058/swagger-ui.html
 | `DB_USERNAME` | - | Database username |
 | `DB_PASSWORD` | - | Database password |
 | `DB_POOL_SIZE` | `10` | Database connection pool size |
+| `JPA_DDL_AUTO` | `validate` | Hibernate schema strategy (temporarily set `update` when deploying new tables) |
 | `AUTH_ENABLED` | `true` | Enable/disable authentication |
 | `AUTH_PASSWORD` | - | Initial admin password (empty generates a random one and prints it to logs) |
 | `AUTH_TOKEN_TTL` | `604800` | Token TTL (seconds), default 7 days |

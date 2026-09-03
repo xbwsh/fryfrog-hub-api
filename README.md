@@ -75,8 +75,10 @@
 fryfrog-hub-api/
 ├── app/             # Spring Boot 启动模块 + 全局配置/控制器
 ├── common/          # 共享实体、DTO、工具类
+├── media-core/      # 媒体基础设施（FFmpeg 运行时 + ffprobe 探测）
 ├── video/           # 视频模块（TMDB 刮削 + NFO 生成 + 系列管理 + 转码）
 ├── music/           # 音乐模块（扫描建库 + 播放 + Subsonic 兼容 API）
+├── audiobook/       # 有声书模块（目录聚合扫描 + 章节解析 + 播放进度）
 └── pom.xml          # Parent POM
 ```
 
@@ -340,6 +342,7 @@ http://localhost:20058/swagger-ui.html
 | `DB_USERNAME` | - | 数据库用户名 |
 | `DB_PASSWORD` | - | 数据库密码 |
 | `DB_POOL_SIZE` | `10` | 数据库连接池大小 |
+| `JPA_DDL_AUTO` | `validate` | Hibernate schema 策略（新增表时首次部署可临时设 `update`） |
 | `AUTH_ENABLED` | `true` | 启用/禁用认证 |
 | `AUTH_PASSWORD` | - | 初始 admin 密码（留空则自动生成随机密码并打印日志） |
 | `AUTH_TOKEN_TTL` | `604800` | Token 有效期（秒），默认 7 天 |

@@ -12,7 +12,7 @@ import com.fryfrog.hub.video.model.Video;
 import com.fryfrog.hub.video.model.VideoSeries;
 import com.fryfrog.hub.video.repository.VideoRepository;
 import com.fryfrog.hub.video.service.CoverArtService;
-import com.fryfrog.hub.video.service.MediaProbeService;
+import com.fryfrog.hub.mediacore.service.MediaProbeService;
 import com.fryfrog.hub.video.service.NfoService;
 import com.fryfrog.hub.video.service.SeriesService;
 import com.fryfrog.hub.video.service.VideoAssetService;

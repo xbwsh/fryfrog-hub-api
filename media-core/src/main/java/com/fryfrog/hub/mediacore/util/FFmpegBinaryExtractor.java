@@ -1,4 +1,4 @@
-package com.fryfrog.hub.video.util;
+package com.fryfrog.hub.mediacore.util;
 
 import lombok.extern.slf4j.Slf4j;
 

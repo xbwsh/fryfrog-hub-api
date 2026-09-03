@@ -10,6 +10,7 @@ import com.fryfrog.hub.common.service.MediaLibraryService;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.common.service.UserService;
 import com.fryfrog.hub.music.service.MusicScanService;
+import com.fryfrog.hub.audiobook.service.AudiobookScanService;
 import com.fryfrog.hub.video.service.MediaLibraryBrowseService;
 import com.fryfrog.hub.video.service.VideoPipelineService;
 import com.fryfrog.hub.video.service.VideoService;
@@ -37,15 +38,17 @@ public class MediaLibraryController {
     private final VideoPipelineService pipelineService;
     private final MediaLibraryBrowseService browseService;
     private final MusicScanService musicScanService;
+    private final AudiobookScanService audiobookScanService;
     private final UserService userService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, UserService userService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, AudiobookScanService audiobookScanService, UserService userService) {
         this.service = service;
         this.videoService = videoService;
         this.progressService = progressService;
         this.pipelineService = pipelineService;
         this.browseService = browseService;
         this.musicScanService = musicScanService;
+        this.audiobookScanService = audiobookScanService;
         this.userService = userService;
     }
 
@@ -216,6 +219,9 @@ public class MediaLibraryController {
             } else if (library.isMusicType()) {
                 // 音乐：扫描 + ffprobe 标签建库
                 musicScanService.scanAndSave(library.getPath(), library.getId());
+            } else if (library.isAudiobookType()) {
+                // 有声书：目录聚合 + ffprobe 章节/标签建库
+                audiobookScanService.scanAndSave(library.getPath(), library.getId());
             } else {
                 scanResult.put(key, "skip: unsupported type " + library.getType());
                 return;

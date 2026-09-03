@@ -22,12 +22,15 @@
 ```
 fryfrog-hub-api/
 ├── common/          # 共享实体（BaseEntity）、DTO（ApiResponse）、工具类
-├── video/           # 视频 API（FFmpeg + TMDB 刮削）
+├── media-core/      # 媒体基础设施（FFmpegRuntime + MediaProbeService + FFmpegBinaryExtractor，bytedeco 二进制在此模块）
+├── video/           # 视频 API（TMDB 刮削 + 转码）
+├── music/           # 音乐模块（扫描建库 + 播放 + Subsonic 兼容 API）
+├── audiobook/       # 有声书模块（目录聚合扫描 + M4B 章节解析 + 播放进度）
 ├── app/             # Spring Boot 启动模块 + 全局配置/控制器
 └── pom.xml          # Parent POM
 ```
 
-`app/` 模块包含启动类 `FryfrogHubApplication`、全局配置（WebConfig、OpenApiConfig）和通用控制器（AuthController、SettingController、LogController）。
+`app/` 模块包含启动类 `FryfrogHubApplication`、全局配置（WebConfig、OpenApiConfig）和通用控制器（AuthController、SettingController、LogController）。`media-core/` 承载 ffmpeg/ffprobe 通用能力，video/music/audiobook 均只依赖 common + media-core，互不依赖。
 
 ## Build & Run
 

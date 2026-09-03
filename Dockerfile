@@ -3,8 +3,10 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
 COPY pom.xml ./
 COPY common/pom.xml common/
+COPY media-core/pom.xml media-core/
 COPY video/pom.xml video/
 COPY music/pom.xml music/
+COPY audiobook/pom.xml audiobook/
 COPY app/pom.xml app/
 RUN mvn dependency:go-offline -B
 COPY . .

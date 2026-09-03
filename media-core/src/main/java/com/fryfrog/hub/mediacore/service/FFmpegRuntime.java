@@ -1,6 +1,6 @@
-package com.fryfrog.hub.video.service;
+package com.fryfrog.hub.mediacore.service;
 
-import com.fryfrog.hub.video.util.FFmpegBinaryExtractor;
+import com.fryfrog.hub.mediacore.util.FFmpegBinaryExtractor;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
