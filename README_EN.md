@@ -316,6 +316,7 @@ http://localhost:20058/swagger-ui.html
 | `AUTH_TOKEN_TTL` | `604800` | Token TTL (seconds), default 7 days |
 | `AUTH_LOGIN_MAX_FAILURES` | `5` | Login failure lockout threshold |
 | `AUTH_LOGIN_LOCK_MINUTES` | `15` | Lockout duration (minutes) |
+| `SUBSONIC_ENCRYPT_KEY` | - | Subsonic password encryption key (Base64-encoded 32 bytes, empty stores plaintext for legacy compatibility) |
 | `VIDEO_ROOT_PATHS` | - | Video files directory |
 | `VIDEO_BASE_URL` | - | Override external base URL for M3U etc. (reverse proxy/NAT) |
 | `TMDB_API_KEY` | - | TMDB API Key (for video scraping) |

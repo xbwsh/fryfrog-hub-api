@@ -345,6 +345,7 @@ http://localhost:20058/swagger-ui.html
 | `AUTH_TOKEN_TTL` | `604800` | Token 有效期（秒），默认 7 天 |
 | `AUTH_LOGIN_MAX_FAILURES` | `5` | 连续登录失败锁定阈值 |
 | `AUTH_LOGIN_LOCK_MINUTES` | `15` | 锁定时长（分钟） |
+| `SUBSONIC_ENCRYPT_KEY` | - | Subsonic 密码加密密钥（Base64 编码的 32 字节，留空则明文存储旧数据兼容） |
 | `VIDEO_ROOT_PATHS` | - | 视频文件目录 |
 | `VIDEO_BASE_URL` | - | M3U 等对外 URL 基地址覆盖（反向代理/NAT 场景） |
 | `TMDB_API_KEY` | - | TMDB API Key（视频刮削用） |
