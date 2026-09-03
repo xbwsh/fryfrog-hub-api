@@ -155,9 +155,13 @@ public class SeriesController {
     }
 
     @GetMapping("/grouped-by-library")
-    @Operation(summary = "按资源库分组获取系列", description = "返回按资源库分组的系列和独立视频列表")
-    public ResponseEntity<ApiResponse<List<LibrarySeriesGroupDTO>>> getSeriesGroupedByLibrary(HttpServletRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(seriesService.getSeriesGroupedByLibrary(UserContext.currentUserId(request))));
+    @Operation(summary = "按资源库分组获取系列", description = "返回按资源库分组的系列和独立视频列表，每个库内部独立分页（默认 50 条）")
+    public ResponseEntity<ApiResponse<List<LibrarySeriesGroupDTO>>> getSeriesGroupedByLibrary(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            HttpServletRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                seriesService.getSeriesGroupedByLibrary(UserContext.currentUserId(request), page, size)));
     }
 
     @GetMapping("/calendar")
@@ -179,20 +183,18 @@ public class SeriesController {
     }
 
     @GetMapping("/favorites")
-    @Operation(summary = "获取收藏系列列表", description = "返回当前用户已收藏的系列列表")
-    public ResponseEntity<ApiResponse<List<SeriesListDTO>>> getFavoriteSeries(HttpServletRequest request) {
+    @Operation(summary = "获取收藏系列列表", description = "返回当前用户已收藏的系列列表，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<SeriesListDTO>>> getFavoriteSeries(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
-        List<SeriesListDTO> result = favoriteService.contentIds(userId, Favorite.TYPE_SERIES).stream()
-                .map(id -> seriesService.getSeriesById(id).orElse(null))
-                .filter(java.util.Objects::nonNull)
-                .filter(s -> {
-                    var videos = s.getVideos();
-                    if (videos == null || videos.isEmpty()) return false;
-                    return videos.stream().anyMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()));
-                })
+        var result = seriesService.getFavoriteSeriesPage(userId, PageRequest.of(page, size));
+        List<SeriesListDTO> dtos = result.getContent().stream()
                 .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), true))
                 .toList();
-        return ResponseEntity.ok(ApiResponse.success(result));
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @PutMapping("/{id}/favorite")

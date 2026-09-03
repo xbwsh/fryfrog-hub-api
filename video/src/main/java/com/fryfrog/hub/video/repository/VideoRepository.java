@@ -57,6 +57,16 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
 
     Page<Video> findBySeriesIsNull(Pageable pageable);
 
+    /** 某资源库下的独立视频（无系列归属），按标题排序分页。 */
+    Page<Video> findBySeriesIsNullAndLibraryIdOrderByTitleAsc(Long libraryId, Pageable pageable);
+
+    long countBySeriesIsNullAndLibraryId(Long libraryId);
+
+    /** 未归属任何库的独立视频（libraryId 为空），按标题排序分页。 */
+    Page<Video> findBySeriesIsNullAndLibraryIdIsNullOrderByTitleAsc(Pageable pageable);
+
+    long countBySeriesIsNullAndLibraryIdIsNull();
+
     @Query("SELECT COUNT(v) FROM Video v WHERE v.series IS NULL")
     long countBySeriesIsNull();
 

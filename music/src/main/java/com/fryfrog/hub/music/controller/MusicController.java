@@ -1,6 +1,7 @@
 package com.fryfrog.hub.music.controller;
 
 import com.fryfrog.hub.common.dto.ApiResponse;
+import com.fryfrog.hub.common.dto.PageResponse;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.model.User;
 import com.fryfrog.hub.common.security.UserContext;
@@ -115,14 +116,22 @@ public class MusicController {
     // ── 歌手 ──
 
     @GetMapping("/artists")
-    @Operation(summary = "获取歌手列表", description = "返回当前用户可见音乐库中的歌手")
-    public ResponseEntity<ApiResponse<List<MusicArtistDTO>>> getArtists(HttpServletRequest request) {
+    @Operation(summary = "获取歌手列表", description = "返回当前用户可见音乐库中的歌手，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicArtistDTO>>> getArtists(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
-        List<MusicArtist> artists = queryService.getAllArtists();
-        List<Long> ids = artists.stream().map(MusicArtist::getId).toList();
+        var result = queryService.getArtistsPage(org.springframework.data.domain.PageRequest.of(page, size,
+                org.springframework.data.domain.Sort.by("name").ascending()));
+        List<Long> ids = result.getContent().stream().map(MusicArtist::getId).toList();
         var starred = favoriteService.starredIds(userId, MusicFavoriteService.TYPE_ARTIST, ids);
-        return ResponseEntity.ok(ApiResponse.success(artists.stream()
-                .map(a -> toArtistDTO(a, starred.contains(a.getId()))).toList()));
+        var albumCounts = queryService.albumCountByArtistIds(ids);
+        List<MusicArtistDTO> dtos = result.getContent().stream()
+                .map(a -> toArtistDTO(a, starred.contains(a.getId()),
+                        albumCounts.getOrDefault(a.getId(), 0L).intValue())).toList();
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @GetMapping("/artists/{id:\\d+}")
@@ -140,10 +149,17 @@ public class MusicController {
     // ── 专辑 ──
 
     @GetMapping("/albums")
-    @Operation(summary = "获取专辑列表")
-    public ResponseEntity<ApiResponse<List<MusicAlbumDTO>>> getAlbums(HttpServletRequest request) {
+    @Operation(summary = "获取专辑列表", description = "返回当前用户可见音乐库中的专辑，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicAlbumDTO>>> getAlbums(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
-        return ResponseEntity.ok(ApiResponse.success(toAlbumDTOs(queryService.getAllAlbums(), userId)));
+        var result = queryService.getAlbumsPage(org.springframework.data.domain.PageRequest.of(page, size,
+                org.springframework.data.domain.Sort.by("title").ascending()));
+        List<MusicAlbumDTO> dtos = toAlbumDTOs(result.getContent(), userId);
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @GetMapping("/albums/{id:\\d+}")
@@ -169,22 +185,27 @@ public class MusicController {
     // ── 单曲 ──
 
     @GetMapping("/songs")
-    @Operation(summary = "搜索单曲", description = "按标题/歌手/专辑关键词搜索，或传 genre 按流派过滤")
-    public ResponseEntity<ApiResponse<List<MusicSongDTO>>> searchSongs(
+    @Operation(summary = "搜索单曲", description = "按标题/歌手/专辑关键词搜索，或传 genre 按流派过滤，支持分页")
+    public ResponseEntity<ApiResponse<PageResponse<MusicSongDTO>>> searchSongs(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String genre,
-            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
             HttpServletRequest request) {
         long userId = UserContext.currentUserId(request);
-        List<MusicSong> songs;
+        var pageable = org.springframework.data.domain.PageRequest.of(page, size,
+                org.springframework.data.domain.Sort.by("id").ascending());
+        org.springframework.data.domain.Page<MusicSong> result;
         if (genre != null && !genre.isBlank()) {
-            songs = queryService.getSongsByGenre(genre, limit);
+            result = queryService.getSongsByGenrePage(genre, pageable);
         } else if (q != null && !q.isBlank()) {
-            songs = queryService.searchSongs(q, limit);
+            result = queryService.searchSongsPage(q, pageable);
         } else {
-            songs = queryService.getAllSongs(limit);
+            result = queryService.getSongsPage(pageable);
         }
-        return ResponseEntity.ok(ApiResponse.success(toSongDTOs(songs, userId)));
+        List<MusicSongDTO> dtos = toSongDTOs(result.getContent(), userId);
+        return ResponseEntity.ok(ApiResponse.success(
+                PageResponse.of(dtos, page, size, result.getTotalElements())));
     }
 
     @GetMapping("/songs/{id:\\d+}")
@@ -484,6 +505,10 @@ public class MusicController {
     // ── DTO 构建 ──
 
     private MusicArtistDTO toArtistDTO(MusicArtist artist, boolean starred) {
+        return toArtistDTO(artist, starred, queryService.getAlbumsByArtist(artist.getId()).size());
+    }
+
+    private MusicArtistDTO toArtistDTO(MusicArtist artist, boolean starred, int albumCount) {
         MusicArtistDTO dto = new MusicArtistDTO();
         dto.setId(artist.getId());
         dto.setName(artist.getName());
@@ -491,7 +516,7 @@ public class MusicController {
         if (artist.getCoverArtPath() != null && Files.exists(Paths.get(artist.getCoverArtPath()))) {
             dto.setCoverUrl(MediaUrlSigner.sign("/api/v1/music/artists/" + artist.getId() + "/cover"));
         }
-        dto.setAlbumCount(queryService.getAlbumsByArtist(artist.getId()).size());
+        dto.setAlbumCount(albumCount);
         dto.setStarred(starred);
         return dto;
     }

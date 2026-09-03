@@ -27,6 +27,12 @@ public interface MusicSongRepository extends JpaRepository<MusicSong, Long> {
 
     List<MusicSong> findByLibraryIdIn(Collection<Long> libraryIds, org.springframework.data.domain.Pageable pageable);
 
+    org.springframework.data.domain.Page<MusicSong> findPageByLibraryIdIn(Collection<Long> libraryIds, org.springframework.data.domain.Pageable pageable);
+
+    org.springframework.data.domain.Page<MusicSong> findPageByLibraryIdInAndTitleContainingIgnoreCase(Collection<Long> libraryIds, String query, org.springframework.data.domain.Pageable pageable);
+
+    org.springframework.data.domain.Page<MusicSong> findPageByLibraryIdInAndGenreIgnoreCase(Collection<Long> libraryIds, String genre, org.springframework.data.domain.Pageable pageable);
+
     List<MusicSong> findByLibraryIdIn(Collection<Long> libraryIds);
 
     long countByLibraryIdIn(Collection<Long> libraryIds);

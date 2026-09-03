@@ -8,7 +8,9 @@ import com.fryfrog.hub.music.repository.MusicAlbumRepository;
 import com.fryfrog.hub.music.repository.MusicArtistRepository;
 import com.fryfrog.hub.music.repository.MusicSongRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
@@ -38,6 +40,10 @@ public class MusicQueryService {
         return artistRepository.findByLibraryIdInOrderByNameAsc(allowedLibraryIds());
     }
 
+    public Page<MusicArtist> getArtistsPage(Pageable pageable) {
+        return artistRepository.findByLibraryIdIn(allowedLibraryIds(), pageable);
+    }
+
     public List<MusicArtist> searchArtists(String query, int limit) {
         return artistRepository.findByLibraryIdInAndNameContainingIgnoreCase(allowedLibraryIds(), query)
                 .stream().limit(limit).toList();
@@ -56,6 +62,24 @@ public class MusicQueryService {
 
     public List<MusicAlbum> getAllAlbums() {
         return albumRepository.findByLibraryIdInOrderByTitleAsc(allowedLibraryIds());
+    }
+
+    public Page<MusicAlbum> getAlbumsPage(Pageable pageable) {
+        return albumRepository.findByLibraryIdIn(allowedLibraryIds(), pageable);
+    }
+
+    /** 指定歌手在可见库内的专辑数（批量，一次查询）。 */
+    public Map<Long, Long> albumCountByArtistIds(Collection<Long> artistIds) {
+        Map<Long, Long> map = new LinkedHashMap<>();
+        if (artistIds == null || artistIds.isEmpty()) return map;
+        for (Map<String, Object> row : albumRepository.countByArtistIds(artistIds, allowedLibraryIds())) {
+            Object id = row.get("artistId");
+            Object cnt = row.get("cnt");
+            if (id instanceof Number n && cnt instanceof Number c) {
+                map.put(n.longValue(), c.longValue());
+            }
+        }
+        return map;
     }
 
     public List<MusicAlbum> searchAlbums(String query, int limit) {
@@ -95,6 +119,30 @@ public class MusicQueryService {
 
     public MusicSong getSong(Long id) {
         return songRepository.findById(id).filter(s -> isVisible(s.getLibraryId())).orElse(null);
+    }
+
+    public Page<MusicSong> getSongsPage(Pageable pageable) {
+        return songRepository.findPageByLibraryIdIn(allowedLibraryIds(), pageable);
+    }
+
+    public Page<MusicSong> searchSongsPage(String query, Pageable pageable) {
+        // 三个字段合并去重后内存分页：title/artist/album 三路 JPQL 各自分页无法保证全局去重正确
+        var byTitle = songRepository.findByLibraryIdInAndTitleContainingIgnoreCase(allowedLibraryIds(), query);
+        var byArtist = songRepository.findByLibraryIdInAndArtistNameContainingIgnoreCase(allowedLibraryIds(), query);
+        var byAlbum = songRepository.findByLibraryIdInAndAlbumNameContainingIgnoreCase(allowedLibraryIds(), query);
+        Map<Long, MusicSong> dedup = new LinkedHashMap<>();
+        byTitle.forEach(s -> dedup.put(s.getId(), s));
+        byArtist.forEach(s -> dedup.putIfAbsent(s.getId(), s));
+        byAlbum.forEach(s -> dedup.putIfAbsent(s.getId(), s));
+        List<MusicSong> all = List.copyOf(dedup.values());
+        int total = all.size();
+        int start = Math.min((int) pageable.getOffset(), total);
+        int end = Math.min(start + pageable.getPageSize(), total);
+        return new org.springframework.data.domain.PageImpl<>(all.subList(start, end), pageable, total);
+    }
+
+    public Page<MusicSong> getSongsByGenrePage(String genre, Pageable pageable) {
+        return songRepository.findPageByLibraryIdInAndGenreIgnoreCase(allowedLibraryIds(), genre, pageable);
     }
 
     // ── 流派 ──

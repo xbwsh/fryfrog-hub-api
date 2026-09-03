@@ -293,6 +293,87 @@ public class SeriesService {
     }
 
     public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary(Long userId) {
+        return getSeriesGroupedByLibrary(userId, 0, 50);
+    }
+
+    /**
+     * 按资源库分组的系列列表（每个库内部独立分页，默认每类取前 50 条）。
+     * 系列此前是全库 findAll + 内存分组，库大了直接 OOM；现按库 JPQL 分页查询。
+     */
+    public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibrary(Long userId, int page, int size) {
+        boolean restricted = mediaLibraryService.isRestrictedUser(userId);
+        List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
+        List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries().stream()
+                .filter(lib -> "VIDEO".equalsIgnoreCase(lib.getType()))
+                .filter(lib -> allowedIds.contains(lib.getId()))
+                .sorted(Comparator.comparingInt(lib -> lib.getSortOrder() != null ? lib.getSortOrder() : 0))
+                .toList();
+
+        org.springframework.data.domain.Pageable pageable =
+                org.springframework.data.domain.PageRequest.of(page, size,
+                        org.springframework.data.domain.Sort.by("title").ascending());
+
+        List<LibrarySeriesGroupDTO> result = new ArrayList<>();
+        for (MediaLibrary lib : libraries) {
+            var seriesPage = seriesRepository.findByLibraryId(lib.getId(), pageable);
+            var standalonePage = videoRepository.findBySeriesIsNullAndLibraryIdOrderByTitleAsc(lib.getId(), pageable);
+
+            List<VideoSeries> libSeries = seriesPage.getContent();
+            List<Video> libStandalone = standalonePage.getContent();
+
+            Map<Long, Boolean> seriesFav = favoriteService.statusMap(userId, Favorite.TYPE_SERIES,
+                    libSeries.stream().map(VideoSeries::getId).toList());
+            Map<Long, Boolean> standaloneFav = favoriteService.statusMap(userId, Favorite.TYPE_VIDEO,
+                    libStandalone.stream().map(Video::getId).toList());
+
+            List<SeriesListDTO> seriesDTOs = libSeries.stream()
+                    .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(), seriesFav.getOrDefault(s.getId(), false)))
+                    .toList();
+            List<SeriesListDTO> standaloneDTOs = libStandalone.stream()
+                    .map(v -> SeriesListDTO.fromStandaloneVideo(v, standaloneFav.getOrDefault(v.getId(), false)))
+                    .toList();
+
+            if (!seriesDTOs.isEmpty() || !standaloneDTOs.isEmpty()) {
+                var group = LibrarySeriesGroupDTO.fromLibrary(lib, seriesDTOs, standaloneDTOs);
+                group.setSeriesCount((int) seriesPage.getTotalElements());
+                group.setStandaloneCount((int) standalonePage.getTotalElements());
+                result.add(group);
+            }
+        }
+
+        if (!restricted) {
+            var unassignedSeries = seriesRepository.findUnassigned(pageable);
+            var unassignedStandalone = videoRepository.findBySeriesIsNullAndLibraryIdIsNullOrderByTitleAsc(pageable);
+            if (!unassignedSeries.getContent().isEmpty() || !unassignedStandalone.getContent().isEmpty()) {
+                List<SeriesListDTO> seriesDTOs = unassignedSeries.getContent().stream()
+                        .map(s -> SeriesListDTO.fromEntity(s, s.getVideos(),
+                                favoriteService.statusMap(userId, Favorite.TYPE_SERIES, List.of(s.getId()))
+                                        .getOrDefault(s.getId(), false)))
+                        .toList();
+                List<SeriesListDTO> standaloneDTOs = unassignedStandalone.getContent().stream()
+                        .map(v -> SeriesListDTO.fromStandaloneVideo(v,
+                                favoriteService.statusMap(userId, Favorite.TYPE_VIDEO, List.of(v.getId()))
+                                        .getOrDefault(v.getId(), false)))
+                        .toList();
+                result.add(LibrarySeriesGroupDTO.builder()
+                        .libraryId(null)
+                        .libraryName("未分配")
+                        .libraryPath(null)
+                        .subType(null)
+                        .series(seriesDTOs)
+                        .standaloneVideos(standaloneDTOs)
+                        .seriesCount((int) unassignedSeries.getTotalElements())
+                        .standaloneCount((int) unassignedStandalone.getTotalElements())
+                        .build());
+            }
+        }
+
+        return result;
+    }
+
+    /** 旧的全量分组逻辑已由按库分页版本替代，保留此方法仅供内部兼容（不再对外调用）。 */
+    @Deprecated
+    public List<LibrarySeriesGroupDTO> getSeriesGroupedByLibraryFull(Long userId) {
         boolean restricted = mediaLibraryService.isRestrictedUser(userId);
         List<Long> allowedIds = mediaLibraryService.getAllowedLibraryIds(userId);
         List<MediaLibrary> libraries = mediaLibraryService.getEnabledLibraries().stream()
@@ -378,6 +459,26 @@ public class SeriesService {
         }
 
         return result;
+    }
+
+    /** 收藏系列分页：先查收藏 ID，再按库可见性过滤后分页（收藏量通常小，内存分页可接受）。 */
+    public org.springframework.data.domain.Page<VideoSeries> getFavoriteSeriesPage(Long userId, org.springframework.data.domain.Pageable pageable) {
+        List<Long> favIds = favoriteService.contentIds(userId, Favorite.TYPE_SERIES);
+        if (favIds.isEmpty()) {
+            return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
+        }
+        List<VideoSeries> visible = seriesRepository.findAllById(favIds).stream()
+                .filter(s -> {
+                    var videos = s.getVideos();
+                    if (videos == null || videos.isEmpty()) return false;
+                    return videos.stream().anyMatch(v -> mediaLibraryService.isVisibleToCurrentUser(v.getLibraryId()));
+                })
+                .sorted(Comparator.comparing(VideoSeries::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                .toList();
+        int total = visible.size();
+        int start = Math.min((int) pageable.getOffset(), total);
+        int end = Math.min(start + pageable.getPageSize(), total);
+        return new org.springframework.data.domain.PageImpl<>(visible.subList(start, end), pageable, total);
     }
 
     public int cleanupDuplicateSeries() {
