@@ -57,6 +57,14 @@ class AudiobookScanServiceTest {
 
     @BeforeEach
     void setUp() {
+        // 注入直通 TransactionTemplate：单测里直接执行回调（无真实事务）
+        var passthrough = new org.springframework.transaction.support.TransactionTemplate() {
+            @Override
+            public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+                return action.doInTransaction(null);
+            }
+        };
+        org.springframework.test.util.ReflectionTestUtils.setField(scanService, "transactionTemplate", passthrough);
         when(bookRepository.findByBookPath(anyString())).thenReturn(java.util.Optional.empty());
         when(bookRepository.save(any(Audiobook.class))).thenAnswer(inv -> {
             Audiobook b = inv.getArgument(0);

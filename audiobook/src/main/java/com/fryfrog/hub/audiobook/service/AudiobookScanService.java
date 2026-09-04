@@ -44,8 +44,15 @@ public class AudiobookScanService {
     private final MediaProbeService probeService;
     private final FFmpegRuntime ffmpegRuntime;
     private final ScrapeProgressService progressService;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
-    /** synchronized 串行化：手动扫描与定时扫描并发时避免同目录重复建书。 */
+    /**
+     * synchronized 串行化：手动扫描与定时扫描并发时避免同目录重复建书。
+     * 不加 @Transactional：整次扫描可能包含成千上万个文件、每个文件都有 ffprobe
+     * 子进程调用（秒级），包成一个长事务会长期占用 DB 连接。事务边界放在
+     * 单本书的 upsert 与 cleanup 内部，用 TransactionTemplate 显式开启
+     *（self-invocation 不走代理，@Transactional 在内部调用上不生效）。
+     */
     public synchronized void scanAndSave(String libraryPath, Long libraryId) {
         long startTime = System.currentTimeMillis();
         log.info("[AudiobookScan] Start: {} (libraryId={})", libraryPath, libraryId);
@@ -102,9 +109,12 @@ public class AudiobookScanService {
         return sorted;
     }
 
-    /** upsert 一本书。返回是否新建。 */
-    @Transactional
+    /** upsert 一本书（单本书一个事务）。返回是否新建。 */
     public boolean upsertBook(Path dir, List<Path> audioFiles, Path libraryRoot, Long libraryId) {
+        return transactionTemplate.execute(status -> upsertBookInTransaction(dir, audioFiles, libraryRoot, libraryId));
+    }
+
+    private boolean upsertBookInTransaction(Path dir, List<Path> audioFiles, Path libraryRoot, Long libraryId) {
         String bookPath = dir.toString();
         Audiobook book = bookRepository.findByBookPath(bookPath).orElseGet(() -> Audiobook.builder()
                 .bookPath(bookPath)
@@ -194,8 +204,11 @@ public class AudiobookScanService {
      * 清理已消失的书：本次扫描没扫到，且目录已不存在或目录内已无音频文件。
      * 只删音频文件而保留空目录时同样清理（否则幽灵书残留，播放 404）。
      */
-    @Transactional
     public void cleanupMissing(Set<String> scannedPaths, Long libraryId) {
+        transactionTemplate.executeWithoutResult(status -> cleanupMissingInTransaction(scannedPaths, libraryId));
+    }
+
+    private void cleanupMissingInTransaction(Set<String> scannedPaths, Long libraryId) {
         List<Audiobook> existing = bookRepository.findByLibraryId(libraryId);
         for (Audiobook book : existing) {
             if (scannedPaths.contains(book.getBookPath())) {
