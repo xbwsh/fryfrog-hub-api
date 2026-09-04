@@ -171,4 +171,46 @@ class AudiobookScanServiceTest {
         verify(chapterRepository).deleteByAudiobook_Id(99L);
         verify(bookRepository).delete(ghost);
     }
+
+    @Test
+    void bookDirectoryWithoutAudioFilesIsCleanedUp() throws IOException {
+        // 回归：只删音频文件、保留空目录时，旧实现 Files.exists(目录)==true 跳过清理，
+        // 幽灵书残留导致播放 404
+        Path bookDir = Files.createDirectories(tempDir.resolve("三体"));
+        touch(bookDir.resolve("01.mp3"));
+        touch(bookDir.resolve("cover.jpg"));
+        probeReturns("01.mp3", "三体", "刘慈欣", 100);
+
+        // 幽灵书：目录还在但里面已无音频文件
+        Path ghostDir = Files.createDirectories(tempDir.resolve("幽灵书"));
+        Files.createFile(ghostDir.resolve("cover.jpg")); // 只剩封面，无音频
+        Audiobook ghost = Audiobook.builder()
+                .title("幽灵书").bookPath(ghostDir.toString()).libraryId(7L).build();
+        ghost.setId(88L);
+        when(bookRepository.findByLibraryId(7L)).thenReturn(List.of(ghost));
+
+        scanService.scanAndSave(tempDir.toString(), 7L);
+
+        verify(trackRepository).deleteByAudiobook_Id(88L);
+        verify(bookRepository).delete(ghost);
+    }
+
+    @Test
+    void bookDirectoryStillHavingAudioIsKept() throws IOException {
+        Path bookDir = Files.createDirectories(tempDir.resolve("三体"));
+        touch(bookDir.resolve("01.mp3"));
+        probeReturns("01.mp3", "三体", "刘慈欣", 100);
+
+        // 另一个库目录有音频但本次未被扫进 scannedPaths（模拟并发移动等边缘情况）→ 保守保留
+        Path otherDir = Files.createDirectories(tempDir.resolve("别的书"));
+        touch(otherDir.resolve("01.mp3"));
+        Audiobook keep = Audiobook.builder()
+                .title("别的书").bookPath(otherDir.toString()).libraryId(7L).build();
+        keep.setId(77L);
+        when(bookRepository.findByLibraryId(7L)).thenReturn(List.of(keep));
+
+        scanService.scanAndSave(tempDir.toString(), 7L);
+
+        verify(bookRepository, never()).delete(keep);
+    }
 }

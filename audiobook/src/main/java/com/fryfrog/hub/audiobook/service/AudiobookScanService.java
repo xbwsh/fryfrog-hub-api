@@ -190,20 +190,39 @@ public class AudiobookScanService {
         return isNew;
     }
 
-    /** 清理文件已消失的书。 */
+    /**
+     * 清理已消失的书：本次扫描没扫到，且目录已不存在或目录内已无音频文件。
+     * 只删音频文件而保留空目录时同样清理（否则幽灵书残留，播放 404）。
+     */
     @Transactional
     public void cleanupMissing(Set<String> scannedPaths, Long libraryId) {
         List<Audiobook> existing = bookRepository.findByLibraryId(libraryId);
         for (Audiobook book : existing) {
-            if (!scannedPaths.contains(book.getBookPath())) {
-                if (Files.exists(Paths.get(book.getBookPath()))) {
-                    continue;
-                }
-                log.info("[AudiobookScan] Removing missing book: {}", book.getBookPath());
-                trackRepository.deleteByAudiobook_Id(book.getId());
-                chapterRepository.deleteByAudiobook_Id(book.getId());
-                bookRepository.delete(book);
+            if (scannedPaths.contains(book.getBookPath())) {
+                continue;
             }
+            if (directoryHasAudio(Paths.get(book.getBookPath()))) {
+                continue;
+            }
+            log.info("[AudiobookScan] Removing missing book: {}", book.getBookPath());
+            trackRepository.deleteByAudiobook_Id(book.getId());
+            chapterRepository.deleteByAudiobook_Id(book.getId());
+            bookRepository.delete(book);
+        }
+    }
+
+    /** 目录存在且内含音频文件时返回 true（目录不存在或已无音频均视为书已消失）。 */
+    private boolean directoryHasAudio(Path dir) {
+        if (!Files.isDirectory(dir)) {
+            return false;
+        }
+        try (Stream<Path> stream = Files.list(dir)) {
+            return stream.filter(Files::isRegularFile)
+                    .filter(p -> !isHidden(p))
+                    .anyMatch(this::isAudioFile);
+        } catch (IOException e) {
+            // 读不了目录时保守处理：视为仍在，避免误删
+            return true;
         }
     }
 
