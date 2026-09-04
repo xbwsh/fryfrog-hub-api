@@ -59,6 +59,25 @@ class UserPreferenceServiceTest {
     }
 
     @Test
+    @DisplayName("全量替换：delete 后必须立即 flush（防 Hibernate INSERT 先于 DELETE 撞唯一键）")
+    void setPreferences_flushesDeleteBeforeInsert() {
+        // 回归：Hibernate ActionQueue flush 时 INSERT 先于 DELETE 执行，
+        // delete 后不 flush 直接 save 新行会违反 (user_id, pref_key) 唯一键
+        doAnswer(inv -> {
+            store.remove(inv.getArgument(0));
+            return null;
+        }).when(repository).deleteByUserId(1L);
+        doNothing().when(repository).flush();
+
+        service.setPreferences(1L, Map.of("theme.mode", "light"));
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(repository);
+        inOrder.verify(repository).deleteByUserId(1L);
+        inOrder.verify(repository).flush();
+        inOrder.verify(repository, org.mockito.Mockito.atLeastOnce()).save(any(UserPreference.class));
+    }
+
+    @Test
     @DisplayName("获取偏好：按 userId 聚合为 map")
     void getPreferences_aggregates() {
         store.put(7L, Map.of("theme.mode", "dark", "privacy.enabled", "true"));

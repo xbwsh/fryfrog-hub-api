@@ -72,6 +72,9 @@ public class UserPreferenceService {
         }
 
         repository.deleteByUserId(userId);
+        // 立即把 DELETE 刷到数据库：Hibernate flush 时 INSERT 先于 DELETE 执行，
+        // 若不在此处 flush，先 persist 的新行会与未删除的旧行撞 (user_id, pref_key) 唯一键
+        repository.flush();
         for (Map.Entry<String, String> entry : normalized.entrySet()) {
             if (entry.getValue().isEmpty()) {
                 continue; // 空值 = 删除该键
