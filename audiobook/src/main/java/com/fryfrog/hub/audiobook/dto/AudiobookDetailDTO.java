@@ -28,6 +28,12 @@ public class AudiobookDetailDTO {
     @Schema(description = "朗读者")
     private String narrator;
 
+    @Schema(description = "简介")
+    private String overview;
+
+    @Schema(description = "元数据来源: scan/manual/scrape")
+    private String metadataSource;
+
     @Schema(description = "丛书名")
     private String series;
 

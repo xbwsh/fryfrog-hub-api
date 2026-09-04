@@ -9,7 +9,9 @@ import com.fryfrog.hub.audiobook.model.AudiobookTrack;
 import com.fryfrog.hub.audiobook.repository.AudiobookChapterRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookTrackRepository;
+import com.fryfrog.hub.audiobook.service.AudiobookOrganizeService;
 import com.fryfrog.hub.audiobook.service.AudiobookProgressService;
+import com.fryfrog.hub.audiobook.service.AudiobookScrapeService;
 import com.fryfrog.hub.audiobook.service.AudiobookScanService;
 import com.fryfrog.hub.audiobook.service.AudiobookStreamService;
 import com.fryfrog.hub.common.dto.ApiResponse;
@@ -53,6 +55,8 @@ public class AudiobookController {
     private final AudiobookTrackRepository trackRepository;
     private final AudiobookChapterRepository chapterRepository;
     private final AudiobookScanService scanService;
+    private final AudiobookOrganizeService organizeService;
+    private final AudiobookScrapeService scrapeService;
     private final AudiobookStreamService streamService;
     private final AudiobookProgressService progressService;
     private final MediaLibraryService mediaLibraryService;
@@ -107,6 +111,21 @@ public class AudiobookController {
             }
         });
         return ResponseEntity.ok(ApiResponse.success("扫描任务已启动", result));
+    }
+
+    // ── 整理 ──
+
+    @PostMapping("/organize")
+    @Operation(summary = "整理有声书文件", description = "将库根下的旧扁平格式（剑来001.mp3）整理为 剑来/剑来第一季/001.mp3 结构并迁移数据库记录；dryRun=true 仅预览不移动")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> organize(
+            @Parameter(description = "资源库ID") @RequestParam Long libraryId,
+            @Parameter(description = "是否仅预览") @RequestParam(defaultValue = "true") boolean dryRun,
+            HttpServletRequest request) {
+        requireAdmin(request);
+        if (!mediaLibraryService.isVisibleToCurrentUser(libraryId)) {
+            throw new ResourceNotFoundException("MediaLibrary", "id", libraryId);
+        }
+        return ResponseEntity.ok(ApiResponse.success(organizeService.organize(libraryId, dryRun)));
     }
 
     // ── 列表 / 详情 ──
@@ -184,6 +203,8 @@ public class AudiobookController {
                 .title(book.getTitle())
                 .author(book.getAuthor())
                 .narrator(book.getNarrator())
+                .overview(book.getOverview())
+                .metadataSource(book.getMetadataSource())
                 .series(book.getSeries())
                 .seriesPart(book.getSeriesPart())
                 .playType(book.getPlayType())
@@ -288,6 +309,85 @@ public class AudiobookController {
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(
                 PageResponse.of(content, page, size, rows.getTotalElements())));
+    }
+
+    // ── 元数据编辑 / 刮削 ──
+
+    @PutMapping("/{id:\\d+}/metadata")
+    @Operation(summary = "编辑有声书元数据", description = "手动修正书名/作者/朗读者/简介/系列（只更新传入的非空字段），同时清除刮削绑定")
+    public ResponseEntity<ApiResponse<AudiobookDetailDTO>> updateMetadata(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest req) {
+        requireAdmin(req);
+        Audiobook book = requireVisibleBook(id);
+        boolean updated = false;
+
+        if (body.get("title") instanceof String s && !s.isBlank()) { book.setTitle(s); updated = true; }
+        if (body.get("author") instanceof String s && !s.isBlank()) { book.setAuthor(s); updated = true; }
+        if (body.get("narrator") instanceof String s) { book.setNarrator(s.isBlank() ? null : s); updated = true; }
+        if (body.get("overview") instanceof String s) { book.setOverview(s.isBlank() ? null : s); updated = true; }
+        if (body.get("series") instanceof String s) { book.setSeries(s.isBlank() ? null : s); updated = true; }
+        if (body.get("seriesPart") instanceof Number n) { book.setSeriesPart(n.intValue()); updated = true; }
+
+        if (updated) {
+            book.setMetadataSource("manual");
+            book.setSourceId(null);
+            bookRepository.save(book);
+            log.info("[Audiobook] Metadata manually updated for book {}", id);
+        }
+        return detail(id, req);
+    }
+
+    @GetMapping("/scrape/providers")
+    @Operation(summary = "刮削数据源列表")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> scrapeProviders(HttpServletRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.listProviders()));
+    }
+
+    @GetMapping("/scrape/search")
+    @Operation(summary = "搜索刮削候选", description = "q=关键词；source 可选（不传查全部源）")
+    public ResponseEntity<ApiResponse<List<com.fryfrog.hub.audiobook.dto.AudiobookScrapeResult>>> scrapeSearch(
+            @RequestParam String q,
+            @RequestParam(required = false) String source,
+            HttpServletRequest request) {
+        requireAdmin(request);
+        return ResponseEntity.ok(ApiResponse.success(scrapeService.search(q, source)));
+    }
+
+    @PostMapping("/{id:\\d+}/scrape/bind")
+    @Operation(summary = "绑定刮削元数据", description = "body: {source, sourceId}；结果落库并下载封面，不改音频文件")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> scrapeBind(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        requireAdmin(request);
+        requireVisibleBook(id);
+        String source = body.get("source");
+        String sourceId = body.get("sourceId");
+        if (source == null || source.isBlank() || sourceId == null || sourceId.isBlank()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("source 与 sourceId 不能为空"));
+        }
+        Audiobook book = scrapeService.bind(id, source, sourceId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", book.getId());
+        result.put("title", book.getTitle());
+        result.put("author", book.getAuthor());
+        result.put("narrator", book.getNarrator());
+        result.put("overview", book.getOverview());
+        result.put("series", book.getSeries());
+        result.put("coverUrl", book.getCoverUrl());
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @PostMapping("/{id:\\d+}/scrape/unbind")
+    @Operation(summary = "解绑刮削元数据", description = "清除刮削绑定标记，已写入的字段保留")
+    public ResponseEntity<ApiResponse<Void>> scrapeUnbind(
+            @PathVariable Long id, HttpServletRequest request) {
+        requireAdmin(request);
+        requireVisibleBook(id);
+        scrapeService.unbind(id);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     // ── 工具 ──

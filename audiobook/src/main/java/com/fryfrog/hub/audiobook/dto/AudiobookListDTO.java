@@ -50,8 +50,7 @@ public class AudiobookListDTO {
                 .title(book.getTitle())
                 .author(book.getAuthor())
                 .narrator(book.getNarrator())
-                .series(book.getSeries())
-                .coverUrl(book.getCoverUrl())
+                .series(book.getSeries())                .coverUrl(book.getCoverUrl())
                 .playType(book.getPlayType())
                 .totalDurationSeconds(book.getTotalDurationSeconds())
                 .trackCount(book.getTrackCount());

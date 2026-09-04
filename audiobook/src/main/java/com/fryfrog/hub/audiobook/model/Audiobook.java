@@ -29,6 +29,16 @@ public class Audiobook extends BaseEntity {
     @Schema(description = "朗读者")
     private String narrator;
 
+    @Schema(description = "简介")
+    @Column(columnDefinition = "TEXT")
+    private String overview;
+
+    @Schema(description = "外部刮削源 ID（iTunes trackId / 悦听吧 uuid 等），手动编辑时清除")
+    private String sourceId;
+
+    @Schema(description = "元数据来源: manual/scrape/scan", example = "scan")
+    private String metadataSource;
+
     @Schema(description = "丛书名")
     private String series;
 

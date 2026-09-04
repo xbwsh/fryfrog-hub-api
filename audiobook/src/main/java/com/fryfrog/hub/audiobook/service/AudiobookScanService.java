@@ -159,6 +159,19 @@ public class AudiobookScanService {
         book.setNarrator(firstTag(firstTags, "composer", "narrator", "description"));
         book.setSeries(firstTag(firstTags, "series", "show"));
         book.setSeriesPart(parsePart(firstTag(firstTags, "series-part", "part")));
+        // 标签无系列时，从分组目录结构推断：库根/系列/带分卷标记的书目录
+        // （如 剑来/剑来第一季 → series=剑来, seriesPart=1）
+        if ((book.getSeries() == null || book.getSeries().isBlank())) {
+            Path parent = dir.getParent();
+            if (parent != null && !parent.equals(libraryRoot)
+                    && !parentHasAudio(parent) && Files.isDirectory(parent)) {
+                Integer part = AudiobookOrganizeService.seasonPartOf(dir.getFileName().toString());
+                if (part != null) {
+                    book.setSeries(parent.getFileName().toString());
+                    book.setSeriesPart(part);
+                }
+            }
+        }
         book.setTotalDurationSeconds(tracks.stream()
                 .map(AudiobookTrack::getDurationSeconds)
                 .filter(Objects::nonNull)
@@ -273,18 +286,24 @@ public class AudiobookScanService {
         }
     }
 
+    /** 目录内是否直接含音频文件（跳过隐藏文件）。读取失败时保守返回 true。 */
+    private boolean parentHasAudio(Path dir) {
+        if (!Files.isDirectory(dir)) return false;
+        try (Stream<Path> stream = Files.list(dir)) {
+            return stream.filter(Files::isRegularFile)
+                    .filter(p -> !isHidden(p))
+                    .anyMatch(this::isAudioFile);
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
     /** Author/Title 结构：父目录在库根下一级且自身不含音频时视为作者名。 */
     private String inferAuthorFromStructure(Path dir, Path libraryRoot) {
         Path parent = dir.getParent();
         if (parent == null || parent.equals(libraryRoot)) return null;
-        try (Stream<Path> stream = Files.list(parent)) {
-            boolean parentHasAudio = stream.filter(Files::isRegularFile)
-                    .filter(p -> !isHidden(p))
-                    .anyMatch(this::isAudioFile);
-            if (!parentHasAudio) {
-                return parent.getFileName().toString();
-            }
-        } catch (IOException ignored) {
+        if (!parentHasAudio(parent)) {
+            return parent.getFileName().toString();
         }
         return null;
     }
