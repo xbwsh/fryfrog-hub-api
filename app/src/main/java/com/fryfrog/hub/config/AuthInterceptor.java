@@ -36,7 +36,9 @@ public class AuthInterceptor implements HandlerInterceptor {
             "^/api/v1/music/scrobble$",
             "^/api/v1/music/play-queue$",
             "^/api/v1/music/bookmarks$",
-            "^/api/v1/music/bookmarks/\\d+$"
+            "^/api/v1/music/bookmarks/\\d+$",
+            "^/api/v1/audiobooks/\\d+/progress$",
+            "^/api/v1/audiobooks/\\d+/completed$"
     );
 
     /** 读操作但属于管理功能，普通用户不可访问 */

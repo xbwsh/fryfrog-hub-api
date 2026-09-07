@@ -105,7 +105,10 @@ public class UserController {
     @Operation(summary = "修改自己的密码", description = "需提供原密码")
     public ResponseEntity<ApiResponse<Void>> changeMyPassword(@RequestBody ChangePasswordRequest req,
                                                               HttpServletRequest request) {
-        userService.changePassword(currentUserId(request), req.getOldPassword(), req.getNewPassword());
+        Long currentId = currentUserId(request);
+        userService.changePassword(currentId, req.getOldPassword(), req.getNewPassword());
+        // 与管理员重置路径一致：改密后失效该用户全部旧 token，防止已泄露会话继续可用
+        invalidateTokensFor(currentId);
         return ResponseEntity.ok(ApiResponse.success("密码已修改，请重新登录", null));
     }
 

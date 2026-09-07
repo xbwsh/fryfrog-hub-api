@@ -4,6 +4,7 @@ import com.fryfrog.hub.audiobook.model.Audiobook;
 import com.fryfrog.hub.audiobook.model.AudiobookChapter;
 import com.fryfrog.hub.audiobook.model.AudiobookTrack;
 import com.fryfrog.hub.audiobook.repository.AudiobookChapterRepository;
+import com.fryfrog.hub.audiobook.repository.AudiobookProgressRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookTrackRepository;
 import com.fryfrog.hub.audiobook.util.NaturalOrderComparator;
@@ -41,6 +42,7 @@ public class AudiobookScanService {
     private final AudiobookRepository bookRepository;
     private final AudiobookTrackRepository trackRepository;
     private final AudiobookChapterRepository chapterRepository;
+    private final AudiobookProgressRepository progressRepository;
     private final MediaProbeService probeService;
     private final FFmpegRuntime ffmpegRuntime;
     private final ScrapeProgressService progressService;
@@ -125,92 +127,121 @@ public class AudiobookScanService {
         book.setPlayType(single ? Audiobook.TYPE_SINGLE : Audiobook.TYPE_MULTI);
         book.setLibraryId(libraryId);
 
-        // 探测所有音轨（多文件书逐个 ffprobe；单文件只探一次）
-        List<AudiobookTrack> tracks = new ArrayList<>();
-        Map<String, Map<String, String>> tagsByFile = new LinkedHashMap<>();
-        for (int i = 0; i < audioFiles.size(); i++) {
-            Path file = audioFiles.get(i);
-            Map<String, Object> probe = probeService.probeAudioInfo(file.toString());
-            Map<String, String> tags = tagsOf(probe);
-            tagsByFile.put(file.toString(), tags);
+        // 未变化短路：已有音轨与磁盘文件一致（数量/路径/大小/时长）时，
+        // 跳过 ffprobe 与音轨重建，保持 trackId 稳定（已签发的流 URL 不失效）
+        List<AudiobookTrack> existingTracks = isNew ? List.of()
+                : trackRepository.findByAudiobook_IdOrderByTrackIndexAsc(book.getId());
+        boolean unchanged = tracksUnchanged(existingTracks, audioFiles);
 
-            double duration = probe.get("duration") instanceof Number n ? n.doubleValue() : 0;
-            tracks.add(AudiobookTrack.builder()
-                    .trackIndex(i)
-                    .title(trackTitle(tags, file, single))
-                    .filePath(file.toString())
-                    .format(formatOf(file))
-                    .durationSeconds(duration > 0 ? duration : null)
-                    .fileSize(fileSizeOf(file))
-                    .build());
-        }
+        List<AudiobookTrack> tracks;
+        if (unchanged) {
+            tracks = existingTracks;
+        } else {
+            // 探测所有音轨（多文件书逐个 ffprobe；单文件只探一次）
+            tracks = new ArrayList<>();
+            Map<String, Map<String, String>> tagsByFile = new LinkedHashMap<>();
+            for (int i = 0; i < audioFiles.size(); i++) {
+                Path file = audioFiles.get(i);
+                Map<String, Object> probe = probeService.probeAudioInfo(file.toString());
+                Map<String, String> tags = tagsOf(probe);
+                tagsByFile.put(file.toString(), tags);
 
-        // 书级元数据：标签优先，目录名兜底（Author/Title 结构用父目录补作者）
-        Map<String, String> firstTags = audioFiles.isEmpty() ? Map.of()
-                : tagsByFile.get(audioFiles.get(0).toString());
-        book.setTitle(firstTag(firstTags, "album", "title"));
-        if (book.getTitle() == null || book.getTitle().isBlank()) {
-            book.setTitle(dir.getFileName().toString());
-        }
-        book.setAuthor(firstTag(firstTags, "artist", "album_artist"));
-        if (book.getAuthor() == null || book.getAuthor().isBlank()) {
-            book.setAuthor(inferAuthorFromStructure(dir, libraryRoot));
-        }
-        book.setNarrator(firstTag(firstTags, "composer", "narrator", "description"));
-        book.setSeries(firstTag(firstTags, "series", "show"));
-        book.setSeriesPart(parsePart(firstTag(firstTags, "series-part", "part")));
-        // 标签无系列时，从分组目录结构推断：库根/系列/带分卷标记的书目录
-        // （如 剑来/剑来第一季 → series=剑来, seriesPart=1）
-        if ((book.getSeries() == null || book.getSeries().isBlank())) {
-            Path parent = dir.getParent();
-            if (parent != null && !parent.equals(libraryRoot)
-                    && !parentHasAudio(parent) && Files.isDirectory(parent)) {
-                Integer part = AudiobookOrganizeService.seasonPartOf(dir.getFileName().toString());
-                if (part != null) {
-                    book.setSeries(parent.getFileName().toString());
-                    book.setSeriesPart(part);
+                double duration = probe.get("duration") instanceof Number n ? n.doubleValue() : 0;
+                tracks.add(AudiobookTrack.builder()
+                        .trackIndex(i)
+                        .title(trackTitle(tags, file, single))
+                        .filePath(file.toString())
+                        .format(formatOf(file))
+                        .durationSeconds(duration > 0 ? duration : null)
+                        .fileSize(fileSizeOf(file))
+                        .build());
+            }
+
+            // 书级元数据：标签优先，目录名兜底（Author/Title 结构用父目录补作者）
+            Map<String, String> firstTags = audioFiles.isEmpty() ? Map.of()
+                    : tagsByFile.get(audioFiles.get(0).toString());
+            book.setTitle(firstTag(firstTags, "album", "title"));
+            if (book.getTitle() == null || book.getTitle().isBlank()) {
+                book.setTitle(dir.getFileName().toString());
+            }
+            book.setAuthor(firstTag(firstTags, "artist", "album_artist"));
+            if (book.getAuthor() == null || book.getAuthor().isBlank()) {
+                book.setAuthor(inferAuthorFromStructure(dir, libraryRoot));
+            }
+            book.setNarrator(firstTag(firstTags, "composer", "narrator", "description"));
+            book.setSeries(firstTag(firstTags, "series", "show"));
+            book.setSeriesPart(parsePart(firstTag(firstTags, "series-part", "part")));
+            // 标签无系列时，从分组目录结构推断：库根/系列/带分卷标记的书目录
+            // （如 剑来/剑来第一季 → series=剑来, seriesPart=1）
+            if ((book.getSeries() == null || book.getSeries().isBlank())) {
+                Path parent = dir.getParent();
+                if (parent != null && !parent.equals(libraryRoot)
+                        && !parentHasAudio(parent) && Files.isDirectory(parent)) {
+                    Integer part = AudiobookOrganizeService.seasonPartOf(dir.getFileName().toString());
+                    if (part != null) {
+                        book.setSeries(parent.getFileName().toString());
+                        book.setSeriesPart(part);
+                    }
                 }
             }
+            book.setTotalDurationSeconds(tracks.stream()
+                    .map(AudiobookTrack::getDurationSeconds)
+                    .filter(Objects::nonNull)
+                    .mapToDouble(Double::doubleValue).sum());
+            book.setTotalFileSize(tracks.stream()
+                    .map(AudiobookTrack::getFileSize)
+                    .filter(Objects::nonNull)
+                    .mapToLong(Long::longValue).sum());
+            book.setTrackCount(tracks.size());
         }
-        book.setTotalDurationSeconds(tracks.stream()
-                .map(AudiobookTrack::getDurationSeconds)
-                .filter(Objects::nonNull)
-                .mapToDouble(Double::doubleValue).sum());
-        book.setTotalFileSize(tracks.stream()
-                .map(AudiobookTrack::getFileSize)
-                .filter(Objects::nonNull)
-                .mapToLong(Long::longValue).sum());
-        book.setTrackCount(tracks.size());
 
         Audiobook saved = bookRepository.save(book);
 
-        // 重建音轨（路径为唯一键，简单替换）
-        trackRepository.deleteByAudiobook_Id(saved.getId());
-        tracks.forEach(t -> t.setAudiobook(saved));
-        trackRepository.saveAll(tracks);
+        if (!unchanged) {
+            // 重建音轨（路径为唯一键，简单替换）
+            trackRepository.deleteByAudiobook_Id(saved.getId());
+            tracks.forEach(t -> t.setAudiobook(saved));
+            trackRepository.saveAll(tracks);
 
-        // 章节：SINGLE 且容器支持时解析内嵌章节；MULTI 的章节即音轨，不入表
-        chapterRepository.deleteByAudiobook_Id(saved.getId());
-        if (single && CHAPTER_CAPABLE.contains(formatOf(audioFiles.get(0)))) {
-            List<Map<String, Object>> chapters = probeService.probeChapters(audioFiles.get(0).toString());
-            if (!chapters.isEmpty()) {
-                List<AudiobookChapter> rows = new ArrayList<>();
-                for (int i = 0; i < chapters.size(); i++) {
-                    Map<String, Object> ch = chapters.get(i);
-                    rows.add(AudiobookChapter.builder()
-                            .audiobook(saved)
-                            .chapterIndex(i)
-                            .title(ch.get("title") instanceof String s && !s.isBlank() ? s : "Chapter " + (i + 1))
-                            .startSeconds(ch.get("start") instanceof Number n ? n.doubleValue() : 0d)
-                            .endSeconds(ch.get("end") instanceof Number n ? n.doubleValue() : 0d)
-                            .build());
+            // 章节：SINGLE 且容器支持时解析内嵌章节；MULTI 的章节即音轨，不入表
+            chapterRepository.deleteByAudiobook_Id(saved.getId());
+            if (single && CHAPTER_CAPABLE.contains(formatOf(audioFiles.get(0)))) {
+                List<Map<String, Object>> chapters = probeService.probeChapters(audioFiles.get(0).toString());
+                if (!chapters.isEmpty()) {
+                    List<AudiobookChapter> rows = new ArrayList<>();
+                    for (int i = 0; i < chapters.size(); i++) {
+                        Map<String, Object> ch = chapters.get(i);
+                        rows.add(AudiobookChapter.builder()
+                                .audiobook(saved)
+                                .chapterIndex(i)
+                                .title(ch.get("title") instanceof String s && !s.isBlank() ? s : "Chapter " + (i + 1))
+                                .startSeconds(ch.get("start") instanceof Number n ? n.doubleValue() : 0d)
+                                .endSeconds(ch.get("end") instanceof Number n ? n.doubleValue() : 0d)
+                                .build());
+                    }
+                    chapterRepository.saveAll(rows);
                 }
-                chapterRepository.saveAll(rows);
             }
         }
 
         ensureCover(saved, audioFiles.isEmpty() ? null : audioFiles.get(0));
         return isNew;
+    }
+
+    /** 音轨集合与磁盘文件一致（数量、顺序路径、大小、已有时长）时视为未变化，可跳过 ffprobe 与重建。 */
+    private static boolean tracksUnchanged(List<AudiobookTrack> existing, List<Path> audioFiles) {
+        if (existing.size() != audioFiles.size()) return false;
+        for (int i = 0; i < audioFiles.size(); i++) {
+            AudiobookTrack t = existing.get(i);
+            Path file = audioFiles.get(i);
+            Integer idx = t.getTrackIndex();
+            if (idx == null || idx != i) return false;
+            if (!file.toString().equals(t.getFilePath())) return false;
+            Long size = fileSizeOf(file);
+            if (size == null || !size.equals(t.getFileSize())) return false;
+            if (t.getDurationSeconds() == null || t.getDurationSeconds() <= 0) return false;
+        }
+        return true;
     }
 
     /**
@@ -231,6 +262,7 @@ public class AudiobookScanService {
                 continue;
             }
             log.info("[AudiobookScan] Removing missing book: {}", book.getBookPath());
+            progressRepository.deleteByAudiobook_Id(book.getId());
             trackRepository.deleteByAudiobook_Id(book.getId());
             chapterRepository.deleteByAudiobook_Id(book.getId());
             bookRepository.delete(book);
@@ -252,8 +284,11 @@ public class AudiobookScanService {
         }
     }
 
-    /** 封面：目录 cover.jpg/folder.jpg 优先，否则从首个音轨提取内嵌图存为 cover.jpg。 */
+    /** 封面：已有封面记录直接复用；否则目录 cover.jpg/folder.jpg 优先，再从首个音轨提取内嵌图。 */
     private void ensureCover(Audiobook book, Path firstAudio) {
+        if (book.getCoverArtPath() != null && Files.exists(Paths.get(book.getCoverArtPath()))) {
+            return;
+        }
         Path dir = Paths.get(book.getBookPath());
         for (String name : COVER_NAMES) {
             Path candidate = dir.resolve(name);

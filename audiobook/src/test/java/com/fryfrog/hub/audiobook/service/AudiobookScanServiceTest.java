@@ -3,6 +3,7 @@ package com.fryfrog.hub.audiobook.service;
 import com.fryfrog.hub.audiobook.model.Audiobook;
 import com.fryfrog.hub.audiobook.model.AudiobookTrack;
 import com.fryfrog.hub.audiobook.repository.AudiobookChapterRepository;
+import com.fryfrog.hub.audiobook.repository.AudiobookProgressRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookTrackRepository;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
@@ -28,6 +29,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -42,6 +44,8 @@ class AudiobookScanServiceTest {
     private AudiobookTrackRepository trackRepository;
     @Mock
     private AudiobookChapterRepository chapterRepository;
+    @Mock
+    private AudiobookProgressRepository progressRepository;
     @Mock
     private MediaProbeService probeService;
     @Mock
@@ -163,6 +167,34 @@ class AudiobookScanServiceTest {
     }
 
     @Test
+    void unchangedLibrarySkipsReprobeAndKeepsTrackRows() throws IOException {
+        Path bookDir = Files.createDirectories(tempDir.resolve("三体"));
+        Path audio = bookDir.resolve("01.mp3");
+        touch(audio);
+        probeReturns("01.mp3", "三体", "刘慈欣", 100);
+
+        scanService.scanAndSave(tempDir.toString(), 7L);
+
+        // 模拟第二次扫描：书已存在，且音轨记录与磁盘一致（路径/大小/时长均未变）
+        Audiobook existing = Audiobook.builder()
+                .title("三体").bookPath(bookDir.toString()).libraryId(7L).build();
+        existing.setId(1L);
+        when(bookRepository.findByBookPath(bookDir.toString())).thenReturn(java.util.Optional.of(existing));
+        AudiobookTrack track = AudiobookTrack.builder()
+                .trackIndex(0).title("01").filePath(audio.toString())
+                .format("mp3").durationSeconds(100d).fileSize(Files.size(audio)).build();
+        when(trackRepository.findByAudiobook_IdOrderByTrackIndexAsc(1L)).thenReturn(List.of(track));
+
+        clearInvocations(probeService, trackRepository);
+        scanService.scanAndSave(tempDir.toString(), 7L);
+
+        // 未变化：不重复 ffprobe，也不删除重建音轨（trackId 保持稳定，已签发流 URL 不失效）
+        verify(probeService, never()).probeAudioInfo(anyString());
+        verify(trackRepository, never()).deleteByAudiobook_Id(anyLong());
+        verify(trackRepository, never()).saveAll(any());
+    }
+
+    @Test
     void missingBookDirectoryIsCleanedUp() throws IOException {
         Path bookDir = Files.createDirectories(tempDir.resolve("三体"));
         touch(bookDir.resolve("01.mp3"));
@@ -175,6 +207,7 @@ class AudiobookScanServiceTest {
 
         scanService.scanAndSave(tempDir.toString(), 7L);
 
+        verify(progressRepository).deleteByAudiobook_Id(99L);
         verify(trackRepository).deleteByAudiobook_Id(99L);
         verify(chapterRepository).deleteByAudiobook_Id(99L);
         verify(bookRepository).delete(ghost);

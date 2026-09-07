@@ -35,8 +35,10 @@ public class UserInitializer {
         if (generateRandom) {
             String randomPassword = UUID.randomUUID().toString().replace("-", "").substring(0, 12) + "@Aa1";
             userService.createInitialAdmin(randomPassword);
-            log.warn("未配置 AUTH_PASSWORD，已创建初始管理员账号 admin，随机密码: {}", randomPassword);
-            log.warn("请立即登录并修改密码");
+            // 密码只输出到控制台（stdout/docker logs），不进日志文件：
+            // 日志文件可通过 /api/v1/logs/{file} 导出外发，明文密码不能落盘
+            System.out.println("未配置 AUTH_PASSWORD，已创建初始管理员账号 admin，随机密码: " + randomPassword);
+            log.warn("未配置 AUTH_PASSWORD，已创建初始管理员账号 admin，随机密码已输出到控制台（stdout），请立即登录并修改密码");
         } else {
             if (configured.length() < 8 || WEAK_PASSWORDS.contains(configured)) {
                 log.warn("AUTH_PASSWORD 强度过弱，建议登录后立即修改 admin 密码");

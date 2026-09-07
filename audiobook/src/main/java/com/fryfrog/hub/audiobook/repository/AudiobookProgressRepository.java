@@ -16,4 +16,6 @@ public interface AudiobookProgressRepository extends JpaRepository<AudiobookProg
     List<AudiobookProgress> findByUserIdAndAudiobook_IdIn(Long userId, Collection<Long> audiobookIds);
 
     void deleteByUserIdAndAudiobook_Id(Long userId, Long audiobookId);
+
+    void deleteByAudiobook_Id(Long audiobookId);
 }
