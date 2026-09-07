@@ -65,6 +65,9 @@ public class VideoImageController {
     /** 正在懒生成截帧的视频 ID（防止并发请求对同一视频重复起 FFmpeg） */
     private static final Set<Long> FRAME_GENERATING = ConcurrentHashMap.newKeySet();
 
+    /** 演员/海报等静态图片浏览器缓存：URL 内容不变，7 天 + immutable */
+    private static final String IMAGE_CACHE_CONTROL = "public, max-age=604800, immutable";
+
     @GetMapping("/actor/{actorId:\\d+}/image")
     @Operation(summary = "获取演员头像", description = "返回指定演员的头像图片")
     public ResponseEntity<Resource> getActorImage(
@@ -73,16 +76,17 @@ public class VideoImageController {
         if (actor == null) {
             return ResponseEntity.notFound().build();
         }
-        // 优先本地文件
+        // 优先本地文件（历史刮削遗留，新刮削不再落盘）
         if (actor.getImagePath() != null) {
             Path imagePath = Paths.get(actor.getImagePath());
             if (Files.exists(imagePath)) {
                 return ResponseEntity.ok()
+                        .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, IMAGE_CACHE_CONTROL)
                         .contentType(MediaType.IMAGE_JPEG)
                         .body(new FileSystemResource(imagePath.toFile()));
             }
         }
-        // 兜底：本地缺失时代理 TMDB 远程图（actor.imageUrl 为 w185 真实地址，@JsonGetter 仅影响序列化）
+        // 纯代理：本地缺失时直接转发 TMDB 远程图，缓存交给浏览器
         String remoteUrl = actor.getImageUrl();
         if (remoteUrl != null && !remoteUrl.isBlank()) {
             try {
@@ -94,19 +98,8 @@ public class VideoImageController {
                 try (var in = conn.getInputStream()) {
                     byte[] bytes = in.readAllBytes();
                     if (bytes.length > 0) {
-                        // 回填本地缓存，下次直接命中文件
-                        if (actor.getImagePath() != null) {
-                            try {
-                                Path p = Paths.get(actor.getImagePath());
-                                if (!Files.exists(p)) {
-                                    if (p.getParent() != null) Files.createDirectories(p.getParent());
-                                    Files.write(p, bytes);
-                                }
-                            } catch (Exception e) {
-                                log.debug("Failed to cache actor image {}: {}", actorId, e.getMessage());
-                            }
-                        }
                         return ResponseEntity.ok()
+                                .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, IMAGE_CACHE_CONTROL)
                                 .contentType(MediaType.IMAGE_JPEG)
                                 .body(new ByteArrayResource(bytes));
                     }

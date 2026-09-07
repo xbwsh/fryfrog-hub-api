@@ -11,10 +11,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.Resource;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
@@ -29,7 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 视频资产服务：负责 NFO 生成、封面下载、演员图片下载。
+ * 视频资产服务：负责 NFO 生成、封面下载、演员信息保存。
  * 所有 I/O 操作在写锁外执行，只在 DB 更新时短暂持有写锁。
  */
 @Service
@@ -547,17 +543,13 @@ public class VideoAssetService {
     }
 
     /**
-     * 保存演员信息并下载头像
+     * 保存演员信息（不下载头像：头像走 TMDB 纯代理，浏览器缓存）
      */
     public void saveActors(Video video, String mediaType, Long tmdbId, Object preloadedDetail) {
         try {
             // 清除旧演员
             actorRepository.deleteAll(actorRepository.findByVideo_Id(video.getId()));
             actorRepository.flush();
-
-            Path actorsDir = getActorsDir(video, mediaType);
-            if (actorsDir == null) return;
-            Files.createDirectories(actorsDir);
 
             // 获取演员列表
             List<Object> members = new ArrayList<>();
@@ -584,9 +576,9 @@ public class VideoAssetService {
             for (Object member : members) {
                 try {
                     if (member instanceof TmdbMovieDetail.CastMember cm) {
-                        count = saveOneActor(video, actorsDir, count, cm.getName(), cm.getCharacter(), cm.getId(), cm.getProfilePath());
+                        count = saveOneActor(video, count, cm.getName(), cm.getCharacter(), cm.getId(), cm.getProfilePath());
                     } else if (member instanceof TmdbTvDetail.CastMember cm) {
-                        count = saveOneActor(video, actorsDir, count, cm.getName(), cm.getCharacter(), cm.getId(), cm.getProfilePath());
+                        count = saveOneActor(video, count, cm.getName(), cm.getCharacter(), cm.getId(), cm.getProfilePath());
                     }
                 } catch (Exception e) {
                     log.warn("[Asset] Failed to save actor for video id={}: {}", video.getId(), e.getMessage());
@@ -598,8 +590,8 @@ public class VideoAssetService {
         }
     }
 
-    private int saveOneActor(Video video, Path actorsDir, int count,
-                              String name, String character, Long sourceId, String profilePath) throws IOException {
+    private int saveOneActor(Video video, int count,
+                              String name, String character, Long sourceId, String profilePath) {
         if (name == null) return count;
 
         VideoActor actor = new VideoActor();
@@ -608,66 +600,13 @@ public class VideoAssetService {
         actor.setCharacter(character);
         actor.setSourceActorId(sourceId);
 
-        String imageUrl = null;
+        // 只记 TMDB profile_path 的 w185 地址，头像由 /actor/{id}/image 纯代理提供
         if (profilePath != null && !profilePath.isBlank()) {
-            imageUrl = "https://image.tmdb.org/t/p/w185" + profilePath;
-            actor.setImageUrl(imageUrl);
-        }
-
-        String safeName = name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-        if (!safeName.isBlank() && imageUrl != null) {
-            Path actorPath = actorsDir.resolve(safeName + ".jpg");
-            if (!Files.exists(actorPath)) {
-                try {
-                    HttpHeaders headers = new HttpHeaders();
-                    headers.set("User-Agent", "FryfrogHub/0.1.0");
-                    HttpEntity<Void> req = new HttpEntity<>(headers);
-                    ResponseEntity<byte[]> resp = scraperRestTemplate.exchange(
-                            imageUrl, HttpMethod.GET, req, byte[].class);
-                    if (resp.getStatusCode().is2xxSuccessful() && resp.getBody() != null) {
-                        Files.write(actorPath, resp.getBody());
-                    }
-                } catch (Exception e) {
-                    log.warn("[Asset] Failed to download actor image '{}': {}", safeName, e.getMessage());
-                }
-            }
-            actor.setImagePath(actorPath.toAbsolutePath().toString());
+            actor.setImageUrl("https://image.tmdb.org/t/p/w185" + profilePath);
         }
 
         actorRepository.save(actor);
         return count + 1;
-    }
-
-    private Path getActorsDir(Video video, String mediaType) {
-        Path videoDir = Paths.get(video.getFilePath()).getParent();
-        if (videoDir == null) return null;
-
-        if ("tv".equalsIgnoreCase(mediaType)) {
-            // 电视剧：演员图片存储到系列根目录（剧名目录），而不是每季目录
-            Path seriesDir = findSeriesDir(videoDir);
-            if (seriesDir != null) {
-                return seriesDir.resolve("actors");
-            }
-        }
-        return videoDir.resolve("actors");
-    }
-
-    /**
-     * 查找系列根目录（剧名目录）
-     * 从视频目录向上查找，直到找到包含季目录的父目录
-     */
-    private Path findSeriesDir(Path episodeOrVideoDir) {
-        Path current = episodeOrVideoDir;
-        while (current != null) {
-            if (current.getFileName() == null) break;
-            String name = current.getFileName().toString();
-            // 找到季目录，返回其父目录作为系列目录
-            if (java.util.regex.Pattern.matches("第 \\d+ 季", name)) {
-                return current.getParent();
-            }
-            current = current.getParent();
-        }
-        return null;
     }
 
     /**

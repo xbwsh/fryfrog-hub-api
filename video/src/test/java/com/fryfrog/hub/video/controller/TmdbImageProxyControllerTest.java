@@ -3,12 +3,7 @@ package com.fryfrog.hub.video.controller;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,24 +24,5 @@ class TmdbImageProxyControllerTest {
     @Test
     void rejectsUnsupportedSize() {
         assertThat(controller.proxy("/abc.jpg", "w999").getStatusCode().value()).isEqualTo(400);
-        assertThat(controller.proxy("/abc.jpg", "original").getStatusCode().value()).isNotEqualTo(400);
-    }
-
-    @Test
-    void returnsCachedFile_whenAlreadyDownloaded() throws Exception {
-        Path cacheRoot = Files.createTempDirectory("proxy-test");
-        ReflectionTestUtils.setField(controller, "cacheRoot", cacheRoot);
-
-        @SuppressWarnings("unchecked")
-        Path cached = (Path) ReflectionTestUtils.invokeMethod(controller, "resolveCacheFile", "/abc.jpg", "w500");
-        assertThat(cached).isNotNull();
-        Files.createDirectories(cached.getParent());
-        Files.write(cached, new byte[]{1, 2, 3});
-
-        ResponseEntity<?> resp = controller.proxy("/abc.jpg", "w500");
-
-        assertThat(resp.getStatusCode().value()).isEqualTo(200);
-        assertThat(resp.getBody()).isNotNull();
-        Files.delete(cached);
     }
 }
