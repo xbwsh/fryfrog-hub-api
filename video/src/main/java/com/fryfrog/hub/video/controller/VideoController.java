@@ -370,4 +370,13 @@ public class VideoController {
         watchProgressService.deleteProgress(userId, id);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
+
+    @PostMapping("/organize")
+    @Operation(summary = "手动整理视频文件", description = "重命名并移动视频到元数据目录（未绑定 TMDB 的视频整理到 未识别/{标题}/，与封面同文件夹），随带移动字幕/NFO/封面并清理空目录。不传 path 时整理全部视频")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> organize(
+            @Parameter(description = "限定整理的路径前缀，为空时整理全部") @RequestParam(required = false) String path,
+            HttpServletRequest request) {
+        support.requireAdmin(request);
+        return ResponseEntity.ok(ApiResponse.success("整理完成", service.organizeVideos(path)));
+    }
 }

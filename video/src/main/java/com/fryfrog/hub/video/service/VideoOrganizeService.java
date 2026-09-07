@@ -56,8 +56,12 @@ public class VideoOrganizeService {
 
         for (Video video : sorted) {
             try {
-                // 未识别目录中尚未绑定的视频不整理（保留原文件，等待手动绑定）
-                if (nfoService.isInUnscrapedDir(video) && video.getTmdbId() == null) {
+                // 未绑定（无 tmdbId）的视频整理到 未识别/{标题}/（与截帧封面同文件夹，且不参与自动刮削）
+                boolean unbound = video.getTmdbId() == null;
+                Path metadataDir = unbound
+                        ? nfoService.getUnscrapedTargetDir(video)
+                        : nfoService.getMetadataDir(video);
+                if (metadataDir == null) {
                     skipped++;
                     continue;
                 }
@@ -66,7 +70,6 @@ public class VideoOrganizeService {
                 renameVideoFile(video);
 
                 Path oldDir = Paths.get(video.getFilePath()).getParent();
-                Path metadataDir = nfoService.getMetadataDir(video);
 
                 if (!oldDir.equals(metadataDir)) {
                     // Phase 1: 文件操作（无锁）
@@ -99,6 +102,11 @@ public class VideoOrganizeService {
 
                     // 移动外挂字幕文件
                     moveAssociatedSubtitles(oldDir, metadataDir, baseName);
+
+                    // 截帧封面跟随移动（懒生成封面与视频同目录）；旧版截帧文件直接清理
+                    moveAssociatedFile(oldDir, metadataDir, baseName + "-frame-v3.jpg");
+                    deleteIfExists(oldDir.resolve(baseName + "-frame.jpg"));
+                    deleteIfExists(oldDir.resolve(baseName + "-frame-v2.jpg"));
 
                     // Phase 2: DB 更新
                     video.setFilePath(newVideoPath.toString());
@@ -199,6 +207,7 @@ public class VideoOrganizeService {
             renameAssociatedFile(parentDir, oldBaseName + ".nfo", newFileName);
             renamePosterFanartByPattern(parentDir, oldBaseName, newFileName);
             renameAssociatedSubtitles(parentDir, oldBaseName, newFileName);
+            renameFrameCaptures(parentDir, oldBaseName, newFileName);
 
             video.setFileName(newFileName);
             video.setFilePath(newPath.toString());
@@ -244,6 +253,7 @@ public class VideoOrganizeService {
             // 移动外挂字幕
             String baseName = nfoService.getBaseName(video.getFileName());
             moveAssociatedSubtitles(videoPath.getParent(), targetPath.getParent(), baseName);
+            moveAssociatedFile(videoPath.getParent(), targetPath.getParent(), baseName + "-frame-v3.jpg");
 
             video.setFilePath(targetPath.toString());
             repository.save(video);
@@ -287,13 +297,14 @@ public class VideoOrganizeService {
 
             Files.move(videoPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
 
-            // 移动关联文件（字幕、NFO、本地封面）
+            // 移动关联文件（字幕、NFO、本地封面、截帧封面）
             Path oldDir = videoPath.getParent();
             String baseName = nfoService.getBaseName(video.getFileName());
             moveAssociatedSubtitles(oldDir, unscrapedDir, baseName);
             moveAssociatedFile(oldDir, unscrapedDir, baseName + ".nfo");
             moveAssociatedFile(oldDir, unscrapedDir, baseName + "-poster.jpg");
             moveAssociatedFile(oldDir, unscrapedDir, baseName + "-fanart.jpg");
+            moveAssociatedFile(oldDir, unscrapedDir, baseName + "-frame-v3.jpg");
 
             video.setFilePath(targetPath.toString());
             repository.save(video);
@@ -420,8 +431,7 @@ public class VideoOrganizeService {
         }
     }
 
-    private void renamePosterFanartByPattern(Path dir, String oldBaseName, String newFileName) {
-        try {
+    private void renamePosterFanartByPattern(Path dir, String oldBaseName, String newFileName) {        try {
             String newBaseName = nfoService.getBaseName(newFileName);
             try (var stream = Files.list(dir)) {
                 stream.filter(Files::isRegularFile)
@@ -446,6 +456,23 @@ public class VideoOrganizeService {
             }
         } catch (Exception e) {
             log.warn("[Organize] Failed to list directory for poster/fanart: {}", e.getMessage());
+        }
+    }
+
+    /** 重命名截帧封面（{base}-frame-v3.jpg）；旧版 v1/v2 截帧直接删除 */
+    private void renameFrameCaptures(Path dir, String oldBaseName, String newFileName) {
+        try {
+            String newBaseName = nfoService.getBaseName(newFileName);
+            Path oldFrame = dir.resolve(oldBaseName + "-frame-v3.jpg");
+            Path newFrame = dir.resolve(newBaseName + "-frame-v3.jpg");
+            if (Files.exists(oldFrame) && !Files.exists(newFrame)) {
+                Files.move(oldFrame, newFrame);
+                log.debug("[Organize] Renamed frame capture: {} -> {}", oldFrame.getFileName(), newFrame.getFileName());
+            }
+            deleteIfExists(dir.resolve(oldBaseName + "-frame.jpg"));
+            deleteIfExists(dir.resolve(oldBaseName + "-frame-v2.jpg"));
+        } catch (Exception e) {
+            log.debug("[Organize] Failed to rename frame captures: {}", e.getMessage());
         }
     }
 

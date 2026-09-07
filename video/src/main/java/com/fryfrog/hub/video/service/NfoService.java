@@ -351,6 +351,16 @@ public class NfoService {
         return metadataDir.getParent(); // 集目录的父目录就是季目录
     }
 
+    /**
+     * 未绑定（无 tmdbId）视频的整理目标目录：{库根}/未识别/{清理后的标题}/。
+     * 视频与截帧封面同文件夹；保持在未识别目录内，避免被自动刮削反复处理。
+     */
+    public Path getUnscrapedTargetDir(Video video) {
+        Path unscrapedDir = getUnscrapedDir(video);
+        if (unscrapedDir == null) return null;
+        return unscrapedDir.resolve(cleanTitle(selectShowName(video)));
+    }
+
     private String selectShowName(Video video) {
         String title = video.getTitle();
         String originalTitle = video.getOriginalTitle();
