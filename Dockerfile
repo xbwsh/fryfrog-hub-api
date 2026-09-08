@@ -7,6 +7,7 @@ COPY media-core/pom.xml media-core/
 COPY video/pom.xml video/
 COPY music/pom.xml music/
 COPY audiobook/pom.xml audiobook/
+COPY ebook/pom.xml ebook/
 COPY app/pom.xml app/
 RUN mvn dependency:go-offline -B
 COPY . .
