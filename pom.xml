@@ -26,6 +26,7 @@
         <module>music</module>
         <module>audiobook</module>
         <module>ebook</module>
+        <module>comic</module>
         <module>app</module>
     </modules>
 
@@ -78,6 +79,11 @@
             <dependency>
                 <groupId>com.fryfrog</groupId>
                 <artifactId>fryfrog-hub-ebook</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fryfrog</groupId>
+                <artifactId>fryfrog-hub-comic</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

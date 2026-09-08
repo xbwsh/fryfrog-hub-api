@@ -40,9 +40,10 @@ public class MediaLibraryController {
     private final MusicScanService musicScanService;
     private final AudiobookScanService audiobookScanService;
     private final com.fryfrog.hub.ebook.service.EbookScanService ebookScanService;
+    private final com.fryfrog.hub.comic.service.ComicScanService comicScanService;
     private final UserService userService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, AudiobookScanService audiobookScanService, com.fryfrog.hub.ebook.service.EbookScanService ebookScanService, UserService userService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, AudiobookScanService audiobookScanService, com.fryfrog.hub.ebook.service.EbookScanService ebookScanService, com.fryfrog.hub.comic.service.ComicScanService comicScanService, UserService userService) {
         this.service = service;
         this.videoService = videoService;
         this.progressService = progressService;
@@ -51,6 +52,7 @@ public class MediaLibraryController {
         this.musicScanService = musicScanService;
         this.audiobookScanService = audiobookScanService;
         this.ebookScanService = ebookScanService;
+        this.comicScanService = comicScanService;
         this.userService = userService;
     }
 
@@ -227,6 +229,9 @@ public class MediaLibraryController {
             } else if (library.isEbookType()) {
                 // 电子书：一文件一书 + EPUB 元数据解析
                 ebookScanService.scanAndSave(library.getPath(), library.getId());
+            } else if (library.isComicType()) {
+                // 漫画：目录聚合为系列 + 卷页图索引
+                comicScanService.scanAndSave(library.getPath(), library.getId());
             } else {
                 scanResult.put(key, "skip: unsupported type " + library.getType());
                 return;

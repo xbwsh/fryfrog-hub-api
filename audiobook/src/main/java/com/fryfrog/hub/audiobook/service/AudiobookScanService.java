@@ -7,7 +7,7 @@ import com.fryfrog.hub.audiobook.repository.AudiobookChapterRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookProgressRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookTrackRepository;
-import com.fryfrog.hub.audiobook.util.NaturalOrderComparator;
+import com.fryfrog.hub.common.util.NaturalOrderComparator;
 import com.fryfrog.hub.common.service.ScrapeProgressService;
 import com.fryfrog.hub.mediacore.service.FFmpegRuntime;
 import com.fryfrog.hub.mediacore.service.MediaProbeService;

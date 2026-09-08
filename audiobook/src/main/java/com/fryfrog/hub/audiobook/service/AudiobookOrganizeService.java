@@ -4,7 +4,7 @@ import com.fryfrog.hub.audiobook.model.Audiobook;
 import com.fryfrog.hub.audiobook.model.AudiobookTrack;
 import com.fryfrog.hub.audiobook.repository.AudiobookRepository;
 import com.fryfrog.hub.audiobook.repository.AudiobookTrackRepository;
-import com.fryfrog.hub.audiobook.util.NaturalOrderComparator;
+import com.fryfrog.hub.common.util.NaturalOrderComparator;
 import com.fryfrog.hub.common.model.MediaLibrary;
 import com.fryfrog.hub.common.service.MediaLibraryService;
 import lombok.RequiredArgsConstructor;

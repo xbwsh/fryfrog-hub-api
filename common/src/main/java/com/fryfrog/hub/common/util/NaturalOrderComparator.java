@@ -1,4 +1,4 @@
-package com.fryfrog.hub.audiobook.util;
+package com.fryfrog.hub.common.util;
 
 import java.util.Comparator;
 
