@@ -116,7 +116,8 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.matches(".*/actor/.*/image$")
                 || path.matches(".*/artist/image$")
                 || path.matches(".*/character/.*/image$")
-                || path.matches(".*/pages/\\d+$");
+                || path.matches(".*/pages/\\d+$")
+                || path.matches(".*/file$");
     }
 
     private boolean validateMediaSignature(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -166,6 +167,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.matches(".*/subtitles/.*")
                 || path.matches(".*/subtitle/vtt")
                 || path.matches(".*/lyrics")
+                || path.matches(".*/file")
                 || path.matches(".*/tmdb-image-proxy");
     }
 }

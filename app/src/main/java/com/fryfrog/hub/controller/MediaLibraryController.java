@@ -39,9 +39,10 @@ public class MediaLibraryController {
     private final MediaLibraryBrowseService browseService;
     private final MusicScanService musicScanService;
     private final AudiobookScanService audiobookScanService;
+    private final com.fryfrog.hub.ebook.service.EbookScanService ebookScanService;
     private final UserService userService;
 
-    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, AudiobookScanService audiobookScanService, UserService userService) {
+    public MediaLibraryController(MediaLibraryService service, VideoService videoService, ScrapeProgressService progressService, VideoPipelineService pipelineService, MediaLibraryBrowseService browseService, MusicScanService musicScanService, AudiobookScanService audiobookScanService, com.fryfrog.hub.ebook.service.EbookScanService ebookScanService, UserService userService) {
         this.service = service;
         this.videoService = videoService;
         this.progressService = progressService;
@@ -49,6 +50,7 @@ public class MediaLibraryController {
         this.browseService = browseService;
         this.musicScanService = musicScanService;
         this.audiobookScanService = audiobookScanService;
+        this.ebookScanService = ebookScanService;
         this.userService = userService;
     }
 
@@ -222,6 +224,9 @@ public class MediaLibraryController {
             } else if (library.isAudiobookType()) {
                 // 有声书：目录聚合 + ffprobe 章节/标签建库
                 audiobookScanService.scanAndSave(library.getPath(), library.getId());
+            } else if (library.isEbookType()) {
+                // 电子书：一文件一书 + EPUB 元数据解析
+                ebookScanService.scanAndSave(library.getPath(), library.getId());
             } else {
                 scanResult.put(key, "skip: unsupported type " + library.getType());
                 return;

@@ -10,18 +10,14 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>fryfrog-hub-audiobook</artifactId>
-    <name>fryfrog-hub-audiobook</name>
-    <description>Audiobook module - scanning, streaming and progress tracking</description>
+    <artifactId>fryfrog-hub-ebook</artifactId>
+    <name>fryfrog-hub-ebook</name>
+    <description>Ebook module - scanning, scraping and reading progress</description>
 
     <dependencies>
         <dependency>
             <groupId>com.fryfrog</groupId>
             <artifactId>fryfrog-hub-common</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fryfrog</groupId>
-            <artifactId>fryfrog-hub-media-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

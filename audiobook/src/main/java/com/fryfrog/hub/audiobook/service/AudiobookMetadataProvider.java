@@ -10,7 +10,7 @@ import java.util.List;
  */
 public interface AudiobookMetadataProvider {
 
-    /** 数据源标识（小写），如 itunes */
+    /** 数据源标识（小写），如 bangumi */
     String source();
 
     /** 显示名 */
