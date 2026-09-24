@@ -275,20 +275,81 @@ def _parse_audiobooker_book(book) -> dict | None:
 
 
 def _search_audiobooker(keyword: str) -> list[dict]:
-    try:
-        from audiobooker import search as ab_search
+    out = _search_audiobooker_lib(keyword)
+    return out
 
-        out = []
-        for book in ab_search(keyword, max_per_source=5, timeout=12.0, deduplicate=True):
-            parsed = _parse_audiobooker_book(book)
-            if parsed:
-                out.append(parsed)
-            if len(out) >= 20:
-                break
+
+def _search_audiobooker_lib(keyword: str) -> list[dict]:
+    """优先 LibriVox JSON（走 make_client 代理）；再尝试 audiobooker 聚合。"""
+    out = _search_librivox(keyword)
+    if out:
         return out
+    try:
+        import os
+
+        from fryfrog.config import get_settings
+
+        proxy = get_settings().scraper_proxy_url
+        old_env = {}
+        if proxy:
+            for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                old_env[k] = os.environ.get(k)
+                os.environ[k] = proxy
+        try:
+            from audiobooker import search as ab_search
+
+            for book in ab_search(keyword, max_per_source=5, timeout=12.0, deduplicate=True):
+                parsed = _parse_audiobooker_book(book)
+                if parsed:
+                    out.append(parsed)
+                if len(out) >= 20:
+                    break
+        finally:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
     except Exception:
         logger.exception("Audiobooker search failed")
+    return out
+
+
+def _search_librivox(keyword: str) -> list[dict]:
+    try:
+        with make_client(timeout=15.0) as client:
+            resp = client.get(
+                "https://librivox.org/api/feed/audiobooks/",
+                params={"title": keyword, "limit": 20, "format": "json"},
+            )
+            resp.raise_for_status()
+            books = resp.json().get("books") or []
+    except Exception:
+        logger.exception("LibriVox search failed")
         return []
+    out = []
+    for b in books:
+        authors = [
+            " ".join(x for x in (a.get("first_name") or "", a.get("last_name") or "") if x).strip()
+            for a in (b.get("authors") or [])
+        ]
+        authors = [a for a in authors if a]
+        year = b.get("copyright_year")
+        item = _blank(SOURCE_AUDIOBOOKER, str(b.get("id") or ""))
+        item.update(
+            {
+                "title": (b.get("title") or "").strip() or None,
+                "author": "、".join(authors) if authors else None,
+                "overview": (b.get("description") or "").strip() or None,
+                "year": int(year) if year and str(year).isdigit() else None,
+                "sourceDetail": "LibriVox",
+                "runtimeMinutes": int((b.get("totaltimesecs") or 0) / 60) or None,
+                "streamUrl": b.get("url_zip_file") or b.get("url_rss"),
+            }
+        )
+        if item["title"]:
+            out.append(item)
+    return out
 
 
 def _fetch_audiobooker(source_id: str) -> dict | None:
