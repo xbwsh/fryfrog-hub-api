@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 SOURCE_BANGUMI = "bangumi"
 SOURCE_OPENLIB = "openlibrary"
 SOURCE_GOOGLE = "googlebooks"
-SOURCES = (SOURCE_BANGUMI, SOURCE_OPENLIB, SOURCE_GOOGLE)
+SOURCE_AUDIOBOOKER = "audiobooker"
+SOURCES = (SOURCE_BANGUMI, SOURCE_OPENLIB, SOURCE_GOOGLE, SOURCE_AUDIOBOOKER)
 
 
 def list_providers() -> list[dict]:
@@ -25,6 +26,7 @@ def list_providers() -> list[dict]:
         {"source": SOURCE_BANGUMI, "displayName": "Bangumi", "bestFor": "中文/日文有声书、广播剧"},
         {"source": SOURCE_OPENLIB, "displayName": "Open Library", "bestFor": "英文图书元数据"},
         {"source": SOURCE_GOOGLE, "displayName": "Google Books", "bestFor": "全球图书与封面"},
+        {"source": SOURCE_AUDIOBOOKER, "displayName": "Audiobooker", "bestFor": "LibriVox 等公版多源聚合"},
     ]
 
 
@@ -225,6 +227,79 @@ def _fetch_google(source_id: str) -> dict | None:
         return None
 
 
+# -------------------- Audiobooker（LibriVox 等公版聚合） --------------------
+
+
+def _parse_audiobooker_book(book) -> dict | None:
+    title = (getattr(book, "title", "") or "").strip()
+    if not title:
+        return None
+    authors = []
+    for a in getattr(book, "authors", None) or []:
+        name = " ".join(
+            x for x in (getattr(a, "first_name", ""), getattr(a, "last_name", "")) if x
+        ).strip()
+        if name:
+            authors.append(name)
+    narrator = getattr(book, "narrator", None)
+    narrator_name = None
+    if narrator is not None:
+        narrator_name = " ".join(
+            x
+            for x in (getattr(narrator, "first_name", ""), getattr(narrator, "last_name", ""))
+            if x
+        ).strip() or None
+    image = (getattr(book, "image", "") or "").strip() or None
+    description = (getattr(book, "description", "") or "").strip() or None
+    year = getattr(book, "year", 0) or None
+    runtime = getattr(book, "runtime", 0) or None
+    source_name = getattr(book, "source", "") or SOURCE_AUDIOBOOKER
+    streams = list(getattr(book, "streams", None) or [])
+    source_id = streams[0] if streams else f"{source_name}:{title}"
+    item = _blank(SOURCE_AUDIOBOOKER, source_id)
+    item.update(
+        {
+            "title": title,
+            "author": "、".join(authors) if authors else None,
+            "narrator": narrator_name,
+            "overview": description,
+            "coverUrl": image,
+            "year": int(year) if year else None,
+            "rating": None,
+            "sourceDetail": source_name,
+            "runtimeMinutes": int(runtime) if runtime else None,
+            "streamUrl": streams[0] if streams else None,
+        }
+    )
+    return item
+
+
+def _search_audiobooker(keyword: str) -> list[dict]:
+    try:
+        from audiobooker import search as ab_search
+
+        out = []
+        for book in ab_search(keyword, max_per_source=5, timeout=12.0, deduplicate=True):
+            parsed = _parse_audiobooker_book(book)
+            if parsed:
+                out.append(parsed)
+            if len(out) >= 20:
+                break
+        return out
+    except Exception:
+        logger.exception("Audiobooker search failed")
+        return []
+
+
+def _fetch_audiobooker(source_id: str) -> dict | None:
+    # 无详情 API，用 source_id 反查（stream URL 或 title）
+    title = source_id.rsplit(":", 1)[-1] if ":" in source_id and not source_id.startswith("http") else source_id
+    for item in _search_audiobooker(title):
+        if item.get("sourceId") == source_id:
+            return item
+    return None
+
+
 # -------------------- 统一入口 --------------------
 
 
@@ -239,13 +314,15 @@ def search(keyword: str, source: str | None = None) -> list[dict]:
             SOURCE_BANGUMI: _search_bangumi,
             SOURCE_OPENLIB: _search_openlib,
             SOURCE_GOOGLE: _search_google,
+            SOURCE_AUDIOBOOKER: _search_audiobooker,
         }[source](key)
 
-    # 未指定源：并行语义上按源顺序聚合（串行足够，控制请求量）
+    # 未指定源：各源限量聚合
     results: list[dict] = []
-    results.extend(_search_bangumi(key)[:10])
-    results.extend(_search_openlib(key)[:10])
-    results.extend(_search_google(key)[:10])
+    results.extend(_search_bangumi(key)[:8])
+    results.extend(_search_openlib(key)[:8])
+    results.extend(_search_google(key)[:8])
+    results.extend(_search_audiobooker(key)[:8])
     return results
 
 
@@ -256,6 +333,8 @@ def fetch_detail(source: str, source_id: str) -> dict | None:
         return _fetch_openlib(source_id)
     if source == SOURCE_GOOGLE:
         return _fetch_google(source_id)
+    if source == SOURCE_AUDIOBOOKER:
+        return _fetch_audiobooker(source_id)
     raise BadRequestException(f"未知数据源: {source}")
 
 
