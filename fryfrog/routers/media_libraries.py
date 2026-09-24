@@ -121,17 +121,18 @@ def pipeline_progress(library_id: int, db: DbSession, service: MediaLibraryServi
 @router.get("/browse")
 def browse(path: str | None = None, includeFiles: bool = False):
     """目录浏览（新建媒体库选目录用）。默认从 /data 起（Docker 媒体挂载点）。"""
+    fallback = Path("/data") if Path("/data").is_dir() else Path.cwd()
     if path:
-        root = Path(path)
+        try:
+            root = Path(path).expanduser().resolve()
+        except OSError:
+            root = fallback
     else:
-        root = Path("/data") if Path("/data").is_dir() else Path.cwd()
-    # 规范化，防止穿越
-    try:
-        root = root.expanduser().resolve()
-    except OSError:
-        raise HTTPException(status_code=400, detail="Invalid path")
+        root = fallback.resolve()
+
     if not root.exists() or not root.is_dir():
-        raise HTTPException(status_code=400, detail=f"Invalid path: {root}")
+        # 前端可能传了宿主机路径（如 /volume1/...），回退到 /data 避免空白
+        root = fallback.resolve()
 
     entries = []
     try:
