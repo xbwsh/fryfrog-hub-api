@@ -1,15 +1,14 @@
-"""漫画刮削：Bangumi TYPE_BOOK=1。"""
+"""漫画刮削 provider 调度：Bangumi（TYPE_BOOK=1）与 JM（可选，jmcomic 库）。"""
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
-import httpx
 from sqlalchemy.orm import Session
 
 from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
 from fryfrog.models.comic import Comic
+from fryfrog.services import jm_scrape
 from fryfrog.services.bangumi import TYPE_BOOK, BangumiClient
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,10 @@ SOURCE = "bangumi"
 
 
 def list_providers() -> list[dict]:
-    return [{"source": SOURCE, "displayName": "Bangumi"}]
+    providers = [{"source": SOURCE, "displayName": "Bangumi"}]
+    if jm_scrape.is_available():
+        providers.extend(jm_scrape.list_providers())
+    return providers
 
 
 def _parse_subject(node: dict) -> dict | None:
@@ -48,23 +50,32 @@ def _parse_subject(node: dict) -> dict | None:
     }
 
 
-def search(keyword: str, source: str | None = None) -> list[dict]:
-    if not keyword or not keyword.strip():
-        raise BadRequestException("搜索关键词不能为空")
-    if source and source != SOURCE:
-        raise BadRequestException(f"未知数据源: {source}")
+def _bangumi_search(keyword: str) -> list[dict]:
     client = BangumiClient()
     results = []
-    for node in client.search_subjects(keyword.strip(), [TYPE_BOOK]):
+    for node in client.search_subjects(keyword, [TYPE_BOOK]):
         parsed = _parse_subject(node)
         if parsed:
             results.append(parsed)
     return results
 
 
-def fetch_detail(source_id: str) -> dict | None:
-    node = BangumiClient().get_subject(source_id)
-    return _parse_subject(node) if node else None
+def search(keyword: str, source: str | None = None) -> list[dict]:
+    if not keyword or not keyword.strip():
+        raise BadRequestException("搜索关键词不能为空")
+    keyword = keyword.strip()
+    if source == jm_scrape.SOURCE:
+        return jm_scrape.search(keyword)
+    if source and source != SOURCE:
+        raise BadRequestException(f"未知数据源: {source}")
+    results: list[dict] = []
+    if source is None and jm_scrape.is_available():
+        try:
+            results.extend(jm_scrape.search(keyword))
+        except Exception:
+            logger.exception("JM search failed: %s", keyword)
+    results.extend(_bangumi_search(keyword))
+    return results
 
 
 def _download_cover(comic: Comic, cover_url: str) -> None:
@@ -86,13 +97,16 @@ def _download_cover(comic: Comic, cover_url: str) -> None:
         logger.warning("[ComicScrape] Cover download failed: %s", cover_url)
 
 
-def bind(db: Session, comic_id: int, source: str, source_id: str) -> Comic:
-    if source != SOURCE:
-        raise BadRequestException(f"未知数据源: {source}")
+def _bangumi_detail(source_id: str) -> dict | None:
+    node = BangumiClient().get_subject(source_id)
+    return _parse_subject(node) if node else None
+
+
+def _bind_bangumi(db: Session, comic_id: int, source_id: str) -> Comic:
     comic = db.get(Comic, comic_id)
     if comic is None:
         raise ResourceNotFoundException("Comic", "id", comic_id)
-    detail = fetch_detail(source_id)
+    detail = _bangumi_detail(source_id)
     if not detail:
         raise ResourceNotFoundException("ScrapeResult", "sourceId", source_id)
     for field in ("title", "author", "overview", "series"):
@@ -111,6 +125,14 @@ def bind(db: Session, comic_id: int, source: str, source_id: str) -> Comic:
         _download_cover(comic, detail["coverUrl"])
     db.flush()
     return comic
+
+
+def bind(db: Session, comic_id: int, source: str, source_id: str) -> Comic:
+    if source == jm_scrape.SOURCE:
+        return jm_scrape.bind(db, comic_id, source_id)
+    if source != SOURCE:
+        raise BadRequestException(f"未知数据源: {source}")
+    return _bind_bangumi(db, comic_id, source_id)
 
 
 def unbind(db: Session, comic_id: int) -> None:
