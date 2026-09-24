@@ -113,14 +113,23 @@ def _collect_root_archive(archive: Path, drafts: dict[str, SeriesDraft]) -> None
     draft.chapters.append(ChapterDraft(str(archive), _strip_ext(archive), "ARCHIVE", mtime, size))
 
 
+def _cover_target(draft: SeriesDraft) -> Path:
+    """封面落盘位置：目录书用目录内 cover.jpg；库根压缩包用唯一 *.cover.jpg。"""
+    book_dir = Path(draft.book_path)
+    if book_dir.is_dir():
+        return book_dir / COVER_FILE
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", draft.title).strip(" .")[:80] or "book"
+    return book_dir.parent / f"{safe}.cover.jpg"
+
+
 def _resolve_cover(comic: Comic, draft: SeriesDraft) -> str | None:
     if not draft.chapters:
         return comic.cover_art_path
+    # 已刮削且已有封面时不覆盖
+    if comic.metadata_source == "scrape" and comic.cover_art_path and Path(comic.cover_art_path).is_file():
+        return comic.cover_art_path
     first = draft.chapters[0]
-    book_dir = Path(draft.book_path)
-    if not book_dir.is_dir():
-        book_dir = book_dir.parent
-    target = book_dir / COVER_FILE
+    target = _cover_target(draft)
     try:
         class _Probe:
             id = 0
@@ -130,6 +139,7 @@ def _resolve_cover(comic: Comic, draft: SeriesDraft) -> str | None:
         pages = comic_pages.list_page_names(_Probe())  # type: ignore[arg-type]
         if not pages:
             return comic.cover_art_path
+        target.parent.mkdir(parents=True, exist_ok=True)
         if first.type == "ARCHIVE":
             data, _ = comic_pages.read_page(_Probe(), 0)  # type: ignore[arg-type]
             target.write_bytes(data)
@@ -185,6 +195,8 @@ def scan_comic_library(db: Session, library: MediaLibrary) -> dict:
         comic.library_id = library.id
         comic.total_chapters = len(draft.chapters)
         comic.total_size = sum(ch.file_size for ch in draft.chapters)
+        # 旧版 bug 会让所有书指向同一 cover.jpg；发现重复时强制重抽
+        old_cover = comic.cover_art_path
         comic.cover_art_path = _resolve_cover(comic, draft)
         db.flush()
 

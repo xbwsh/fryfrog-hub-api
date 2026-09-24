@@ -20,7 +20,8 @@ def is_image_name(name: str) -> bool:
     if not name:
         return False
     lower = name.lower()
-    if Path(lower).name == "cover.jpg":
+    base = Path(lower).name
+    if base == "cover.jpg" or base.endswith(".cover.jpg"):
         return False
     return Path(lower).suffix in IMAGE_SUFFIXES
 
