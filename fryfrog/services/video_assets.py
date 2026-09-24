@@ -302,7 +302,7 @@ def download_movie_logo(db: Session, video: Video, file_path: str | None = None,
     if not target_path and video.tmdb_id:
         client = TmdbClient()
         logos = _movie_logos(client, video.tmdb_id)
-        target_path = logos[0]["filePath"] if logos else None
+        target_path = logos[0].get("file_path") if logos else None
     if not target_path:
         return False
     url = target_path if target_path.startswith("http") else f"https://image.tmdb.org/t/original{target_path}"
@@ -328,8 +328,10 @@ def download_series_logo(db: Session, series: VideoSeries, file_path: str | None
         logos = _tv_logos(client, series.tmdb_id)
         if not logos:
             return False
-        url = f"https://image.tmdb.org/t/original{logos[0]['filePath']}"
-        file_path = logos[0]["filePath"]
+        file_path = logos[0].get("file_path")
+        if not file_path:
+            return False
+        url = f"https://image.tmdb.org/t/original{file_path}"
     else:
         return False
     dest_dir = Path(series.metadata_dir) if series.metadata_dir else Path("data/series") / str(series.id)
