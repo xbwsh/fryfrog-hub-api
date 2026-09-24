@@ -1,22 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: fryfrog-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${DB_PORT:-5432}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   fryfrog-hub-api:
     # CI 推送的镜像（master 更新后 latest 会跟着变）
     image: ghcr.io/xbwsh/fryfrog-hub-api:latest
@@ -24,22 +6,18 @@ services:
     # build: .
     container_name: fryfrog-hub-api
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
       - "20058:20058"
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME}
-      - DB_USERNAME=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
+      - SQLITE_PATH=/data/fryfrog.db
       - AUTH_PASSWORD=${AUTH_PASSWORD:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - PROXY_HOST=${PROXY_HOST:-}
+      - PROXY_PORT=${PROXY_PORT:-}
+      - SUBSONIC_ENCRYPT_KEY=${SUBSONIC_ENCRYPT_KEY:-}
       - LOG_HOME=/data/logs
     volumes:
-      # 持久化：日志 + data/media_secret.key（URL 签名密钥，务必备份）
+      # 持久化：SQLite 库 + 日志 + data/media_secret.key（签名密钥，务必备份）
       - ./db:/data
       # 媒体库：左侧改成你 NAS 上的真实路径；右侧是容器内路径，建库时填它
       - /volume1/media/video:/data/media/video
@@ -49,6 +27,3 @@ services:
       - /volume1/media/comic:/data/media/comic
       # 若想和 NAS 路径一致，可改用同路径映射：
       # - /volume1/media/video:/volume1/media/video
-
-volumes:
-  pgdata:

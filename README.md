@@ -53,7 +53,7 @@
 -   **Swagger 文档** - 自动生成 API 文档，支持在线测试
 -   **CORS 支持** - 已配置跨域，可直接对接前端
 -   **Docker 部署** - 提供 Dockerfile 和 docker-compose.yml，支持一键部署
--   **PostgreSQL** - 使用 PostgreSQL 数据库
+-   **SQLite** - 单文件数据库，零安装，备份即拷贝文件
 -   **异步 I/O** - FastAPI / uvicorn，适合刮削与流媒体代理
 -   **定时扫描** - 支持配置定时扫描间隔，自动更新媒体库
 -   **系统设置** - 运行时动态配置管理
@@ -62,7 +62,7 @@
 ## 技术栈 / Tech Stack
 
 - Python 3.12 + FastAPI
-- SQLAlchemy 2.0 + PostgreSQL
+- SQLAlchemy 2.0 + SQLite
 - pydantic v2（配置与 DTO）
 - FFmpeg + subprocess（探测与转码）
 - TMDB / Bangumi API（刮削）
@@ -85,7 +85,7 @@ fryfrog-hub-api/
 ### 环境要求 / Prerequisites
 
 - Python 3.12+
-- PostgreSQL
+- SQLite（内置）
 - FFmpeg（可选，视频功能需要）
 - Docker（可选，用于 docker-compose 部署）
 
@@ -117,23 +117,19 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Docker Compose 会同时启动 PostgreSQL 和 API 服务，数据持久化到 Docker volume。
+Docker Compose 只启动 API 服务，SQLite 与日志持久化到 `./db`。
 
 ### 生产部署 / Production Deployment
 
 ```bash
 # 设置环境变量
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=fryfroghub
-export DB_USERNAME=your_db_user
-export DB_PASSWORD=your_db_password
+export SQLITE_PATH=data/fryfrog.db
 export VIDEO_ROOT_PATHS=/path/to/your/video
 export TMDB_API_KEY=your_tmdb_api_key  # 可选，用于视频刮削
 export AUTH_PASSWORD=your_password      # 可选，首次启动时作为 admin 初始密码（留空则自动生成随机密码）
 
 # 启动应用
-java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
+uvicorn fryfrog.main:app --host 0.0.0.0 --port 20058
 ```
 
 ## API 文档 / API Documentation
@@ -335,13 +331,7 @@ http://localhost:20058/swagger-ui.html
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `SERVER_PORT` | `20058` | 服务端口 |
-| `DB_HOST` | `localhost` | PostgreSQL 主机 |
-| `DB_PORT` | `5432` | PostgreSQL 端口 |
-| `DB_NAME` | `fryfroghub` | 数据库名称 |
-| `DB_USERNAME` | - | 数据库用户名 |
-| `DB_PASSWORD` | - | 数据库密码 |
-| `DB_POOL_SIZE` | `10` | 数据库连接池大小 |
-| `JPA_DDL_AUTO` | `validate` | Hibernate schema 策略（新增表时首次部署可临时设 `update`） |
+| `SQLITE_PATH` | `data/fryfrog.db` | SQLite 数据库文件路径 |
 | `AUTH_ENABLED` | `true` | 启用/禁用认证 |
 | `AUTH_PASSWORD` | - | 初始 admin 密码（留空则自动生成随机密码并打印日志） |
 | `AUTH_TOKEN_TTL` | `604800` | Token 有效期（秒），默认 7 天 |

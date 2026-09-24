@@ -1,15 +1,13 @@
 # Stage 1: install deps
 FROM python:3.12-slim AS build
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
 COPY fryfrog ./fryfrog
 RUN pip install --no-cache-dir .
 
 # Stage 2: run
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libpq5 \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN mkdir -p /app/data

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,13 +17,10 @@ class Settings(BaseSettings):
     # Server
     server_port: int = 20058
 
-    # PostgreSQL
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_name: str = "fryfroghub"
-    db_username: str = ""
-    db_password: str = ""
-    db_pool_size: int = 10
+    # SQLite
+    sqlite_path: str = Field(
+        default="data/fryfrog.db", validation_alias=AliasChoices("SQLITE_PATH", "DB_PATH")
+    )
 
     # Auth
     auth_enabled: bool = True
@@ -36,7 +32,6 @@ class Settings(BaseSettings):
     # Media / FFmpeg
     video_root_paths: str = ""
     ffmpeg_path: str = ""
-    ffp_path: str = ""
 
     # TMDB
     tmdb_api_key: str = ""
@@ -73,13 +68,6 @@ class Settings(BaseSettings):
 
     # Logging
     log_home: str = "data/logs"
-
-    @property
-    def database_url(self) -> str:
-        return (
-            f"postgresql+psycopg://{self.db_username}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
-        )
 
     @property
     def data_dir(self) -> Path:

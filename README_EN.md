@@ -49,42 +49,37 @@ Video media backend API service for metadata management and streaming.
 - **Swagger Docs** - Auto-generated API documentation with online testing
 - **CORS Support** - Pre-configured for frontend integration
 - **Docker Deployment** - Dockerfile and docker-compose.yml included
-- **PostgreSQL** - PostgreSQL database
-- **Virtual Threads** - Java 21 virtual threads enabled for improved concurrency
+- **SQLite** - Single-file database, zero install
+- **Async I/O** - FastAPI/uvicorn, friendly to scraping and streaming proxies
 - **Periodic Scanning** - Configurable periodic scan interval for media library updates
 - **System Settings** - Runtime dynamic configuration management
 - **Log Export** - Export log files for developer troubleshooting
 
 ## Tech Stack
 
-- Java 21 + Spring Boot 3.2.x
-- Spring Data JPA + PostgreSQL
-- Java 21 Virtual Threads
-- FFmpeg + ProcessBuilder (video transcoding)
-- TMDB API (video metadata scraping)
-- Springdoc OpenAPI (Swagger docs)
+- Python 3.12 + FastAPI
+- SQLAlchemy 2.0 + SQLite
+- pydantic v2 (config & DTOs)
+- FFmpeg + subprocess (probe & transcode)
+- TMDB / Bangumi API (scraping)
 - GitHub Actions (CI/CD Docker image build)
 
 ## Project Structure
 
 ```
 fryfrog-hub-api/
-├── app/             # Spring Boot entry point + global config/controllers
-├── common/          # Shared entities, DTOs, utilities
-├── media-core/      # Media infrastructure (FFmpeg runtime + ffprobe probing)
-├── video/           # Video module (TMDB scraping + NFO generation + series management + transcoding)
-├── music/           # Music module (scan/index + streaming + Subsonic API)
-├── audiobook/       # Audiobook module (directory-aggregated scan + chapter parsing + playback progress)
-└── pom.xml          # Parent POM
+├── fryfrog/         # Main package (main/config/db/core/models/schemas/media_core/services/routers)
+├── tests/           # Tests
+├── pyproject.toml   # Dependencies
+├── Dockerfile
+└── docker-compose.yml
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- JDK 21+
-- Maven 3.9+
-- PostgreSQL
+- Python 3.12+
 - FFmpeg (optional, needed for video features)
 - Docker (optional, for docker-compose deployment)
 
@@ -97,40 +92,31 @@ cd fryfrog-hub-api
 
 # Configure environment variables (refer to .env.example)
 cp .env.example .env
-# Edit .env to fill in database and other configurations
 
-# Start the application
-mvn spring-boot:run -pl app
+# Install and start
+python -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/uvicorn fryfrog.main:app --host 0.0.0.0 --port 20058
 ```
 
 ### Docker Deployment
 
 ```bash
-# Copy and configure environment variables
 cp .env.example .env
-# Edit .env to fill in database password and other configurations
-
-# Start services
 docker compose up -d
 ```
 
-Docker Compose will start both PostgreSQL and the API service, with data persisted to Docker volume.
+Docker Compose starts only the API service; SQLite and logs persist under `./db`.
 
 ### Production Deployment
 
 ```bash
-# Set environment variables
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=fryfroghub
-export DB_USERNAME=your_db_user
-export DB_PASSWORD=your_db_password
+export SQLITE_PATH=data/fryfrog.db
 export VIDEO_ROOT_PATHS=/path/to/your/video
-export TMDB_API_KEY=your_tmdb_api_key  # Optional, for video scraping
-export AUTH_PASSWORD=your_password      # Optional, login password
+export TMDB_API_KEY=your_tmdb_api_key  # Optional
+export AUTH_PASSWORD=your_password
 
-# Start the application
-java -jar app/target/fryfrog-hub-app-0.1.0-SNAPSHOT.jar
+uvicorn fryfrog.main:app --host 0.0.0.0 --port 20058
 ```
 
 ## API Documentation
@@ -307,13 +293,7 @@ http://localhost:20058/swagger-ui.html
 | Variable | Default | Description |
 |------|--------|------|
 | `SERVER_PORT` | `20058` | Server port |
-| `DB_HOST` | `localhost` | PostgreSQL host |
-| `DB_PORT` | `5432` | PostgreSQL port |
-| `DB_NAME` | `fryfroghub` | Database name |
-| `DB_USERNAME` | - | Database username |
-| `DB_PASSWORD` | - | Database password |
-| `DB_POOL_SIZE` | `10` | Database connection pool size |
-| `JPA_DDL_AUTO` | `validate` | Hibernate schema strategy (temporarily set `update` when deploying new tables) |
+| `SQLITE_PATH` | `data/fryfrog.db` | SQLite database file path |
 | `AUTH_ENABLED` | `true` | Enable/disable authentication |
 | `AUTH_PASSWORD` | - | Initial admin password (empty generates a random one and prints it to logs) |
 | `AUTH_TOKEN_TTL` | `604800` | Token TTL (seconds), default 7 days |

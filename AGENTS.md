@@ -11,7 +11,7 @@
 ## Tech Stack
 
 - Python 3.12 + FastAPI
-- SQLAlchemy 2.0 + **PostgreSQL**（psycopg）
+- SQLAlchemy 2.0 + **SQLite**（单文件，零安装）
 - pydantic v2 / pydantic-settings
 - FFmpeg + subprocess（探测与转码）
 - TMDB API / Bangumi API（刮削）
@@ -57,7 +57,7 @@ python -m venv .venv
 ## Testing
 
 - pytest（`tests/`）
-- 配置来自环境变量 / `.env`；测试可不连 PostgreSQL
+- 配置来自环境变量 / `.env`；测试用内存/临时 SQLite
 
 ```bash
 .venv\Scripts\python -m pytest
@@ -78,7 +78,7 @@ python -m venv .venv
 ## Key Configuration
 
 - 端口：`20058`（`SERVER_PORT` 可覆盖）
-- 数据库：PostgreSQL（`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD`）
+- 数据库：SQLite（`SQLITE_PATH`，默认 `data/fryfrog.db`）
 - 认证：`AUTH_ENABLED` 默认开启，`AUTH_PASSWORD` 留空则生成随机 admin 密码
 - 媒体路径：媒体库记录在 `media_libraries` 表（可从旧 `VIDEO_ROOT_PATHS` 自动迁移）
 - `.env` 为开发环境配置，已加入 `.gitignore`
@@ -86,7 +86,7 @@ python -m venv .venv
 
 ## Common Pitfalls
 
-- PostgreSQL 必填环境变量：`DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USERNAME`、`DB_PASSWORD`
+- SQLite 文件路径可用 `SQLITE_PATH` 覆盖，备份时连同 `data/media_secret.key` 一起拷走
 - FFmpeg 路径可用 `FFMPEG_PATH` 指定，默认走系统 PATH
 - Docker 部署：`docker compose up -d`，镜像已内置 FFmpeg
 - 媒体 URL 需签名（`sig`+`exp`），`<img>/<video>` 用签名 URL 而非 Bearer

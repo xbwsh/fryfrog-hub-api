@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from fryfrog.config import get_settings
@@ -20,12 +21,22 @@ def get_engine():
     global _engine, _SessionLocal
     if _engine is None:
         settings = get_settings()
+        db_path = Path(settings.sqlite_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         _engine = create_engine(
-            settings.database_url,
-            pool_size=settings.db_pool_size,
-            pool_pre_ping=True,
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False, "timeout": 30},
             future=True,
         )
+
+        @event.listens_for(_engine, "connect")
+        def _set_sqlite_pragma(dbapi_conn, _):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
         _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
     return _engine
 
@@ -49,7 +60,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """创建表结构（兼容既有 PostgreSQL 库）。"""
+    """创建表结构（SQLite 文件库）。"""
     from fryfrog import models  # noqa: F401  确保模型已注册
 
     engine = get_engine()
