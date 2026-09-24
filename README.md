@@ -54,40 +54,37 @@
 -   **CORS 支持** - 已配置跨域，可直接对接前端
 -   **Docker 部署** - 提供 Dockerfile 和 docker-compose.yml，支持一键部署
 -   **PostgreSQL** - 使用 PostgreSQL 数据库
--   **虚拟线程** - 启用 Java 21 虚拟线程，提升并发性能
+-   **异步 I/O** - FastAPI / uvicorn，适合刮削与流媒体代理
 -   **定时扫描** - 支持配置定时扫描间隔，自动更新媒体库
 -   **系统设置** - 运行时动态配置管理
 -   **日志导出** - 导出日志文件，方便反馈开发者排查问题
 
 ## 技术栈 / Tech Stack
 
-- Java 21 + Spring Boot 3.2.x
-- Spring Data JPA + PostgreSQL
-- Java 21 虚拟线程（Virtual Threads）
-- FFmpeg + ProcessBuilder（视频转码）
-- TMDB API（视频元数据刮削）
-- Springdoc OpenAPI（Swagger 文档）
+- Python 3.12 + FastAPI
+- SQLAlchemy 2.0 + PostgreSQL
+- pydantic v2（配置与 DTO）
+- FFmpeg + subprocess（探测与转码）
+- TMDB / Bangumi API（刮削）
+- OpenAPI（Swagger 文档）
 - GitHub Actions（自动构建 Docker 镜像）
 
 ## 项目结构 / Project Structure
 
 ```
 fryfrog-hub-api/
-├── app/             # Spring Boot 启动模块 + 全局配置/控制器
-├── common/          # 共享实体、DTO、工具类
-├── media-core/      # 媒体基础设施（FFmpeg 运行时 + ffprobe 探测）
-├── video/           # 视频模块（TMDB 刮削 + NFO 生成 + 系列管理 + 转码）
-├── music/           # 音乐模块（扫描建库 + 播放 + Subsonic 兼容 API）
-├── audiobook/       # 有声书模块（目录聚合扫描 + 章节解析 + 播放进度）
-└── pom.xml          # Parent POM
+├── fryfrog/         # 主包（main/config/db/core/models/schemas/media_core/services/routers）
+├── tests/           # 测试
+├── pyproject.toml   # 依赖与打包
+├── Dockerfile
+└── docker-compose.yml
 ```
 
 ## 快速开始 / Quick Start
 
 ### 环境要求 / Prerequisites
 
-- JDK 21+
-- Maven 3.9+
+- Python 3.12+
 - PostgreSQL
 - FFmpeg（可选，视频功能需要）
 - Docker（可选，用于 docker-compose 部署）
@@ -103,8 +100,10 @@ cd fryfrog-hub-api
 cp .env.example .env
 # 编辑 .env 填写数据库等配置
 
-# 启动应用
-mvn spring-boot:run -pl app
+# 安装依赖并启动
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\uvicorn fryfrog.main:app --host 0.0.0.0 --port 20058
 ```
 
 ### Docker 部署 / Docker Deployment

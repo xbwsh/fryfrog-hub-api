@@ -19,15 +19,18 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
+          python-version: '3.12'
 
-      - name: Build with Maven
-        run: mvn clean package -DskipTests
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest tests/ -q
 
       - name: Configure Docker mirrors
         run: |

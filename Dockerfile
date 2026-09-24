@@ -1,24 +1,21 @@
-# Stage 1: Build
-FROM maven:3.9-eclipse-temurin-21 AS build
+# Stage 1: install deps
+FROM python:3.12-slim AS build
 WORKDIR /app
-COPY pom.xml ./
-COPY common/pom.xml common/
-COPY media-core/pom.xml media-core/
-COPY video/pom.xml video/
-COPY music/pom.xml music/
-COPY audiobook/pom.xml audiobook/
-COPY ebook/pom.xml ebook/
-COPY comic/pom.xml comic/
-COPY app/pom.xml app/
-RUN mvn dependency:go-offline -B
-COPY . .
-RUN mvn clean package -DskipTests -B
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml ./
+COPY fryfrog ./fryfrog
+RUN pip install --no-cache-dir .
 
-# Stage 2: Run
-FROM eclipse-temurin:21-jre
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+# Stage 2: run
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libpq5 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN mkdir -p /app/data
-COPY --from=build /app/app/target/*.jar app.jar
+COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=build /usr/local/bin /usr/local/bin
+COPY fryfrog ./fryfrog
+COPY pyproject.toml ./
 EXPOSE 20058
-ENTRYPOINT ["java", "-jar", "app.jar"]
+CMD ["uvicorn", "fryfrog.main:app", "--host", "0.0.0.0", "--port", "20058"]
