@@ -57,6 +57,8 @@ def download_image(url: str, target: Path, force: bool = False) -> bool:
         target.parent.mkdir(parents=True, exist_ok=True)
         with make_client(timeout=30.0) as client:
             resp = client.get(url)
+            if resp.status_code == 404:
+                return False
             resp.raise_for_status()
             if not resp.content:
                 return False
@@ -293,6 +295,18 @@ def _full_image_url(url: str) -> str:
     return f"https://image.tmdb.org/t/{size}{url}"
 
 
+def _tmdb_image_urls(path: str) -> list[str]:
+    """TMDB 有的 logo 无 original，按可用尺寸回退。"""
+    if path.startswith("http"):
+        return [path]
+    return [
+        f"https://image.tmdb.org/t/original{path}",
+        f"https://image.tmdb.org/t/w780{path}",
+        f"https://image.tmdb.org/t/w500{path}",
+        f"https://image.tmdb.org/t/w300{path}",
+    ]
+
+
 def download_movie_logo(db: Session, video: Video, file_path: str | None = None, force: bool = False) -> bool:
     from fryfrog.services.tmdb import TmdbClient
 
@@ -305,10 +319,13 @@ def download_movie_logo(db: Session, video: Video, file_path: str | None = None,
         target_path = logos[0].get("file_path") if logos else None
     if not target_path:
         return False
-    url = target_path if target_path.startswith("http") else f"https://image.tmdb.org/t/original{target_path}"
     dest = get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}-logo.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    ok = download_image(url, dest, force=True)
+    ok = False
+    for url in _tmdb_image_urls(target_path):
+        ok = download_image(url, dest, force=True)
+        if ok:
+            break
     if ok:
         video.logo_local_path = str(dest)
         video.logo_url = target_path if not target_path.startswith("http") else video.logo_url
@@ -320,9 +337,9 @@ def download_series_logo(db: Session, series: VideoSeries, file_path: str | None
     from fryfrog.services.tmdb import TmdbClient
 
     if file_path:
-        url = f"https://image.tmdb.org/t/original{file_path}"
+        urls = _tmdb_image_urls(file_path)
     elif series.logo_url:
-        url = _full_image_url(series.logo_url)
+        urls = _tmdb_image_urls(series.logo_url)
     elif series.tmdb_id:
         client = TmdbClient()
         logos = _tv_logos(client, series.tmdb_id)
@@ -331,13 +348,17 @@ def download_series_logo(db: Session, series: VideoSeries, file_path: str | None
         file_path = logos[0].get("file_path")
         if not file_path:
             return False
-        url = f"https://image.tmdb.org/t/original{file_path}"
+        urls = _tmdb_image_urls(file_path)
     else:
         return False
     dest_dir = Path(series.metadata_dir) if series.metadata_dir else Path("data/series") / str(series.id)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / "logo.png"
-    ok = download_image(url, dest, force=True)
+    ok = False
+    for url in urls:
+        ok = download_image(url, dest, force=True)
+        if ok:
+            break
     if ok:
         series.logo_local_path = str(dest)
         if file_path:
@@ -366,6 +387,15 @@ def _tv_logos(client, tmdb_id: int) -> list[dict]:
     return logos
 
 
+def _proxy_image_url(path: str | None) -> str | None:
+    """走本站代理预览，避免浏览器直连 image.tmdb.org 失败。"""
+    if not path:
+        return None
+    from urllib.parse import quote
+
+    return f"/api/v1/video/tmdb-image-proxy?path={quote(path, safe='/')}&size=w500"
+
+
 def movie_logo_options(tmdb_id: int) -> list[dict]:
     from fryfrog.services.tmdb import TmdbClient
 
@@ -380,7 +410,7 @@ def movie_logo_options(tmdb_id: int) -> list[dict]:
                 "width": logo.get("width"),
                 "height": logo.get("height"),
                 "voteCount": logo.get("vote_count"),
-                "url": f"https://image.tmdb.org/t/w500{path}" if path else None,
+                "url": _proxy_image_url(path),
             }
         )
     return result
@@ -400,7 +430,7 @@ def tv_logo_options(tmdb_id: int) -> list[dict]:
                 "width": logo.get("width"),
                 "height": logo.get("height"),
                 "voteCount": logo.get("vote_count"),
-                "url": f"https://image.tmdb.org/t/w500{path}" if path else None,
+                "url": _proxy_image_url(path),
             }
         )
     return result
