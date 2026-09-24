@@ -739,11 +739,10 @@ def get_logo(db: DbSession, id: int):
         logo_url = logos[0]["filePath"] if logos else None
     if not logo_url:
         raise ResourceNotFoundException("Logo", "id", id)
-    url = logo_url if str(logo_url).startswith("http") else f"https://image.tmdb.org/t/original{logo_url}"
-    data = assets.download_url_bytes(url)
+    data = assets.fetch_tmdb_image(logo_url)
     if not data:
         raise ResourceNotFoundException("Logo", "id", id)
-    return Response(content=data, media_type=assets.media_type_of(url))
+    return Response(content=data, media_type=assets.media_type_of(logo_url))
 
 
 @router.get("/{id:int}/logo-options")
@@ -1562,11 +1561,7 @@ def get_series_cover(db: DbSession, id: int):
         poster_url = video.poster_url
     if not poster_url:
         return Response(content=placeholder_jpeg(300, 450, title), media_type="image/jpeg")
-    data = assets.download_url_bytes(
-        poster_url
-        if str(poster_url).startswith("http")
-        else f"https://image.tmdb.org/t/original{poster_url}"
-    )
+    data = assets.fetch_tmdb_image(poster_url)
     if not data:
         return Response(content=placeholder_jpeg(300, 450, title), media_type="image/jpeg")
     return Response(content=data, media_type="image/jpeg")
@@ -1621,11 +1616,7 @@ def get_series_fanart(db: DbSession, id: int):
         backdrop_url = video.backdrop_url
     if not backdrop_url:
         return Response(content=placeholder_jpeg(1920, 400, title), media_type="image/jpeg")
-    data = assets.download_url_bytes(
-        backdrop_url
-        if str(backdrop_url).startswith("http")
-        else f"https://image.tmdb.org/t/original{backdrop_url}"
-    )
+    data = assets.fetch_tmdb_image(backdrop_url)
     if not data:
         return Response(content=placeholder_jpeg(1920, 400, title), media_type="image/jpeg")
     return Response(content=data, media_type="image/jpeg")
@@ -1646,15 +1637,10 @@ def get_series_logo(db: DbSession, id: int):
         logo_url = logos[0]["filePath"] if logos else None
     if not logo_url:
         raise ResourceNotFoundException("Logo", "id", id)
-    url = (
-        logo_url
-        if str(logo_url).startswith("http")
-        else f"https://image.tmdb.org/t/original{logo_url}"
-    )
-    data = assets.download_url_bytes(url)
+    data = assets.fetch_tmdb_image(logo_url)
     if not data:
         raise ResourceNotFoundException("Logo", "id", id)
-    return Response(content=data, media_type=assets.media_type_of(url))
+    return Response(content=data, media_type=assets.media_type_of(logo_url))
 
 
 @series_router.get("/{id:int}")
@@ -1710,7 +1696,7 @@ VIDEO_CONTENT_TYPES = {
 }
 
 ALLOWED_SIZES = {"w92", "w154", "w185", "w342", "w500", "w780", "original"}
-TMDB_CDN = "https://image.tmdb.org/t/p"
+TMDB_CDN = "https://image.tmdb.org/t"
 
 
 def _video_content_type(name: str) -> str:

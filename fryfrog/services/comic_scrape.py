@@ -75,7 +75,10 @@ def _download_cover(comic: Comic, cover_url: str) -> None:
         return
     target = book_dir / "cover.jpg"
     try:
-        resp = httpx.get(cover_url, timeout=20, follow_redirects=True)
+        from fryfrog.core.http import make_client
+
+        with make_client(timeout=20.0) as client:
+            resp = client.get(cover_url)
         if resp.status_code == 200 and resp.content:
             target.write_bytes(resp.content)
             comic.cover_art_path = str(target)

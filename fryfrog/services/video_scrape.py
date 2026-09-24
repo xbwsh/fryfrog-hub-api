@@ -399,7 +399,9 @@ def get_actor_detail(db: Session, actor: VideoActor, refresh: bool = False) -> d
             "department": c.get("department") if not is_cast else None,
             "releaseDate": release,
             "year": year,
-            "posterUrl": f"https://image.tmdb.org/t/w342{poster}" if poster else None,
+            "posterUrl": (
+                f"/api/v1/video/tmdb-image-proxy?path={poster}&size=w342" if poster else None
+            ),
             "overview": c.get("overview"),
             "voteAverage": c.get("vote_average"),
             "voteCount": c.get("vote_count"),

@@ -296,15 +296,29 @@ def _full_image_url(url: str) -> str:
 
 
 def _tmdb_image_urls(path: str) -> list[str]:
-    """TMDB 有的 logo 无 original，按可用尺寸回退。"""
+    """TMDB 图片 URL 列表（按尺寸回退）。统一走 make_client：有代理走代理，否则直连。"""
     if path.startswith("http"):
         return [path]
+    if not path.startswith("/"):
+        path = "/" + path
     return [
         f"https://image.tmdb.org/t/original{path}",
         f"https://image.tmdb.org/t/w780{path}",
         f"https://image.tmdb.org/t/w500{path}",
+        f"https://image.tmdb.org/t/w342{path}",
         f"https://image.tmdb.org/t/w300{path}",
     ]
+
+
+def fetch_tmdb_image(path_or_url: str | None) -> bytes | None:
+    """按尺寸回退拉取 TMDB 图（API/CDN 均经 make_client，遵守 PROXY_HOST）。"""
+    if not path_or_url:
+        return None
+    for url in _tmdb_image_urls(path_or_url):
+        data = download_url_bytes(url)
+        if data:
+            return data
+    return None
 
 
 def download_movie_logo(db: Session, video: Video, file_path: str | None = None, force: bool = False) -> bool:
