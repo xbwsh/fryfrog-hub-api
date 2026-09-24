@@ -13,7 +13,7 @@ from fryfrog.core.exceptions import BadRequestException, ForbiddenException, Res
 from fryfrog.core.security import AuthManager, UserService, current_user_id
 from fryfrog.core.signer import sign
 from fryfrog.models.comic import Comic, ComicChapter, ComicProgress
-from fryfrog.services import comic_pages, comic_scan, comic_scrape
+from fryfrog.services import comic_organize, comic_pages, comic_scan, comic_scrape
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
 
@@ -262,7 +262,10 @@ def cover(
     media_lib: MediaLibraryService = Depends(get_media_library_service),
 ):
     comic = _require_visible(db, media_lib, comic_id)
-    data, media = cover_bytes(comic.cover_art_path, label=comic.title or "")
+    from fryfrog.services.assets import comic_cover_path
+
+    path = comic.cover_art_path or str(comic_cover_path(comic_id))
+    data, media = cover_bytes(path, label=comic.title or "")
     return Response(content=data, media_type=media)
 
 

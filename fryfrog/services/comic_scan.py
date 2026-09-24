@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 ARCHIVE_EXTS = {".cbz", ".zip", ".cbr", ".rar", ".7z"}
 UNSUPPORTED_EXTS: set[str] = set()
-COVER_FILE = "cover.jpg"
+COVER_FILE = "cover.jpg"  # 仅历史参考；封面现存 data/covers
 VOLUME_SUFFIX = re.compile(
     r"(?:[\s_-]*(?:第\s*\d+\s*[卷话集]|Vol\.?\s*\d+|v\d+|#\d+|\d{1,3}))+\s*$",
     re.I,
@@ -113,23 +113,15 @@ def _collect_root_archive(archive: Path, drafts: dict[str, SeriesDraft]) -> None
     draft.chapters.append(ChapterDraft(str(archive), _strip_ext(archive), "ARCHIVE", mtime, size))
 
 
-def _cover_target(draft: SeriesDraft) -> Path:
-    """封面落盘位置：目录书用目录内 cover.jpg；库根压缩包用唯一 *.cover.jpg。"""
-    book_dir = Path(draft.book_path)
-    if book_dir.is_dir():
-        return book_dir / COVER_FILE
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", draft.title).strip(" .")[:80] or "book"
-    return book_dir.parent / f"{safe}.cover.jpg"
-
-
 def _resolve_cover(comic: Comic, draft: SeriesDraft) -> str | None:
-    if not draft.chapters:
+    if not draft.chapters or comic.id is None:
         return comic.cover_art_path
-    # 已刮削且已有封面时不覆盖
-    if comic.metadata_source == "scrape" and comic.cover_art_path and Path(comic.cover_art_path).is_file():
-        return comic.cover_art_path
+    from fryfrog.services.assets import comic_cover_path
+
+    target = comic_cover_path(comic.id)
+    if comic.metadata_source == "scrape" and target.is_file():
+        return str(target)
     first = draft.chapters[0]
-    target = _cover_target(draft)
     try:
         class _Probe:
             id = 0
@@ -195,8 +187,7 @@ def scan_comic_library(db: Session, library: MediaLibrary) -> dict:
         comic.library_id = library.id
         comic.total_chapters = len(draft.chapters)
         comic.total_size = sum(ch.file_size for ch in draft.chapters)
-        # 旧版 bug 会让所有书指向同一 cover.jpg；发现重复时强制重抽
-        old_cover = comic.cover_art_path
+        db.flush()
         comic.cover_art_path = _resolve_cover(comic, draft)
         db.flush()
 

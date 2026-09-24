@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fryfrog.core.signer import sign
 from fryfrog.core.utils import placeholder_jpeg
+
+
+def comic_cover_path(comic_id: int) -> Path:
+    """漫画封面统一放在应用数据区，避免污染媒体目录。"""
+    return Path("data") / "covers" / "comic" / f"{comic_id}.jpg"
 
 
 def signed_url(path: str) -> str:

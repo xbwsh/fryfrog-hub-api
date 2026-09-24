@@ -68,15 +68,15 @@ def fetch_detail(source_id: str) -> dict | None:
 
 
 def _download_cover(comic: Comic, cover_url: str) -> None:
-    book_dir = Path(comic.book_path)
-    if not book_dir.is_dir():
-        book_dir = book_dir.parent
-    if not book_dir.is_dir():
+    if comic.id is None:
         return
-    target = book_dir / "cover.jpg"
+    from fryfrog.services.assets import comic_cover_path
+
+    target = comic_cover_path(comic.id)
     try:
         from fryfrog.core.http import make_client
 
+        target.parent.mkdir(parents=True, exist_ok=True)
         with make_client(timeout=20.0) as client:
             resp = client.get(cover_url)
         if resp.status_code == 200 and resp.content:
