@@ -385,7 +385,7 @@ def _parse_artist_title(base: str) -> tuple[str, str] | None:
 def _sort_name(name: str | None) -> str | None:
     if not name:
         return None
-    return re.sub(r"^(?i)(The|A|An)\s+", "", name)
+    return re.sub(r"^(The|A|An)\s+", "", name, flags=re.I)
 
 
 def _parse_int(*values: str | None) -> int | None:
