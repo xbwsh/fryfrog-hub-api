@@ -750,6 +750,8 @@ def get_logo(db: DbSession, id: int):
 def get_logo_options(db: DbSession, id: int):
     video = vs.get_video(db, id)
     if not video.tmdb_id:
+        assets.parse_nfo(db, video)
+    if not video.tmdb_id:
         return ApiResponse.error("视频没有 TMDB ID，无法查询 logo")
     return ApiResponse.ok(assets.movie_logo_options(video.tmdb_id))
 

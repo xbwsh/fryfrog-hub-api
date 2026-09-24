@@ -85,6 +85,11 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             if fanart.exists() and not video.backdrop_local_path:
                 video.backdrop_local_path = str(fanart)
 
+            # 从已有 NFO 恢复元数据（含 tmdbId）
+            from fryfrog.services.video_assets import parse_nfo
+
+            parse_nfo(db, video)
+
             db.flush()
             count += 1
 

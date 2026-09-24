@@ -85,6 +85,134 @@ def logo_file_url(local_path: str | None, api_path: str) -> str | None:
 
 # -------------------- NFO --------------------
 
+def find_nfo_path(db: Session, video: Video) -> Path | None:
+    candidates = [
+        get_nfo_path(db, video),
+        Path(video.file_path).parent / f"{get_base_name(video.file_name)}.nfo",
+        Path(video.file_path).with_suffix(".nfo"),
+    ]
+    for p in candidates:
+        if p and p.is_file():
+            return p
+    return None
+
+
+def parse_nfo(db: Session, video: Video) -> bool:
+    """从已有 NFO 回填元数据（换库/重扫后恢复 tmdbId 等）。"""
+    import xml.etree.ElementTree as ET
+
+    nfo_path = find_nfo_path(db, video)
+    if not nfo_path:
+        return False
+    try:
+        root = ET.parse(nfo_path).getroot()
+    except Exception:
+        logger.debug("解析 NFO 失败: %s", nfo_path, exc_info=True)
+        return False
+
+    def text(tag: str) -> str | None:
+        el = root.find(tag)
+        if el is not None and el.text and el.text.strip():
+            return el.text.strip()
+        return None
+
+    changed = False
+    for tag, attr in (
+        ("title", "title"),
+        ("originaltitle", "original_title"),
+        ("plot", "overview"),
+        ("director", "director"),
+        ("studio", "studio"),
+        ("mpaa", None),
+    ):
+        if attr is None:
+            continue
+        val = text(tag)
+        if val and not getattr(video, attr):
+            setattr(video, attr, val)
+            changed = True
+
+    if not video.genre:
+        genres = [g.text.strip() for g in root.findall("genre") if g.text and g.text.strip()]
+        if genres:
+            video.genre = ",".join(genres)
+            changed = True
+
+    year = text("year")
+    if year and not video.year:
+        try:
+            video.year = int(year)
+            changed = True
+        except ValueError:
+            pass
+
+    premiered = text("premiered") or text("releasedate")
+    if premiered and not video.release_date:
+        video.release_date = premiered
+        changed = True
+
+    runtime = text("runtime")
+    if runtime and not video.duration_minutes:
+        try:
+            video.duration_minutes = int(float(runtime))
+            changed = True
+        except ValueError:
+            pass
+
+    rating_el = root.find("ratings/rating/value")
+    if rating_el is not None and rating_el.text and not video.rating:
+        try:
+            video.rating = float(rating_el.text)
+            changed = True
+        except ValueError:
+            pass
+    elif root.find("rating") is not None and root.find("rating").text and not video.rating:
+        try:
+            video.rating = float(root.find("rating").text)
+            changed = True
+        except ValueError:
+            pass
+
+    votes = text("votes")
+    if votes and not video.vote_count:
+        try:
+            video.vote_count = int(votes)
+            changed = True
+        except ValueError:
+            pass
+
+    actors = []
+    for actor in root.findall("actor"):
+        name = actor.findtext("name")
+        if name and name.strip():
+            actors.append(name.strip())
+    if actors and not video.actors:
+        video.actors = ",".join(actors[:12])
+        changed = True
+
+    for uid in root.findall("uniqueid"):
+        uid_type = (uid.get("type") or "").lower()
+        val = (uid.text or "").strip()
+        if not val:
+            continue
+        if uid_type == "tmdb" and not video.tmdb_id:
+            try:
+                video.tmdb_id = int(val)
+                changed = True
+            except ValueError:
+                pass
+        elif uid_type == "imdb" and not video.imdb_id:
+            video.imdb_id = val
+            changed = True
+
+    if video.tmdb_id and not video.metadata_source:
+        video.metadata_source = "nfo"
+        changed = True
+
+    if changed:
+        db.flush()
+    return bool(video.tmdb_id or changed)
+
 def generate_nfo(db: Session, video: Video) -> str | None:
     try:
         metadata_dir = get_metadata_dir(db, video)
@@ -217,14 +345,20 @@ def download_series_logo(db: Session, series: VideoSeries, file_path: str | None
 
 
 def _movie_logos(client, tmdb_id: int) -> list[dict]:
-    images = client._get(f"/movie/{tmdb_id}/images") or {}
+    images = client._get(
+        f"/movie/{tmdb_id}/images",
+        {"include_image_language": "zh-CN,zh,en,null,ja"},
+    ) or {}
     logos = images.get("logos") or []
     logos.sort(key=lambda x: x.get("vote_count") or 0, reverse=True)
     return logos
 
 
 def _tv_logos(client, tmdb_id: int) -> list[dict]:
-    images = client.get_tv_images(tmdb_id) or {}
+    images = client._get(
+        f"/tv/{tmdb_id}/images",
+        {"include_image_language": "zh-CN,zh,en,null,ja"},
+    ) or {}
     logos = images.get("logos") or []
     logos.sort(key=lambda x: x.get("vote_count") or 0, reverse=True)
     return logos
