@@ -119,16 +119,41 @@ def pipeline_progress(library_id: int, db: DbSession, service: MediaLibraryServi
 
 
 @router.get("/browse")
-def browse(path: str | None = None):
-    root = Path(path) if path else Path.cwd()
-    if not root.exists() or not root.is_dir():
+def browse(path: str | None = None, includeFiles: bool = False):
+    """目录浏览（新建媒体库选目录用）。默认从 /data 起（Docker 媒体挂载点）。"""
+    if path:
+        root = Path(path)
+    else:
+        root = Path("/data") if Path("/data").is_dir() else Path.cwd()
+    # 规范化，防止穿越
+    try:
+        root = root.expanduser().resolve()
+    except OSError:
         raise HTTPException(status_code=400, detail="Invalid path")
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=400, detail=f"Invalid path: {root}")
+
     entries = []
     try:
-        for item in sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        for item in root.iterdir():
             if item.name.startswith("."):
                 continue
-            entries.append({"name": item.name, "path": str(item), "isDir": item.is_dir()})
+            try:
+                is_dir = item.is_dir()
+            except OSError:
+                continue
+            if not is_dir and not includeFiles:
+                continue
+            entries.append(
+                {
+                    "name": item.name,
+                    "path": str(item),
+                    "isDir": is_dir,
+                    "type": "directory" if is_dir else "file",
+                }
+            )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+    entries.sort(key=lambda e: (not e["isDir"], e["name"].lower()))
     return ApiResponse.ok(entries)
