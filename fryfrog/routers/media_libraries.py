@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -118,43 +119,71 @@ def pipeline_progress(library_id: int, db: DbSession, service: MediaLibraryServi
     return ApiResponse.ok(progress_svc.get_pipeline_progress(lib))
 
 
-@router.get("/browse")
-def browse(path: str | None = None, includeFiles: bool = False):
-    """目录浏览（新建媒体库选目录用）。默认从 /data 起（Docker 媒体挂载点）。"""
-    fallback = Path("/data") if Path("/data").is_dir() else Path.cwd()
-    if path:
+def _browse_item(name: str, path: str, writable: bool) -> dict:
+    # 与旧版 Java MediaLibraryBrowseService 契约一致
+    return {"name": name, "path": path, "writable": writable}
+
+
+def _list_roots() -> list[dict]:
+    result: list[dict] = []
+    seen: set[str] = set()
+    for p in ("/data/media/video", "/data/media", "/data", "/data/music"):
+        dir_path = Path(p)
         try:
-            root = Path(path).expanduser().resolve()
+            if dir_path.is_dir():
+                resolved = str(dir_path.resolve())
+                if resolved not in seen:
+                    seen.add(resolved)
+                    result.append(_browse_item(p, resolved, os.access(resolved, os.W_OK)))
         except OSError:
-            root = fallback
+            continue
+    # 文件系统根（Linux 为 /，Windows 为盘符），对齐 Java File.listRoots()
+    import sys
+
+    fs_roots: list[str] = []
+    if sys.platform == "win32":
+        import string
+
+        fs_roots = [f"{d}:\\" for d in string.ascii_uppercase if Path(f"{d}:\\").exists()]
     else:
-        root = fallback.resolve()
+        fs_roots = ["/"]
+    for root_path in fs_roots:
+        if root_path in seen:
+            continue
+        if Path(root_path).exists():
+            seen.add(root_path)
+            result.append(_browse_item(root_path, root_path, os.access(root_path, os.W_OK)))
+    return result
 
-    if not root.exists() or not root.is_dir():
-        # 前端可能传了宿主机路径（如 /volume1/...），回退到 /data 避免空白
-        root = fallback.resolve()
 
-    entries = []
+def _list_children(dir_path: Path) -> list[dict]:
+    result: list[dict] = []
     try:
-        for item in root.iterdir():
-            if item.name.startswith("."):
+        for child in dir_path.iterdir():
+            name = child.name
+            if name.startswith("."):
                 continue
             try:
-                is_dir = item.is_dir()
+                if not child.is_dir():
+                    continue
+                writable = os.access(child, os.W_OK)
             except OSError:
                 continue
-            if not is_dir and not includeFiles:
-                continue
-            entries.append(
-                {
-                    "name": item.name,
-                    "path": str(item),
-                    "isDir": is_dir,
-                    "type": "directory" if is_dir else "file",
-                }
-            )
+            result.append(_browse_item(name, str(child.absolute()), writable))
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
+    except OSError:
+        return []
+    result.sort(key=lambda e: e["name"].lower())
+    return result
 
-    entries.sort(key=lambda e: (not e["isDir"], e["name"].lower()))
-    return ApiResponse.ok(entries)
+
+@router.get("/browse")
+def browse(path: str | None = None):
+    """浏览服务器目录：不传 path 返回磁盘根；传 path 列出子目录。契约对齐旧版 Java。"""
+    if not path or not str(path).strip():
+        return ApiResponse.ok(_list_roots())
+    dir_path = Path(path)
+    if not dir_path.is_dir():
+        return ApiResponse.ok([])
+    return ApiResponse.ok(_list_children(dir_path))
