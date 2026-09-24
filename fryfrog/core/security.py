@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import re
 import secrets
 import threading
@@ -21,16 +22,18 @@ ANONYMOUS_ID = -1
 MIN_PASSWORD_LENGTH = 8
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]{3,64}$")
 
-# 当前请求用户（由中间件写入）
-_request_local = threading.local()
+# 当前请求用户（由中间件写入）。用 ContextVar，便于 FastAPI 线程池传播
+_current_user_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "current_user_id", default=None
+)
 
 
 def set_current_user_id(user_id: int | None) -> None:
-    _request_local.user_id = user_id
+    _current_user_id.set(user_id)
 
 
 def current_user_id_or_none() -> int | None:
-    return getattr(_request_local, "user_id", None)
+    return _current_user_id.get()
 
 
 def current_user_id() -> int:
