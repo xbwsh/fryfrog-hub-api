@@ -52,6 +52,9 @@ class TmdbClient:
     def get_season(self, tmdb_id: int, season: int) -> dict | None:
         return self._get(f"/tv/{tmdb_id}/season/{season}")
 
+    def get_episode(self, tv_id: int, season: int, episode: int) -> dict | None:
+        return self._get(f"/tv/{tv_id}/season/{season}/episode/{episode}")
+
     def get_person(self, person_id: int) -> dict | None:
         return self._get(f"/person/{person_id}", {"append_to_response": "combined_credits"})
 

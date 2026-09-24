@@ -106,6 +106,7 @@ def _detail_dict(book: Ebook, progress: EbookProgress | None) -> dict:
         "publisher": book.publisher,
         "language": book.language,
         "pubYear": book.pub_year,
+        "rating": book.rating,
         "overview": book.overview,
         "series": book.series,
         "seriesPart": book.series_part,

@@ -96,6 +96,8 @@ def bind(db: Session, book_id: int, source: str, source_id: str) -> Ebook:
         book.series_part = detail["seriesPart"]
     if detail.get("pubYear") is not None:
         book.pub_year = detail["pubYear"]
+    if detail.get("rating") is not None:
+        book.rating = detail["rating"]
     book.source_id = detail.get("sourceId") or source_id
     book.metadata_source = "scrape"
     if detail.get("coverUrl"):
@@ -122,6 +124,7 @@ def bind_summary(book: Ebook) -> dict:
         "author": book.author,
         "publisher": book.publisher,
         "pubYear": book.pub_year,
+        "rating": book.rating,
         "overview": book.overview,
         "series": book.series,
         "coverUrl": signed_url(f"/api/v1/ebooks/{book.id}/cover")

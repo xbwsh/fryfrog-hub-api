@@ -207,6 +207,8 @@ def _detail_dict(db, book: Audiobook) -> dict:
         "title": book.title,
         "author": book.author,
         "narrator": book.narrator,
+        "pubYear": book.pub_year,
+        "rating": book.rating,
         "overview": book.overview,
         "metadataSource": book.metadata_source,
         "series": book.series,

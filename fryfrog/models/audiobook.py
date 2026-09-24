@@ -22,6 +22,8 @@ class Audiobook(TimestampMixin, Base):
     author: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     narrator: Mapped[str | None] = mapped_column(String, nullable=True)
     overview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pub_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rating: Mapped[float | None] = mapped_column(Double, nullable=True)
     source_id: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_source: Mapped[str | None] = mapped_column(String, nullable=True)
     series: Mapped[str | None] = mapped_column(String, nullable=True)

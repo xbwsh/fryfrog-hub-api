@@ -100,6 +100,10 @@ def bind(db: Session, book_id: int, source: str, source_id: str) -> Audiobook:
             setattr(book, field, val)
     if detail.get("seriesPart") is not None:
         book.series_part = detail["seriesPart"]
+    if detail.get("year") is not None:
+        book.pub_year = detail["year"]
+    if detail.get("rating") is not None:
+        book.rating = detail["rating"]
     book.source_id = detail.get("sourceId") or source_id
     book.metadata_source = "scrape"
     if detail.get("coverUrl"):
@@ -127,6 +131,8 @@ def bind_summary(book: Audiobook) -> dict:
         "narrator": book.narrator,
         "overview": book.overview,
         "series": book.series,
+        "pubYear": book.pub_year,
+        "rating": book.rating,
         "coverUrl": signed_url(f"/api/v1/audiobooks/{book.id}/cover")
         if book.cover_art_path
         else None,

@@ -82,6 +82,12 @@ def _apply_movie_detail(video: Video, detail: dict, client: TmdbClient) -> None:
     video.metadata_source = "tmdb"
     video.metadata_updated_at = datetime.now()
     video.status = detail.get("status")
+    if detail.get("tagline"):
+        video.tags = detail["tagline"]
+    companies = detail.get("production_companies") or []
+    names = [c.get("name") for c in companies if c.get("name")]
+    if names:
+        video.studio = ",".join(names[:5])
     runtime = detail.get("runtime")
     if runtime:
         video.duration_minutes = int(runtime)
@@ -156,7 +162,33 @@ def _apply_tv_detail(db: Session, video: Video, detail: dict, client: TmdbClient
     video.series = series
     video.series_id = series.id
     db.flush()
+    _apply_episode_detail(db, video, detail, client)
     return series
+
+
+def _apply_episode_detail(db: Session, video: Video, show_detail: dict, client: TmdbClient) -> None:
+    """有季/集号时拉分集元数据，覆盖集标题/简介/时长，不覆盖剧集整体字段。"""
+    if not video.season_number or not video.episode_number or not show_detail.get("id"):
+        return
+    ep = client.get_episode(show_detail["id"], video.season_number, video.episode_number)
+    if not ep:
+        return
+    if ep.get("name"):
+        video.title = ep["name"]
+    if ep.get("overview"):
+        video.overview = ep["overview"]
+    if ep.get("air_date"):
+        video.release_date = ep["air_date"]
+    if ep.get("vote_average") is not None:
+        video.rating = ep["vote_average"]
+    if ep.get("vote_count") is not None:
+        video.vote_count = ep["vote_count"]
+    runtime = ep.get("runtime")
+    if runtime:
+        video.duration_minutes = int(runtime)
+    still = ep.get("still_path")
+    if still:
+        video.poster_url = client.image_url(still, "w500")
 
 
 def save_actors(db: Session, video: Video, cast: list[dict]) -> None:

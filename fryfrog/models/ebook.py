@@ -15,6 +15,7 @@ class Ebook(TimestampMixin, Base):
     publisher: Mapped[str | None] = mapped_column(String, nullable=True)
     language: Mapped[str | None] = mapped_column(String, nullable=True)
     pub_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rating: Mapped[float | None] = mapped_column(Double, nullable=True)
     overview: Mapped[str | None] = mapped_column(Text, nullable=True)
     series: Mapped[str | None] = mapped_column(String, nullable=True)
     series_part: Mapped[int | None] = mapped_column(Integer, nullable=True)
