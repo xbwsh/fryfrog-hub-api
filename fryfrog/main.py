@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -25,12 +26,32 @@ from fryfrog.models.user import User
 logger = logging.getLogger("fryfrog")
 
 
+def _setup_logging() -> None:
+    """stdout + app.log（供 /api/v1/logs 导出）。"""
+    settings = get_settings()
+    log_dir = Path(settings.log_home or "logs")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "app.log", encoding="utf-8")
+    except OSError:
+        file_handler = None
+
+    fmt = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    stream = logging.StreamHandler()
+    stream.setFormatter(fmt)
+    root.addHandler(stream)
+    if file_handler is not None:
+        file_handler.setFormatter(fmt)
+        root.addHandler(file_handler)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+    _setup_logging()
     init_db()
     _bootstrap_admin()
     _init_libraries()
