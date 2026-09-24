@@ -1,28 +1,53 @@
-"""有声书刮削：Bangumi（TYPE_REAL=6 + TYPE_BOOK=1）。"""
+"""有声书刮削：Bangumi / Open Library / Google Books 多源。"""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-import httpx
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
+from fryfrog.core.http import make_client
 from fryfrog.models.audiobook import Audiobook
 from fryfrog.services.bangumi import TYPE_BOOK, TYPE_REAL, BangumiClient
 
 logger = logging.getLogger(__name__)
 
-SOURCE = "bangumi"
+SOURCE_BANGUMI = "bangumi"
+SOURCE_OPENLIB = "openlibrary"
+SOURCE_GOOGLE = "googlebooks"
+SOURCES = (SOURCE_BANGUMI, SOURCE_OPENLIB, SOURCE_GOOGLE)
 
 
 def list_providers() -> list[dict]:
-    return [{"source": SOURCE, "displayName": "Bangumi"}]
+    return [
+        {"source": SOURCE_BANGUMI, "displayName": "Bangumi", "bestFor": "中文/日文有声书、广播剧"},
+        {"source": SOURCE_OPENLIB, "displayName": "Open Library", "bestFor": "英文图书元数据"},
+        {"source": SOURCE_GOOGLE, "displayName": "Google Books", "bestFor": "全球图书与封面"},
+    ]
 
 
-def _parse_subject(node: dict) -> dict | None:
+def _blank(source: str, source_id: str | None = None) -> dict:
+    return {
+        "source": source,
+        "sourceId": source_id,
+        "title": None,
+        "author": None,
+        "narrator": None,
+        "overview": None,
+        "coverUrl": None,
+        "series": None,
+        "seriesPart": None,
+        "year": None,
+        "rating": None,
+    }
+
+
+# -------------------- Bangumi --------------------
+
+
+def _parse_bangumi(node: dict) -> dict | None:
     title = (node.get("name_cn") or node.get("name") or "").strip()
     if not title:
         return None
@@ -35,39 +60,203 @@ def _parse_subject(node: dict) -> dict | None:
     date = (node.get("date") or "").strip()
     if len(date) >= 4 and date[:4].isdigit():
         year = int(date[:4])
-    return {
-        "source": SOURCE,
-        "sourceId": str(node.get("id") or "") or None,
-        "title": title,
-        "author": BangumiClient.infobox_value(node, "作者", "原作"),
-        "narrator": BangumiClient.infobox_value(node, "朗读者", "演播", "主演"),
-        "overview": summary,
-        "coverUrl": cover,
-        "series": None,
-        "seriesPart": None,
-        "year": year,
-        "rating": rating,
-    }
+    item = _blank(SOURCE_BANGUMI, str(node.get("id") or "") or None)
+    item.update(
+        {
+            "title": title,
+            "author": BangumiClient.infobox_value(node, "作者", "原作"),
+            "narrator": BangumiClient.infobox_value(node, "朗读者", "演播", "主演"),
+            "overview": summary,
+            "coverUrl": cover,
+            "series": BangumiClient.infobox_value(node, "系列", "系列名"),
+            "year": year,
+            "rating": rating,
+        }
+    )
+    return item
+
+
+def _search_bangumi(keyword: str) -> list[dict]:
+    client = BangumiClient()
+    out = []
+    for node in client.search_subjects(keyword, [TYPE_REAL, TYPE_BOOK]):
+        parsed = _parse_bangumi(node)
+        if parsed:
+            out.append(parsed)
+    return out
+
+
+def _fetch_bangumi(source_id: str) -> dict | None:
+    node = BangumiClient().get_subject(source_id)
+    return _parse_bangumi(node) if node else None
+
+
+# -------------------- Open Library --------------------
+
+
+def _parse_openlib(doc: dict) -> dict | None:
+    title = (doc.get("title") or "").strip()
+    if not title:
+        return None
+    authors = doc.get("author_name") or []
+    cover = None
+    cover_i = doc.get("cover_i")
+    if cover_i:
+        cover = f"https://covers.openlibrary.org/b/id/{cover_i}-L.jpg"
+    year = doc.get("first_publish_year")
+    item = _blank(SOURCE_OPENLIB, (doc.get("key") or "").split("/")[-1] or None)
+    item.update(
+        {
+            "title": title,
+            "author": "、".join(a for a in authors[:3] if a) or None,
+            "overview": None,
+            "coverUrl": cover,
+            "year": int(year) if isinstance(year, int) or (str(year).isdigit()) else None,
+        }
+    )
+    return item
+
+
+def _search_openlib(keyword: str) -> list[dict]:
+    try:
+        with make_client() as client:
+            resp = client.get(
+                "https://openlibrary.org/search.json",
+                params={"q": keyword, "limit": 20},
+            )
+            resp.raise_for_status()
+            docs = resp.json().get("docs") or []
+    except Exception:
+        logger.exception("OpenLibrary search failed")
+        return []
+    out = []
+    for doc in docs:
+        parsed = _parse_openlib(doc)
+        if parsed:
+            out.append(parsed)
+    return out
+
+
+def _fetch_openlib(source_id: str) -> dict | None:
+    try:
+        with make_client() as client:
+            resp = client.get(f"https://openlibrary.org/works/OL{source_id}W.json")
+            if resp.status_code == 404:
+                resp = client.get(f"https://openlibrary.org{source_id}")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        logger.exception("OpenLibrary fetch failed: %s", source_id)
+        return None
+    title = (data.get("title") or "").strip()
+    if not title:
+        return None
+    desc = data.get("description")
+    if isinstance(desc, dict):
+        desc = desc.get("value")
+    covers = data.get("covers") or []
+    cover = f"https://covers.openlibrary.org/b/id/{covers[0]}-L.jpg" if covers else None
+    item = _blank(SOURCE_OPENLIB, source_id)
+    item.update({"title": title, "overview": (desc or "").strip() or None, "coverUrl": cover})
+    return item
+
+
+# -------------------- Google Books --------------------
+
+
+def _parse_google(vol: dict) -> dict | None:
+    info = vol.get("volumeInfo") or {}
+    title = (info.get("title") or "").strip()
+    if not title:
+        return None
+    images = info.get("imageLinks") or {}
+    cover = images.get("thumbnail") or images.get("smallThumbnail")
+    if cover:
+        cover = cover.replace("http://", "https://")
+    date = (info.get("publishedDate") or "").strip()
+    year = int(date[:4]) if len(date) >= 4 and date[:4].isdigit() else None
+    rating = info.get("averageRating")
+    item = _blank(SOURCE_GOOGLE, vol.get("id"))
+    item.update(
+        {
+            "title": title,
+            "author": "、".join(info.get("authors") or []) or None,
+            "overview": (info.get("description") or "").strip() or None,
+            "coverUrl": cover,
+            "year": year,
+            "rating": round(float(rating), 1) if rating else None,
+        }
+    )
+    return item
+
+
+def _search_google(keyword: str) -> list[dict]:
+    try:
+        with make_client() as client:
+            resp = client.get(
+                "https://www.googleapis.com/books/v1/volumes",
+                params={"q": keyword, "maxResults": 20},
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items") or []
+    except Exception:
+        logger.exception("Google Books search failed")
+        return []
+    out = []
+    for vol in items:
+        parsed = _parse_google(vol)
+        if parsed:
+            out.append(parsed)
+    return out
+
+
+def _fetch_google(source_id: str) -> dict | None:
+    try:
+        with make_client() as client:
+            resp = client.get(f"https://www.googleapis.com/books/v1/volumes/{source_id}")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return _parse_google(resp.json())
+    except Exception:
+        logger.exception("Google Books fetch failed: %s", source_id)
+        return None
+
+
+# -------------------- 统一入口 --------------------
 
 
 def search(keyword: str, source: str | None = None) -> list[dict]:
     if not keyword or not keyword.strip():
         raise BadRequestException("搜索关键词不能为空")
-    if source and source != SOURCE:
-        raise BadRequestException(f"未知数据源: {source}")
-    client = BangumiClient()
-    results = []
-    for node in client.search_subjects(keyword.strip(), [TYPE_REAL, TYPE_BOOK]):
-        parsed = _parse_subject(node)
-        if parsed:
-            results.append(parsed)
+    key = keyword.strip()
+    if source:
+        if source not in SOURCES:
+            raise BadRequestException(f"未知数据源: {source}")
+        return {
+            SOURCE_BANGUMI: _search_bangumi,
+            SOURCE_OPENLIB: _search_openlib,
+            SOURCE_GOOGLE: _search_google,
+        }[source](key)
+
+    # 未指定源：并行语义上按源顺序聚合（串行足够，控制请求量）
+    results: list[dict] = []
+    results.extend(_search_bangumi(key)[:10])
+    results.extend(_search_openlib(key)[:10])
+    results.extend(_search_google(key)[:10])
     return results
 
 
-def fetch_detail(source_id: str) -> dict | None:
-    client = BangumiClient()
-    node = client.get_subject(source_id)
-    return _parse_subject(node) if node else None
+def fetch_detail(source: str, source_id: str) -> dict | None:
+    if source == SOURCE_BANGUMI:
+        return _fetch_bangumi(source_id)
+    if source == SOURCE_OPENLIB:
+        return _fetch_openlib(source_id)
+    if source == SOURCE_GOOGLE:
+        return _fetch_google(source_id)
+    raise BadRequestException(f"未知数据源: {source}")
 
 
 def _download_cover(book: Audiobook, cover_url: str) -> None:
@@ -76,8 +265,6 @@ def _download_cover(book: Audiobook, cover_url: str) -> None:
         return
     target = book_dir / "cover.jpg"
     try:
-        from fryfrog.core.http import make_client
-
         with make_client(timeout=20.0) as client:
             resp = client.get(cover_url)
         if resp.status_code == 200 and resp.content:
@@ -88,12 +275,12 @@ def _download_cover(book: Audiobook, cover_url: str) -> None:
 
 
 def bind(db: Session, book_id: int, source: str, source_id: str) -> Audiobook:
-    if source != SOURCE:
+    if source not in SOURCES:
         raise BadRequestException(f"未知数据源: {source}")
     book = db.get(Audiobook, book_id)
     if book is None:
         raise ResourceNotFoundException("Audiobook", "id", book_id)
-    detail = fetch_detail(source_id)
+    detail = fetch_detail(source, source_id)
     if not detail:
         raise ResourceNotFoundException("ScrapeResult", "sourceId", source_id)
 
@@ -108,7 +295,7 @@ def bind(db: Session, book_id: int, source: str, source_id: str) -> Audiobook:
     if detail.get("rating") is not None:
         book.rating = detail["rating"]
     book.source_id = detail.get("sourceId") or source_id
-    book.metadata_source = "scrape"
+    book.metadata_source = f"scrape:{source}"
     if detail.get("coverUrl"):
         _download_cover(book, detail["coverUrl"])
     db.flush()
@@ -136,6 +323,7 @@ def bind_summary(book: Audiobook) -> dict:
         "series": book.series,
         "pubYear": book.pub_year,
         "rating": book.rating,
+        "metadataSource": book.metadata_source,
         "coverUrl": signed_url(f"/api/v1/audiobooks/{book.id}/cover")
         if book.cover_art_path
         else None,
