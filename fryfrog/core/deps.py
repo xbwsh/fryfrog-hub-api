@@ -98,7 +98,7 @@ async def auth_middleware(request: Request, call_next):
 
     # 由依赖注入/路由处理；中间件只做放行判断需要 auth 的路径
     if path in ("/api/v1/auth/login", "/api/v1/auth/status") or path.startswith(
-        ("/api-docs", "/swagger-ui", "/openapi")
+        ("/api-docs", "/swagger-ui", "/openapi", "/redoc", "/docs")
     ):
         return await call_next(request)
 
