@@ -167,6 +167,35 @@ def _detail_dict(db, comic: Comic) -> dict:
 @router.post("/scan")
 def scan(
     db: DbSession,
+    media_lib: MediaLibraryService = Depends(get_media_library_service),
+    libraryId: int | None = None,
+):
+    _require_admin(db)
+    from fryfrog.services.scan import scan_all_enabled, scan_library
+
+    if libraryId is not None:
+        lib = media_lib.get_library_by_id(db, libraryId)
+        result = comic_scan.scan_comic_library(db, lib)
+        return ApiResponse.ok(result)
+    scan_all_enabled(db)
+    return ApiResponse.ok({"status": "started"})
+
+
+@router.post("/organize")
+def organize(
+    db: DbSession,
+    media_lib: MediaLibraryService = Depends(get_media_library_service),
+    libraryId: int | None = None,
+    dryRun: bool = True,
+):
+    """库根压缩包整理到 作品名/ 目录；默认 dryRun 只预览。"""
+    _require_admin(db)
+    if libraryId is None:
+        raise BadRequestException("libraryId 不能为空")
+    lib = media_lib.get_library_by_id(db, libraryId)
+    return ApiResponse.ok(comic_organize.organize_comics(db, lib, dry_run=dryRun))
+def scan(
+    db: DbSession,
     libraryId: int | None = None,
     media_lib: MediaLibraryService = Depends(get_media_library_service),
 ):
