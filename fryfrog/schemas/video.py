@@ -492,8 +492,12 @@ def _video_logo_url(video) -> str | None:
     from pathlib import Path
 
     from fryfrog.core.signer import sign
+    from fryfrog.services.video_assets import find_local_video_logo
 
     if video.logo_local_path and Path(video.logo_local_path).exists():
+        return sign(f"/api/v1/video/{video.id}/logo")
+    # movie-logo.png next to media — still expose the endpoint URL.
+    if find_local_video_logo(video) is not None:
         return sign(f"/api/v1/video/{video.id}/logo")
     return None
 

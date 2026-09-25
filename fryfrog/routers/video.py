@@ -66,6 +66,15 @@ def _require_visible(db: Session, library_id: int | None, resource: str, rid: in
 
 
 def _video_logo_url(video: Video) -> str | None:
+    # Local file next to media (movie-logo.png) wins if logo_local_path empty.
+    if not (video.logo_local_path and Path(video.logo_local_path).exists()):
+        local = assets.find_local_video_logo(video)
+        if local is not None:
+            try:
+                video.logo_local_path = str(local)
+            except Exception:
+                pass
+            return sign(f"/api/v1/video/{video.id}/logo")
     return assets.logo_file_url(video.logo_local_path, f"/api/v1/video/{video.id}/logo")
 
 
@@ -733,6 +742,12 @@ def get_logo(db: DbSession, id: int):
         return FileResponse(
             video.logo_local_path, media_type=assets.media_type_of(video.logo_local_path)
         )
+    # Side-by-side logo (e.g. …/喜剧之王/movie-logo.png).
+    local = assets.find_local_video_logo(video)
+    if local is not None:
+        video.logo_local_path = str(local)
+        db.flush()
+        return FileResponse(str(local), media_type=assets.media_type_of(local.name))
     logo_url = video.logo_url
     if not logo_url and video.tmdb_id:
         logos = assets.movie_logo_options(video.tmdb_id)
@@ -1680,6 +1695,13 @@ def get_series_logo(db: DbSession, id: int):
         return FileResponse(
             series.logo_local_path, media_type=assets.media_type_of(series.logo_local_path)
         )
+    # Local tvshow-logo / logo under season or episode folder.
+    episodes = vs.series_videos(db, id)
+    local = assets.find_local_series_logo(db, episodes)
+    if local is not None:
+        series.logo_local_path = str(local)
+        db.flush()
+        return FileResponse(str(local), media_type=assets.media_type_of(local.name))
     logo_url = series.logo_url
     if not logo_url and series.tmdb_id:
         logos = assets.tv_logo_options(series.tmdb_id)

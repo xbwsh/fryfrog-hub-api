@@ -85,6 +85,77 @@ def logo_file_url(local_path: str | None, api_path: str) -> str | None:
     return None
 
 
+# Common logos users drop next to media (Jellyfin / Kodi / Ember style).
+VIDEO_LOGO_FILENAMES = (
+    "movie-logo.png",
+    "movie-logo.jpg",
+    "movie-logo.jpeg",
+    "movie-logo.webp",
+    "clearlogo.png",
+    "clearlogo.jpg",
+    "logo.png",
+    "logo.jpg",
+)
+SERIES_LOGO_FILENAMES = (
+    "tvshow-logo.png",
+    "tvshow-logo.jpg",
+    "clearlogo.png",
+    "clearlogo.jpg",
+    "logo.png",
+    "logo.jpg",
+)
+
+
+def find_local_video_logo(video: Video) -> Path | None:
+    """Side-by-side logo next to the media file (e.g. movie-logo.png)."""
+    try:
+        parent = Path(video.file_path).parent
+    except Exception:
+        return None
+    for name in VIDEO_LOGO_FILENAMES:
+        p = parent / name
+        try:
+            if p.is_file():
+                return p
+        except Exception:
+            continue
+    return None
+
+
+def find_local_series_logo(db: Session, episodes: list[Video]) -> Path | None:
+    """tvshow-logo / logo under episode folder or season metadata dir."""
+    if not episodes:
+        return None
+    seen: set[str] = set()
+    for ep in episodes:
+        candidates: list[Path] = []
+        try:
+            parent = Path(ep.file_path).parent
+            for name in SERIES_LOGO_FILENAMES:
+                candidates.append(parent / name)
+            # Season folder: …/第 1 季/tvshow-logo.png
+            for name in ("tvshow-logo.png", "tvshow-logo.jpg", "logo.png"):
+                candidates.append(parent / name)
+        except Exception:
+            pass
+        season_dir = get_season_dir(db, ep)
+        if season_dir:
+            for name in SERIES_LOGO_FILENAMES:
+                candidates.append(season_dir / name)
+        for p in candidates:
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if p.is_file():
+                    return p
+            except Exception:
+                continue
+    return None
+
+
+
 # -------------------- NFO --------------------
 
 def find_nfo_path(db: Session, video: Video) -> Path | None:
