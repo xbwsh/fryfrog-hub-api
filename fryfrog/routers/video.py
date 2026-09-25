@@ -1665,6 +1665,19 @@ def get_series_fanart(db: DbSession, id: int):
         title = series.title
         if series.backdrop_local_path and Path(series.backdrop_local_path).exists():
             return FileResponse(series.backdrop_local_path, media_type="image/jpeg")
+        episodes = vs.series_videos(db, id)
+        # Local horizontal art next to episodes / season folder.
+        local = _find_local_series_fanart(db, episodes)
+        if local is not None:
+            try:
+                series.backdrop_local_path = str(local)
+                db.flush()
+            except Exception:
+                logger.debug("persist series fanart failed id=%s", id)
+            return FileResponse(str(local), media_type="image/jpeg")
+        # Series row has no backdrop — reuse first episode art (incl. frame grab).
+        if episodes:
+            return get_fanart(db, episodes[0].id)
         backdrop_url = series.backdrop_url
     else:
         video = vs.get_video(db, id)
@@ -1682,8 +1695,52 @@ def get_series_fanart(db: DbSession, id: int):
         return Response(content=placeholder_jpeg(1920, 400, title), media_type="image/jpeg")
     data = assets.fetch_tmdb_image(backdrop_url)
     if not data:
+        episodes = vs.series_videos(db, id) if series is not None else []
+        if episodes:
+            return get_fanart(db, episodes[0].id)
         return Response(content=placeholder_jpeg(1920, 400, title), media_type="image/jpeg")
     return Response(content=data, media_type="image/jpeg")
+
+
+def _find_local_series_fanart(db: DbSession, episodes: list) -> Path | None:
+    """Horizontal art under episode/season folders (fanart.jpg, series-fanart, …)."""
+    if not episodes:
+        return None
+    names = (
+        "fanart.jpg",
+        "fanart.png",
+        "tvshow-fanart.jpg",
+        "series-fanart.jpg",
+        "backdrop.jpg",
+        "clearart.jpg",
+    )
+    seen: set[str] = set()
+    for ep in episodes:
+        candidates: list[Path] = []
+        try:
+            parent = Path(ep.file_path).parent
+            for n in names:
+                candidates.append(parent / n)
+            base = vs.get_base_name(ep.file_name)
+            candidates.append(parent / f"{base}-fanart.jpg")
+            candidates.append(parent / f"{base}-series-fanart.jpg")
+        except Exception:
+            pass
+        season_dir = vs.get_season_dir(db, ep)
+        if season_dir:
+            for n in names:
+                candidates.append(season_dir / n)
+        for p in candidates:
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if p.is_file():
+                    return p
+            except Exception:
+                continue
+    return None
 
 
 @series_router.get("/{id:int}/logo")
