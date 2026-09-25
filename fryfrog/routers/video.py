@@ -1549,7 +1549,23 @@ def get_series_cover(db: DbSession, id: int):
         title = series.title
         if series.poster_local_path and Path(series.poster_local_path).exists():
             return FileResponse(series.poster_local_path, media_type="image/jpeg")
+
+        # Season folder often has `tvshow-poster.jpg` even when the series
+        # row has no poster_local_path / poster_url. Try season dirs first
+        # so the shelf matches what the user dropped next to episodes.
+        episodes = vs.series_videos(db, id)
+        season_poster = _find_season_tvshow_poster(db, episodes)
+        if season_poster is not None:
+            try:
+                series.poster_local_path = str(season_poster)
+                db.flush()
+            except Exception:
+                logger.debug("persist series poster failed id=%s", id)
+            return FileResponse(str(season_poster), media_type="image/jpeg")
+
         poster_url = series.poster_url
+        if not poster_url and episodes:
+            return get_cover(db, episodes[0].id)
     else:
         video = vs.get_video(db, id)
         title = video.title
@@ -1563,8 +1579,41 @@ def get_series_cover(db: DbSession, id: int):
         return Response(content=placeholder_jpeg(300, 450, title), media_type="image/jpeg")
     data = assets.fetch_tmdb_image(poster_url)
     if not data:
+        # TMDB fetch failed / offline — still prefer episode art over gray box.
+        episodes = vs.series_videos(db, id) if series is not None else []
+        if episodes:
+            return get_cover(db, episodes[0].id)
         return Response(content=placeholder_jpeg(300, 450, title), media_type="image/jpeg")
     return Response(content=data, media_type="image/jpeg")
+
+
+def _find_season_tvshow_poster(db: DbSession, episodes: list) -> Path | None:
+    """Locate `tvshow-poster.jpg` under episode folders / season metadata dirs."""
+    if not episodes:
+        return None
+    seen_dirs: set[str] = set()
+    for ep in episodes:
+        candidates: list[Path] = []
+        # Next to the actual media file (…/第 1 季/tvshow-poster.jpg).
+        try:
+            candidates.append(Path(ep.file_path).parent / "tvshow-poster.jpg")
+        except Exception:
+            pass
+        # Reconstructed season metadata dir (library + title + 第 N 季).
+        season_dir = vs.get_season_dir(db, ep)
+        if season_dir:
+            candidates.append(season_dir / "tvshow-poster.jpg")
+        for p in candidates:
+            key = str(p)
+            if key in seen_dirs:
+                continue
+            seen_dirs.add(key)
+            try:
+                if p.is_file():
+                    return p
+            except Exception:
+                continue
+    return None
 
 
 @series_router.get("/{id:int}/season/{season_number:int}/cover")
