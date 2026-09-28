@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from fryfrog.core.utils import clean_title
+from fryfrog.core.utils import clean_title, primary_title
 from fryfrog.media_core import get_media_probe
 from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video, VideoSeries
@@ -41,7 +41,9 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             video.format = path.suffix.lstrip(".").upper() or None
 
             title, season, episode = parse_episode(path.stem)
-            display = clean_title(title) or path.stem
+            # 主标题：中文名.英文名.2025 → 中文名。剧名与 TMDB 名一致，
+            # 避免同一部剧因刮削先后而分裂成多个剧集/目录。
+            display = primary_title(path.name) or clean_title(title) or path.stem
             if season is not None or episode is not None:
                 video.is_series = True
                 video.season_number = season or 1

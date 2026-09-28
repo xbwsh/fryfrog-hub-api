@@ -32,15 +32,22 @@ def _has_cjk(text: str | None) -> bool:
 
 
 def _select_show_name(video: Video) -> str:
-    if _has_cjk(video.title):
-        return video.title or "Unknown"
-    if _has_cjk(video.original_title):
-        return video.original_title or "Unknown"
-    return video.title or video.original_title or "Unknown"
+    # 剧集的 title 刮削后是分集名，剧名必须用 series_name，
+    # 否则每集都会各建一个顶层目录，整季被拆散。
+    if video.is_episode:
+        names = [video.series_name, video.title, video.original_title]
+    else:
+        names = [video.title, video.original_title, video.series_name]
+    for name in names:
+        if _has_cjk(name):
+            return name or "Unknown"
+    return next((name for name in names if name), "Unknown")
 
 
 def _clean_folder(title: str) -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*]', "_", clean_title(title)).strip()
+    # 目录名里不该再出现 SxxExx：季集已由「第 N 季/第 M 集」表达
+    text = re.sub(r"(?i)S\d{1,2}\s*E\d{1,3}", " ", clean_title(title))
+    cleaned = re.sub(r'[<>:"/\\|?*]', "_", re.sub(r"\s+", " ", text)).strip()
     return cleaned or "Unknown"
 
 
@@ -48,7 +55,7 @@ def get_metadata_dir(db: Session, video: Video) -> Path:
     season = video.season_number or 1
     episode = video.episode_number or 1
     show = _clean_folder(_select_show_name(video))
-    is_tv = (video.media_type or "").lower() == "tv"
+    is_tv = video.is_episode
     base: Path | None = None
     if video.library_id is not None:
         from fryfrog.models.library import MediaLibrary

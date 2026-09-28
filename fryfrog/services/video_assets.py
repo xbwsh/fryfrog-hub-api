@@ -305,7 +305,7 @@ def _tag(name: str, value) -> str:
 
 
 def _build_nfo(video: Video) -> str:
-    is_tv = (video.media_type or "").lower() == "tv"
+    is_tv = video.is_episode
     root = "episodedetails" if is_tv else "movie"
     parts = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',

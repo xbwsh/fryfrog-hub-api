@@ -34,3 +34,18 @@ def test_password_hash():
 
 def test_clean_title():
     assert "Inception" in clean_title("Inception.2010.1080p.BluRay.x264")
+
+
+def test_primary_title():
+    """发布名取主标题：中文名.英文名.年份.SxxExx → 中文名。"""
+    from fryfrog.core.utils import primary_title
+
+    assert primary_title(
+        "拜托请穿上，鹰峰同学.Haite Kudasai, Takamine-san.2025."
+        "S01E01.2160p.BDRip.HEVC.10bit.FLAC.mkv"
+    ) == "拜托请穿上，鹰峰同学"
+    assert primary_title("间谍过家家.SPY×FAMILY.2022.S01E01.1080p.WEB-DL.mkv") == "间谍过家家"
+    # 无中文段则取整名，且标题自带的年份要保留
+    assert primary_title("Show.Name.2025.S01E01.1080p.BluRay.x264.mkv") == "Show Name"
+    assert primary_title("Blade Runner 2049.2017.2160p.BluRay.x265.mkv") == "Blade Runner 2049"
+    assert primary_title("Inception.2010.1080p.BluRay.x264.mkv") == "Inception"

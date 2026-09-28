@@ -97,6 +97,11 @@ class Video(TimestampMixin, Base):
 
     series: Mapped[VideoSeries | None] = relationship(lazy="joined")
 
+    @property
+    def is_episode(self) -> bool:
+        """是否按剧集分集处理：扫描出集号（is_series）或已刮削为 tv。"""
+        return bool(self.is_series) or (self.media_type or "").lower() == "tv"
+
 
 class VideoActor(TimestampMixin, Base):
     __tablename__ = "video_actors"

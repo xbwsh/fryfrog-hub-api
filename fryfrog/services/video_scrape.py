@@ -6,11 +6,45 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from fryfrog.core.utils import _CJK, clean_title, primary_title, title_head, title_parts
 from fryfrog.models.video import ActorProfile, Video, VideoActor, VideoSeries
 from fryfrog.services.tmdb import TmdbClient
 from fryfrog.services.video_assets import download_all_covers, generate_nfo
 
 logger = logging.getLogger(__name__)
+
+
+def search_queries(file_name: str | None, fallback: str = "") -> list[str]:
+    """生成 TMDB 查询候选（由长到短）。
+
+    发布名常见形如「中文名.英文名.2025.S01E01.2160p.BDRip.HEVC.10bit.FLAC」，
+    整名直接搜索往往 0 结果，故再退到主标题。纯拉丁名不拆段，避免把
+    「Show.Name」错拆成「Show」搜到无关作品。
+    """
+    queries: list[str] = []
+    head = title_head(file_name) if file_name else ""
+    full = clean_title(head)
+    if full:
+        queries.append(full)
+    primary = primary_title(file_name) if file_name else ""
+    if primary and primary not in queries:
+        queries.append(primary)
+    if _CJK.search(head):
+        for part in title_parts(file_name):
+            if part not in queries:
+                queries.append(part)
+    if fallback and fallback not in queries:
+        queries.append(fallback)
+    return queries[:4]
+
+
+def search_tmdb_best(queries: list[str], media_pref: str = "") -> dict | None:
+    """依次尝试候选查询词，返回首个有结果的最佳项。"""
+    for query in queries:
+        results = search_tmdb(query)
+        if results:
+            return next((r for r in results if r.get("mediaType") == media_pref), results[0])
+    return None
 
 
 def search_tmdb(query: str) -> list[dict]:
@@ -263,13 +297,11 @@ def rescrape_video(db: Session, video_id: int) -> list[Video]:
     from fryfrog.services.video_service import get_video
 
     video = get_video(db, video_id)
-    title = video.title or video.series_name or video.file_name
-    results = search_tmdb(title)
-    if not results:
-        return [video]
+    queries = search_queries(video.file_name, video.series_name or video.title)
     # 优先同类型
-    media_pref = (video.media_type or "").lower()
-    pick = next((r for r in results if r.get("mediaType") == media_pref), results[0])
+    pick = search_tmdb_best(queries, (video.media_type or "").lower())
+    if not pick:
+        return [video]
     return bind_series(db, video_id, pick["id"], pick["mediaType"] or "movie")
 
 
@@ -297,12 +329,11 @@ def scrape_video_if_needed(db: Session, video: Video) -> None:
         return
     if video.tmdb_id:
         return
-    title = video.series_name or video.title
-    results = search_tmdb(title)
-    if not results:
-        return
+    queries = search_queries(video.file_name, video.series_name or video.title)
     media_pref = (video.media_type or "").lower() or ("tv" if video.is_series else "movie")
-    pick = next((r for r in results if r.get("mediaType") == media_pref), results[0])
+    pick = search_tmdb_best(queries, media_pref)
+    if not pick:
+        return
     try:
         bind_series(db, video.id, pick["id"], pick["mediaType"] or media_pref)
         generate_nfo(db, video)
