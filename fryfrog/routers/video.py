@@ -1824,7 +1824,7 @@ VIDEO_CONTENT_TYPES = {
 }
 
 ALLOWED_SIZES = {"w92", "w154", "w185", "w342", "w500", "w780", "original"}
-TMDB_CDN = "https://image.tmdb.org/t"
+TMDB_CDN = "https://image.tmdb.org/t/p"
 
 
 def _video_content_type(name: str) -> str:

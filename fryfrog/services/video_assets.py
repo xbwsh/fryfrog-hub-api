@@ -357,27 +357,34 @@ def download_all_covers(db: Session, video: Video, force: bool = False) -> bool:
     return poster_ok or fanart_ok
 
 
+def _repair_tmdb_url(url: str) -> str:
+    """修正历史数据里缺 /p/ 的图片 URL（image.tmdb.org/t/{size} → /t/p/{size}）。"""
+    if "image.tmdb.org/t/p/" in url:
+        return url
+    return url.replace("image.tmdb.org/t/", "image.tmdb.org/t/p/", 1) if url.startswith("http") else url
+
+
 def _full_image_url(url: str) -> str:
     if url.startswith("http"):
-        return url
+        return _repair_tmdb_url(url)
     from fryfrog.config import get_settings
 
     size = get_settings().tmdb_image_size or "original"
-    return f"https://image.tmdb.org/t/{size}{url}"
+    return f"https://image.tmdb.org/t/p/{size}{url}"
 
 
 def _tmdb_image_urls(path: str) -> list[str]:
     """TMDB 图片 URL 列表（按尺寸回退）。统一走 make_client：有代理走代理，否则直连。"""
     if path.startswith("http"):
-        return [path]
+        return [_repair_tmdb_url(path)]
     if not path.startswith("/"):
         path = "/" + path
     return [
-        f"https://image.tmdb.org/t/original{path}",
-        f"https://image.tmdb.org/t/w780{path}",
-        f"https://image.tmdb.org/t/w500{path}",
-        f"https://image.tmdb.org/t/w342{path}",
-        f"https://image.tmdb.org/t/w300{path}",
+        f"https://image.tmdb.org/t/p/original{path}",
+        f"https://image.tmdb.org/t/p/w780{path}",
+        f"https://image.tmdb.org/t/p/w500{path}",
+        f"https://image.tmdb.org/t/p/w342{path}",
+        f"https://image.tmdb.org/t/p/w300{path}",
     ]
 
 

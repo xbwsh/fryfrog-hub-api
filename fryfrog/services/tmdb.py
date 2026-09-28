@@ -9,7 +9,7 @@ from fryfrog.core.http import make_client
 logger = logging.getLogger(__name__)
 
 TMDB_BASE = "https://api.themoviedb.org/3"
-IMAGE_BASE = "https://image.tmdb.org/t"
+IMAGE_BASE = "https://image.tmdb.org/t/p"
 
 
 class TmdbClient:
