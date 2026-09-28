@@ -686,6 +686,13 @@ def delete_watch_progress(db: DbSession, id: int):
 @router.get("/{id:int}/cover")
 def get_cover(db: DbSession, id: int):
     video = vs.get_video(db, id)
+    # 分集竖屏封面共用季海报，避免每集各存一张（季海报缺失时回退下方分集图）
+    if video.is_episode:
+        season_dir = vs.get_season_dir(db, video)
+        if season_dir:
+            season_poster = season_dir / "tvshow-poster.jpg"
+            if season_poster.is_file():
+                return FileResponse(str(season_poster), media_type="image/jpeg")
     if video.cover_art_path and Path(video.cover_art_path).exists():
         return FileResponse(video.cover_art_path, media_type="image/jpeg")
     poster = vs.get_poster_path(db, video)
@@ -1461,7 +1468,7 @@ def refresh_season_covers(db: DbSession, id: int):
     if not series.tmdb_id:
         return ApiResponse.error("系列没有 TMDB ID，无法获取资源")
     episodes = vs.series_videos(db, id)
-    season_posters = season_fanarts = episode_covers = actors = 0
+    season_posters = season_fanarts = episode_covers = cleaned_posters = actors = 0
     client = TmdbClient()
     seasons = {e.season_number or 1 for e in episodes}
     for sn in seasons:
@@ -1495,8 +1502,23 @@ def refresh_season_covers(db: DbSession, id: int):
                 ):
                     season_fanarts += 1
     for e in episodes:
-        if e.poster_url and assets.download_all_covers(db, e, force=False):
-            episode_covers += 1
+        # 已有季海报的分集：竖封面共用季海报，不再下载各自的 poster
+        season_dir = vs.get_season_dir(db, e)
+        shares_season_poster = bool(season_dir and (season_dir / "tvshow-poster.jpg").is_file())
+        if (e.poster_url and not shares_season_poster) or e.backdrop_url:
+            if assets.download_all_covers(db, e, force=False, poster=not shares_season_poster):
+                episode_covers += 1
+        # 自动删除重复的分集海报文件（含历史遗留）
+        if shares_season_poster:
+            poster = vs.get_poster_path(db, e)
+            try:
+                if poster.is_file():
+                    poster.unlink()
+                    cleaned_posters += 1
+            except OSError:
+                logger.debug("删除分集海报失败: %s", poster, exc_info=True)
+            if e.cover_art_path and not Path(e.cover_art_path).exists():
+                e.cover_art_path = None
         try:
             scrape.save_actors(db, e, cast)
             actors += 1
@@ -1509,6 +1531,7 @@ def refresh_season_covers(db: DbSession, id: int):
             "refreshedSeasonPosters": season_posters,
             "refreshedSeasonFanarts": season_fanarts,
             "refreshedEpisodeCovers": episode_covers,
+            "cleanedEpisodePosters": cleaned_posters,
             "refreshedActors": actors,
             "cleanedOldActorsDirs": 0,
             "totalSeasons": series.number_of_seasons,

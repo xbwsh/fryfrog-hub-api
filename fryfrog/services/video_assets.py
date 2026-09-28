@@ -342,10 +342,12 @@ def _build_nfo(video: Video) -> str:
 
 # -------------------- 封面 / Logo --------------------
 
-def download_all_covers(db: Session, video: Video, force: bool = False) -> bool:
+def download_all_covers(
+    db: Session, video: Video, force: bool = False, poster: bool = True
+) -> bool:
     poster_ok = False
     fanart_ok = False
-    if video.poster_url:
+    if poster and video.poster_url:
         poster_ok = download_image(_full_image_url(video.poster_url), get_poster_path(db, video), force)
         if poster_ok:
             video.cover_art_path = str(get_poster_path(db, video))
