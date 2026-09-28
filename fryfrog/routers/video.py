@@ -1461,7 +1461,7 @@ def refresh_season_covers(db: DbSession, id: int):
     if not series.tmdb_id:
         return ApiResponse.error("系列没有 TMDB ID，无法获取资源")
     episodes = vs.series_videos(db, id)
-    season_posters = episode_covers = actors = 0
+    season_posters = season_fanarts = episode_covers = actors = 0
     client = TmdbClient()
     seasons = {e.season_number or 1 for e in episodes}
     for sn in seasons:
@@ -1479,6 +1479,21 @@ def refresh_season_covers(db: DbSession, id: int):
                         season_posters += 1
     detail = client.get_tv(series.tmdb_id)
     cast = ((detail or {}).get("credits") or {}).get("cast") or []
+    # 季横屏：TMDB 无季级 backdrop，用剧 backdrop 写入各季目录 tvshow-fanart.jpg
+    backdrop_path = (detail or {}).get("backdrop_path")
+    backdrop_url = client.image_url(backdrop_path, "original") if backdrop_path else series.backdrop_url
+    if backdrop_url:
+        for sn in seasons:
+            ep = next((e for e in episodes if (e.season_number or 1) == sn), None)
+            if not ep:
+                continue
+            season_dir = vs.get_season_dir(db, ep)
+            if season_dir:
+                season_dir.mkdir(parents=True, exist_ok=True)
+                if assets.download_image(
+                    backdrop_url, season_dir / "tvshow-fanart.jpg", force=True
+                ):
+                    season_fanarts += 1
     for e in episodes:
         if e.poster_url and assets.download_all_covers(db, e, force=False):
             episode_covers += 1
@@ -1492,6 +1507,7 @@ def refresh_season_covers(db: DbSession, id: int):
             "seriesId": id,
             "seriesTitle": series.title,
             "refreshedSeasonPosters": season_posters,
+            "refreshedSeasonFanarts": season_fanarts,
             "refreshedEpisodeCovers": episode_covers,
             "refreshedActors": actors,
             "cleanedOldActorsDirs": 0,
