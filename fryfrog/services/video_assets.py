@@ -352,9 +352,13 @@ def download_all_covers(
         poster_ok = download_image(_full_image_url(video.poster_url), get_poster_path(db, video), force)
         if poster_ok:
             video.cover_art_path = str(get_poster_path(db, video))
-    # 分集不单独下载横屏：共用剧名根目录的总横屏 tvshow-fanart.jpg
-    if video.backdrop_url and not video.is_episode:
-        fanart_ok = download_image(_full_image_url(video.backdrop_url), get_fanart_path(db, video), force)
+    # 分集横屏是 TMDB 单集 still：分集恒定 force 下载，覆盖历史「剧 backdrop 拷贝」文件
+    if video.backdrop_url:
+        fanart_ok = download_image(
+            _full_image_url(video.backdrop_url),
+            get_fanart_path(db, video),
+            True if video.is_episode else force,
+        )
         if fanart_ok:
             video.backdrop_local_path = str(get_fanart_path(db, video))
     db.flush()

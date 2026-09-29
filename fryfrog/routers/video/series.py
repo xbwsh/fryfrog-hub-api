@@ -376,12 +376,22 @@ def refresh_season_covers(db: DbSession, id: int):
     if not series.tmdb_id:
         return ApiResponse.error("系列没有 TMDB ID，无法获取资源")
     episodes = vs.series_videos(db, id)
-    season_posters = episode_covers = cleaned_posters = cleaned_fanarts = actors = 0
+    season_posters = episode_covers = cleaned_posters = actors = 0
     client = TmdbClient()
     seasons = {e.season_number or 1 for e in episodes}
+    by_ep = {(e.season_number or 1, e.episode_number): e for e in episodes}
     for sn in seasons:
         season = client.get_season(series.tmdb_id, sn)
-        if season and season.get("poster_path"):
+        if not season:
+            continue
+        # 分集横屏用 TMDB 单集 still（季接口 episodes 自带 still_path，零额外请求）
+        for ep_info in season.get("episodes") or []:
+            target = by_ep.get((sn, ep_info.get("episode_number")))
+            if target is None or "still_path" not in ep_info:
+                continue
+            still = ep_info.get("still_path")
+            target.backdrop_url = client.image_url(still, "original") if still else None
+        if season.get("poster_path"):
             ep = next((e for e in episodes if (e.season_number or 1) == sn), None)
             if ep:
                 season_dir = vs.get_season_dir(db, ep)
@@ -414,19 +424,6 @@ def refresh_season_covers(db: DbSession, id: int):
                 logger.debug("删除分集海报失败: %s", poster, exc_info=True)
             if e.cover_art_path and not Path(e.cover_art_path).exists():
                 e.cover_art_path = None
-        # 分集横屏共用总横屏：清理系统生成的单集 fanart 下载/截帧（媒体旁手动放的不动）
-        for fanart_file in (
-            vs.get_fanart_path(db, e),
-            Path(e.file_path).parent / f"{vs.get_base_name(e.file_name)}-fanart-frame-v3.jpg",
-        ):
-            try:
-                if fanart_file.is_file():
-                    fanart_file.unlink()
-                    cleaned_fanarts += 1
-            except OSError:
-                logger.debug("删除分集横屏失败: %s", fanart_file, exc_info=True)
-        if e.backdrop_local_path and not Path(e.backdrop_local_path).exists():
-            e.backdrop_local_path = None
         try:
             scrape.save_actors(db, e, cast)
             actors += 1
@@ -443,7 +440,6 @@ def refresh_season_covers(db: DbSession, id: int):
             "refreshedSeasonFanarts": 0,
             "refreshedEpisodeCovers": episode_covers,
             "cleanedEpisodePosters": cleaned_posters,
-            "cleanedEpisodeFanarts": cleaned_fanarts,
             "refreshedActors": actors,
             "cleanedOldActorsDirs": 0,
             "totalSeasons": series.number_of_seasons,

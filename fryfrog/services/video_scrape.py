@@ -223,6 +223,11 @@ def _apply_episode_detail(db: Session, video: Video, show_detail: dict, client: 
     still = ep.get("still_path")
     if still:
         video.poster_url = client.image_url(still, "w500")
+        # 分集横屏用 TMDB 单集 still（每集独立），不再共用剧 backdrop
+        video.backdrop_url = client.image_url(still, "original")
+    else:
+        # 无 still：留空，读取端回退总横屏，避免每集重复下载同一张剧图
+        video.backdrop_url = None
 
 
 def save_actors(db: Session, video: Video, cast: list[dict]) -> None:
