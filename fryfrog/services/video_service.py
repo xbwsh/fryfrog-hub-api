@@ -76,6 +76,13 @@ def get_season_dir(db: Session, video: Video) -> Path | None:
     return md.parent if md else None
 
 
+def get_series_root_dir(db: Session, episodes: list[Video]) -> Path | None:
+    """剧名根目录（与季文件夹同级）：库根/剧名/，总封面 tvshow-poster.jpg 放这里。"""
+    if not episodes:
+        return None
+    return get_metadata_dir(db, episodes[0]).parent.parent
+
+
 def get_nfo_path(db: Session, video: Video) -> Path:
     return get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}.nfo"
 

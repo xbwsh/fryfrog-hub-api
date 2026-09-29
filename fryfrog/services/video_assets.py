@@ -20,6 +20,7 @@ from fryfrog.services.video_service import (
     get_nfo_path,
     get_poster_path,
     get_season_dir,
+    get_series_root_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -357,6 +358,43 @@ def download_all_covers(
             video.backdrop_local_path = str(get_fanart_path(db, video))
     db.flush()
     return poster_ok or fanart_ok
+
+
+def download_series_root_art(
+    db: Session, series: VideoSeries, episodes: list[Video], detail: dict | None = None
+) -> dict:
+    """总封面落地到剧名根目录（与季文件夹同级）：tvshow-poster.jpg + tvshow-fanart.jpg。
+
+    季横屏复用总横屏，不再逐季写入。detail 可传入已取好的 TMDB tv 详情避免重复请求。
+    """
+    from fryfrog.services.tmdb import TmdbClient
+
+    result = {"poster": False, "fanart": False}
+    root = get_series_root_dir(db, episodes)
+    if root is None or not series.tmdb_id:
+        return result
+    client = TmdbClient()
+    if detail is None:
+        detail = client.get_tv(series.tmdb_id) or {}
+    root.mkdir(parents=True, exist_ok=True)
+
+    poster_url = client.image_url(detail.get("poster_path")) or series.poster_url
+    if poster_url:
+        target = root / "tvshow-poster.jpg"
+        if download_image(_full_image_url(poster_url), target, force=True):
+            result["poster"] = True
+            series.poster_local_path = str(target)
+
+    backdrop_url = (
+        client.image_url(detail.get("backdrop_path"), "original") or series.backdrop_url
+    )
+    if backdrop_url:
+        target = root / "tvshow-fanart.jpg"
+        if download_image(_full_image_url(backdrop_url), target, force=True):
+            result["fanart"] = True
+
+    db.flush()
+    return result
 
 
 def _repair_tmdb_url(url: str) -> str:
