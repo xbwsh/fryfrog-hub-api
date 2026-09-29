@@ -376,7 +376,7 @@ def refresh_season_covers(db: DbSession, id: int):
     if not series.tmdb_id:
         return ApiResponse.error("系列没有 TMDB ID，无法获取资源")
     episodes = vs.series_videos(db, id)
-    season_posters = episode_covers = cleaned_posters = actors = 0
+    season_posters = episode_covers = cleaned_posters = cleaned_fanarts = actors = 0
     client = TmdbClient()
     seasons = {e.season_number or 1 for e in episodes}
     for sn in seasons:
@@ -414,6 +414,19 @@ def refresh_season_covers(db: DbSession, id: int):
                 logger.debug("删除分集海报失败: %s", poster, exc_info=True)
             if e.cover_art_path and not Path(e.cover_art_path).exists():
                 e.cover_art_path = None
+        # 分集横屏共用总横屏：清理系统生成的单集 fanart 下载/截帧（媒体旁手动放的不动）
+        for fanart_file in (
+            vs.get_fanart_path(db, e),
+            Path(e.file_path).parent / f"{vs.get_base_name(e.file_name)}-fanart-frame-v3.jpg",
+        ):
+            try:
+                if fanart_file.is_file():
+                    fanart_file.unlink()
+                    cleaned_fanarts += 1
+            except OSError:
+                logger.debug("删除分集横屏失败: %s", fanart_file, exc_info=True)
+        if e.backdrop_local_path and not Path(e.backdrop_local_path).exists():
+            e.backdrop_local_path = None
         try:
             scrape.save_actors(db, e, cast)
             actors += 1
@@ -430,6 +443,7 @@ def refresh_season_covers(db: DbSession, id: int):
             "refreshedSeasonFanarts": 0,
             "refreshedEpisodeCovers": episode_covers,
             "cleanedEpisodePosters": cleaned_posters,
+            "cleanedEpisodeFanarts": cleaned_fanarts,
             "refreshedActors": actors,
             "cleanedOldActorsDirs": 0,
             "totalSeasons": series.number_of_seasons,
@@ -501,7 +515,7 @@ def get_series_cover(db: DbSession, id: int):
         title = series.title
         episodes = vs.series_videos(db, id)
         # 总封面 = TMDB 整剧海报，落地在剧名根目录（与季文件夹同级）
-        root_poster = _find_series_root_file(db, episodes, "tvshow-poster.jpg")
+        root_poster = vs.find_series_root_file(db, episodes, "tvshow-poster.jpg")
         if root_poster is not None:
             if series.poster_local_path != str(root_poster):
                 series.poster_local_path = str(root_poster)
@@ -511,7 +525,7 @@ def get_series_cover(db: DbSession, id: int):
         # 本地缓存只信任剧名根目录下的；历史版本误把季海报存进 poster_local_path，不作总封面
         if series.poster_local_path:
             cached = Path(series.poster_local_path)
-            roots = {r.resolve() for r in _series_root_candidates(db, episodes)}
+            roots = {r.resolve() for r in vs.series_root_candidates(db, episodes)}
             if cached.exists() and cached.parent.resolve() in roots:
                 return FileResponse(str(cached), media_type="image/jpeg")
 
@@ -537,37 +551,6 @@ def get_series_cover(db: DbSession, id: int):
             return get_cover(db, episodes[0].id)
         return Response(content=placeholder_jpeg(300, 450, title), media_type="image/jpeg")
     return Response(content=data, media_type="image/jpeg")
-
-
-def _series_root_candidates(db: DbSession, episodes: list) -> list[Path]:
-    """剧名根目录候选（与季文件夹同级）：重建 metadata 根 + 同名的媒体旁根。"""
-    if not episodes:
-        return []
-    show_root = vs.get_metadata_dir(db, episodes[0]).parent.parent
-    roots = [show_root]
-    try:
-        media_root = Path(episodes[0].file_path).parent.parent
-        if media_root.name == show_root.name:
-            roots.append(media_root)
-    except Exception:
-        pass
-    return roots
-
-
-def _find_series_root_file(db: DbSession, episodes: list, name: str) -> Path | None:
-    """剧名根目录下的文件，如总封面 tvshow-poster.jpg / 总横屏 tvshow-fanart.jpg。"""
-    seen: set[str] = set()
-    for root in _series_root_candidates(db, episodes):
-        key = str(root)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            if (root / name).is_file():
-                return root / name
-        except Exception:
-            continue
-    return None
 
 
 @series_router.get("/{id:int}/season/{season_number:int}/cover")
@@ -606,7 +589,7 @@ def get_series_fanart(db: DbSession, id: int):
             return FileResponse(series.backdrop_local_path, media_type="image/jpeg")
         episodes = vs.series_videos(db, id)
         # 总横屏：剧名根目录（与总竖屏放一起，季横屏复用此图）
-        root_fanart = _find_series_root_file(db, episodes, "tvshow-fanart.jpg")
+        root_fanart = vs.find_series_root_file(db, episodes, "tvshow-fanart.jpg")
         if root_fanart is not None:
             if series.backdrop_local_path != str(root_fanart):
                 series.backdrop_local_path = str(root_fanart)

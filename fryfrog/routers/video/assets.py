@@ -84,10 +84,37 @@ def get_cover(db: DbSession, id: int):
 @router.get("/{id:int}/fanart")
 def get_fanart(db: DbSession, id: int):
     video = vs.get_video(db, id)
-    if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
-        return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
     base = vs.get_base_name(video.file_name)
     video_dir = Path(video.file_path).parent
+    # 分集不单独维护横屏：统一用总横屏，且不再为单集生成 -fanart-frame-v3 截帧
+    if video.is_episode:
+        if video.series_id:
+            episodes = vs.series_videos(db, video.series_id)
+            root_fanart = vs.find_series_root_file(db, episodes, "tvshow-fanart.jpg")
+            if root_fanart is not None:
+                return FileResponse(str(root_fanart), media_type="image/jpeg")
+        # 总横屏尚未落地时的回退（手选帧 / 系列本地背景 / 历史单集文件）
+        if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
+            return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
+        if video.series_id:
+            series = vs.get_series(db, video.series_id)
+            if series is not None and series.backdrop_local_path:
+                if Path(series.backdrop_local_path).exists():
+                    return FileResponse(series.backdrop_local_path, media_type="image/jpeg")
+        for candidate in (
+            video_dir / f"{base}-fanart.jpg",
+            vs.get_fanart_path(db, video),
+            video_dir / f"{base}-fanart-frame-v3.jpg",
+        ):
+            if candidate.exists():
+                return FileResponse(str(candidate), media_type="image/jpeg")
+        return Response(
+            content=placeholder_jpeg(1920, 400, video.title or ""),
+            media_type="image/jpeg",
+        )
+    # 电影：本地文件 → 截帧兜底
+    if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
+        return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
     for candidate in (
         video_dir / f"{base}-fanart.jpg",
         vs.get_fanart_path(db, video),

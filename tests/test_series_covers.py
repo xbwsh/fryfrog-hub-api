@@ -5,8 +5,11 @@ import os
 os.environ.setdefault("AUTH_ENABLED", "false")
 
 from fryfrog.models.video import Video
-from fryfrog.routers.video.series import _find_series_root_file, _series_root_candidates
-from fryfrog.services.video_service import get_series_root_dir
+from fryfrog.services.video_service import (
+    find_series_root_file,
+    get_series_root_dir,
+    series_root_candidates,
+)
 
 
 def _ep(path) -> Video:
@@ -35,7 +38,7 @@ def test_root_file_found_in_show_folder(tmp_path):
     (tmp_path / "某剧" / "tvshow-poster.jpg").write_bytes(b"ROOT")
     (season / "tvshow-poster.jpg").write_bytes(b"SEASON")
 
-    found = _find_series_root_file(None, [_ep(media)], "tvshow-poster.jpg")
+    found = find_series_root_file(None, [_ep(media)], "tvshow-poster.jpg")
     assert found is not None
     assert found.read_bytes() == b"ROOT"
 
@@ -49,7 +52,7 @@ def test_season_folder_not_treated_as_root(tmp_path):
     media.touch()
     (tmp_path / "某剧" / "第 1 季" / "tvshow-poster.jpg").write_bytes(b"SEASON")
 
-    assert _find_series_root_file(None, [_ep(media)], "tvshow-poster.jpg") is None
+    assert find_series_root_file(None, [_ep(media)], "tvshow-poster.jpg") is None
     # 同名媒体旁根不匹配时也不作为候选
-    roots = _series_root_candidates(None, [_ep(media)])
+    roots = series_root_candidates(None, [_ep(media)])
     assert all(r.name == "某剧" or r == roots[0] for r in roots)

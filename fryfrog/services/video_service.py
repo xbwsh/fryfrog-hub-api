@@ -83,6 +83,37 @@ def get_series_root_dir(db: Session, episodes: list[Video]) -> Path | None:
     return get_metadata_dir(db, episodes[0]).parent.parent
 
 
+def series_root_candidates(db: Session, episodes: list[Video]) -> list[Path]:
+    """剧名根目录候选（与季文件夹同级）：重建 metadata 根 + 同名的媒体旁根。"""
+    if not episodes:
+        return []
+    show_root = get_metadata_dir(db, episodes[0]).parent.parent
+    roots = [show_root]
+    try:
+        media_root = Path(episodes[0].file_path).parent.parent
+        if media_root.name == show_root.name:
+            roots.append(media_root)
+    except Exception:
+        pass
+    return roots
+
+
+def find_series_root_file(db: Session, episodes: list[Video], name: str) -> Path | None:
+    """剧名根目录下的文件，如总封面 tvshow-poster.jpg / 总横屏 tvshow-fanart.jpg。"""
+    seen: set[str] = set()
+    for root in series_root_candidates(db, episodes):
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if (root / name).is_file():
+                return root / name
+        except Exception:
+            continue
+    return None
+
+
 def get_nfo_path(db: Session, video: Video) -> Path:
     return get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}.nfo"
 
