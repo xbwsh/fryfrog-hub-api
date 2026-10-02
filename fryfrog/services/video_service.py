@@ -126,13 +126,40 @@ def get_fanart_path(db: Session, video: Video) -> Path:
     return get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}-fanart.jpg"
 
 
+def local_poster_candidates(db: Session, video: Video) -> list[Path]:
+    """封面候选（有序）：metadata 目录 → 同目录 {base}-poster → 无前缀 poster/folder/thumb。
+
+    无前缀命名是手工/外部刮削的常见产物（poster.jpg fanart.jpg thumb.jpg），
+    库关掉扫描刮削时它们是唯一素材，必须识别，否则封面会退化到截帧。
+    """
+    video_dir = Path(video.file_path).parent
+    base = get_base_name(video.file_name)
+    return [
+        get_poster_path(db, video),
+        video_dir / f"{base}-poster.jpg",
+        video_dir / "poster.jpg",
+        video_dir / "folder.jpg",
+        video_dir / "thumb.jpg",
+    ]
+
+
+def local_fanart_candidates(db: Session, video: Video) -> list[Path]:
+    video_dir = Path(video.file_path).parent
+    base = get_base_name(video.file_name)
+    return [
+        get_fanart_path(db, video),
+        video_dir / f"{base}-fanart.jpg",
+        video_dir / "fanart.jpg",
+    ]
+
+
 def asset_flags(db: Session, video: Video) -> dict:
     video_dir = Path(video.file_path).parent
     base = get_base_name(video.file_name)
     return {
         "has_nfo": (video_dir / f"{base}.nfo").exists(),
-        "has_poster": (video_dir / f"{base}-poster.jpg").exists(),
-        "has_fanart": (video_dir / f"{base}-fanart.jpg").exists(),
+        "has_poster": any(p.exists() for p in local_poster_candidates(db, video)),
+        "has_fanart": any(p.exists() for p in local_fanart_candidates(db, video)),
         "has_metadata_dir": get_metadata_dir(db, video).exists(),
     }
 

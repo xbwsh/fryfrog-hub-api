@@ -61,12 +61,10 @@ def get_cover(db: DbSession, id: int):
                 return FileResponse(str(season_poster), media_type="image/jpeg")
     if video.cover_art_path and Path(video.cover_art_path).exists():
         return FileResponse(video.cover_art_path, media_type="image/jpeg")
-    poster = vs.get_poster_path(db, video)
-    if poster.exists():
-        return FileResponse(str(poster), media_type="image/jpeg")
-    alt = Path(video.file_path).parent / f"{vs.get_base_name(video.file_name)}-poster.jpg"
-    if alt.exists():
-        return FileResponse(str(alt), media_type="image/jpeg")
+    # 本地刮削产物优先（含无前缀 poster.jpg/folder.jpg/thumb.jpg），最后才截帧
+    for candidate in vs.local_poster_candidates(db, video):
+        if candidate.exists():
+            return FileResponse(str(candidate), media_type="image/jpeg")
     frame = Path(video.file_path).parent / f"{vs.get_base_name(video.file_name)}-frame-v3.jpg"
     if not frame.exists():
         try:
@@ -90,7 +88,7 @@ def get_fanart(db: DbSession, id: int):
     if video.is_episode:
         if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
             return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
-        for candidate in (video_dir / f"{base}-fanart.jpg", vs.get_fanart_path(db, video)):
+        for candidate in vs.local_fanart_candidates(db, video):
             if candidate.exists():
                 return FileResponse(str(candidate), media_type="image/jpeg")
         if video.series_id:
@@ -106,14 +104,13 @@ def get_fanart(db: DbSession, id: int):
             content=placeholder_jpeg(1920, 400, video.title or ""),
             media_type="image/jpeg",
         )
-    # 电影：本地文件 → 截帧兜底
+    # 电影：本地文件（含无前缀 fanart.jpg） → 旧截帧 → 截帧兜底
     if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
         return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
-    for candidate in (
-        video_dir / f"{base}-fanart.jpg",
-        vs.get_fanart_path(db, video),
+    for candidate in [
+        *vs.local_fanart_candidates(db, video),
         video_dir / f"{base}-fanart-frame-v3.jpg",
-    ):
+    ]:
         if candidate.exists():
             return FileResponse(str(candidate), media_type="image/jpeg")
     frame = video_dir / f"{base}-fanart-frame-v3.jpg"

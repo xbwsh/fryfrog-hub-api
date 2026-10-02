@@ -23,6 +23,7 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
         return 0
 
     count = 0
+    frames_removed = 0
     probe = get_media_probe()
     for path in iter_files(root, VIDEO_EXTS):
         try:
@@ -78,19 +79,26 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                 if wh and wh[0] and wh[1]:
                     video.resolution = f"{wh[0]}x{wh[1]}"
 
-            # 本地封面路径探测
-            base = path.stem
-            poster = path.parent / f"{base}-poster.jpg"
-            fanart = path.parent / f"{base}-fanart.jpg"
-            if poster.exists() and not video.cover_art_path:
-                video.cover_art_path = str(poster)
-            if fanart.exists() and not video.backdrop_local_path:
-                video.backdrop_local_path = str(fanart)
+            # 本地封面路径探测（含无前缀 poster.jpg/fanart.jpg/thumb.jpg 等手工刮削命名）
+            from fryfrog.services import video_service as vs
+
+            if not video.cover_art_path:
+                for poster in vs.local_poster_candidates(db, video):
+                    if poster.exists():
+                        video.cover_art_path = str(poster)
+                        break
+            if not video.backdrop_local_path:
+                for fanart in vs.local_fanart_candidates(db, video):
+                    if fanart.exists():
+                        video.backdrop_local_path = str(fanart)
+                        break
 
             # 从已有 NFO 恢复元数据（含 tmdbId）
             from fryfrog.services.video_assets import parse_nfo
 
             parse_nfo(db, video)
+
+            frames_removed += cleanup_redundant_frames(db, video)
 
             db.flush()
             count += 1
@@ -103,5 +111,42 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             logger.exception("扫描视频失败: %s", path)
             db.rollback()
     db.flush()
+    if frames_removed:
+        logger.info("视频库扫描清理帧截图 %d 个: %s", frames_removed, library.name)
     logger.info("视频库扫描完成: %s, 新增/更新 %d 条", library.name, count)
     return count
+
+
+def cleanup_redundant_frames(db: Session, video: Video) -> int:
+    """本地已有正式封面/背景时，删掉此前封面/背景兜底自动生成的 -frame-v3 截图。
+
+    只删未被 DB 引用的帧（手动选帧的结果 cover_art_path/backdrop_local_path 会指向它）。
+    """
+    from fryfrog.services import video_service as vs
+
+    video_dir = Path(video.file_path).parent
+    base = vs.get_base_name(video.file_name)
+    removed = 0
+    frame = video_dir / f"{base}-frame-v3.jpg"
+    if (
+        frame.exists()
+        and str(frame) != video.cover_art_path
+        and any(p.exists() for p in vs.local_poster_candidates(db, video))
+    ):
+        try:
+            frame.unlink()
+            removed += 1
+        except OSError:
+            logger.debug("清理帧截图失败: %s", frame, exc_info=True)
+    fanart_frame = video_dir / f"{base}-fanart-frame-v3.jpg"
+    if (
+        fanart_frame.exists()
+        and str(fanart_frame) != video.backdrop_local_path
+        and any(p.exists() for p in vs.local_fanart_candidates(db, video))
+    ):
+        try:
+            fanart_frame.unlink()
+            removed += 1
+        except OSError:
+            logger.debug("清理帧截图失败: %s", fanart_frame, exc_info=True)
+    return removed
