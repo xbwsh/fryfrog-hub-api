@@ -20,7 +20,14 @@ from fryfrog.schemas.video import (
 )
 from fryfrog.services import video_service as vs
 
-from ._common import _actor_dict, _allowed_ids, _page_videos, _require_visible, _to_video_dto
+from ._common import (
+    _actor_dict,
+    _allowed_ids,
+    _page_videos,
+    _require_visible,
+    _to_video_dto,
+    clamp_paging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,7 @@ router = APIRouter()
 
 @router.get("/search/title")
 def search_by_title(db: DbSession, q: str, page: int = 0, size: int = 20):
+    page, size = clamp_paging(page, size)
     allowed = _allowed_ids(db)
     base = select(Video).where(Video.library_id.in_(allowed), Video.title.ilike(f"%{q}%"))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
@@ -39,6 +47,7 @@ def search_by_title(db: DbSession, q: str, page: int = 0, size: int = 20):
 
 @router.get("/search/director")
 def search_by_director(db: DbSession, q: str, page: int = 0, size: int = 20):
+    page, size = clamp_paging(page, size)
     allowed = _allowed_ids(db)
     base = select(Video).where(Video.library_id.in_(allowed), Video.director.ilike(f"%{q}%"))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
@@ -48,6 +57,7 @@ def search_by_director(db: DbSession, q: str, page: int = 0, size: int = 20):
 
 @router.get("/favorites")
 def get_favorites(db: DbSession, page: int = 0, size: int = 20):
+    page, size = clamp_paging(page, size)
     uid = current_user_id()
     allowed = _allowed_ids(db)
     fav_ids = vs.favorite_content_ids(db, uid, vs.TYPE_VIDEO)

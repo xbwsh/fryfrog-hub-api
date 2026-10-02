@@ -187,6 +187,27 @@ def series_videos(db: Session, series_id: int) -> list[Video]:
     )
 
 
+def series_videos_map(db: Session, series_ids: list[int]) -> dict[int, list[Video]]:
+    """批量取多个系列的分集（一次查询），替代逐系列 series_videos 的 N+1。"""
+    if not series_ids:
+        return {}
+    rows = list(
+        db.scalars(
+            select(Video)
+            .where(Video.series_id.in_(series_ids))
+            .order_by(
+                Video.series_id.asc(),
+                Video.season_number.asc(),
+                Video.episode_number.asc(),
+            )
+        ).all()
+    )
+    result: dict[int, list[Video]] = {sid: [] for sid in series_ids}
+    for v in rows:
+        result.setdefault(v.series_id, []).append(v)
+    return result
+
+
 def get_actors_for_video(db: Session, video_id: int) -> list[VideoActor]:
     return list(db.scalars(select(VideoActor).where(VideoActor.video_id == video_id)).all())
 

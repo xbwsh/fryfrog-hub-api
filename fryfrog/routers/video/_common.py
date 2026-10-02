@@ -20,6 +20,15 @@ from fryfrog.services import video_service as vs
 from fryfrog.services.media_library import MediaLibraryService
 
 logger = logging.getLogger(__name__)
+
+MAX_PAGE_SIZE = 100
+
+
+def clamp_paging(page: int, size: int) -> tuple[int, int]:
+    """page 从 0 起、size 限制在 1..100，防一次性拉全表。"""
+    return max(0, page), min(max(1, size), MAX_PAGE_SIZE)
+
+
 def _mls(db: Session) -> MediaLibraryService:
     return MediaLibraryService(UserService())
 

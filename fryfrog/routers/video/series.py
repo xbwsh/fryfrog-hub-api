@@ -38,6 +38,7 @@ from ._common import (
     _require_admin,
     _to_video_dto,
     _to_video_dto_with,
+    clamp_paging,
     submit_job,
 )
 from .assets import get_cover, get_fanart
@@ -76,43 +77,57 @@ def _load_series_detail(db: Session, series: VideoSeries, favorite: bool) -> dic
 
 @series_router.get("")
 def list_series(db: DbSession, page: int = 0, size: int = 20):
+    page, size = clamp_paging(page, size)
     uid = current_user_id()
-    all_series = [s for s in db.scalars(select(VideoSeries)).all() if _series_visible(db, s)]
-    all_series.sort(key=lambda s: (s.title or "").lower())
     allowed = _allowed_ids(db)
-    standalone_total = (
-        db.scalar(
-            select(func.count())
-            .select_from(Video)
-            .where(Video.series_id.is_(None), Video.library_id.in_(allowed))
+
+    # 系列段：SQL count + offset/limit，不再全量载入内存
+    series_q = select(VideoSeries)
+    if _mls(db).is_restricted_current_user(db):
+        # 受限用户只看得到「有可见分集」的系列（等价原 _series_visible 逐个探测）
+        series_q = series_q.where(
+            select(Video)
+            .where(Video.series_id == VideoSeries.id, Video.library_id.in_(allowed))
+            .exists()
         )
-        or 0
+    # func.lower 对齐原 Python 排序 (title or "").lower()（SQLite lower 覆盖 ASCII，中文无大小写）
+    series_q = series_q.order_by(func.lower(VideoSeries.title).asc())
+    series_total = int(db.scalar(select(func.count()).select_from(series_q.subquery())) or 0)
+
+    standalone_q = select(Video).where(
+        Video.series_id.is_(None), Video.library_id.in_(allowed)
     )
-    total = len(all_series) + standalone_total
+    standalone_total = int(
+        db.scalar(select(func.count()).select_from(standalone_q.subquery())) or 0
+    )
+    total = series_total + standalone_total
+
     start = page * size
     if start >= total:
         return ApiResponse.ok(PageResponse.of([], page, size, total).model_dump())
     end = min(start + size, total)
     items: list[dict] = []
 
-    series_end = min(end, len(all_series))
-    if start < len(all_series):
-        paged = all_series[start:series_end]
+    # 系列段 [start, end ∩ series_total)
+    if start < series_total:
+        series_end = min(end, series_total)
+        paged = list(db.scalars(series_q.offset(start).limit(series_end - start)).all())
         series_fav = vs.favorite_status_map(db, uid, vs.TYPE_SERIES, [s.id for s in paged])
+        episodes_map = vs.series_videos_map(db, [s.id for s in paged])
         for s in paged:
-            episodes = vs.series_videos(db, s.id)
             items.append(
-                SeriesListDTO.from_entity(s, episodes, series_fav.get(s.id, False)).model_dump()
+                SeriesListDTO.from_entity(
+                    s, episodes_map.get(s.id, []), series_fav.get(s.id, False)
+                ).model_dump()
             )
 
-    standalone_start = max(0, start - len(all_series))
-    standalone_end = max(0, end - len(all_series))
+    # 单集段（接在系列之后）
+    standalone_start = max(0, start - series_total)
+    standalone_end = max(0, end - series_total)
     if standalone_end > 0:
         rows = list(
             db.scalars(
-                select(Video)
-                .where(Video.series_id.is_(None), Video.library_id.in_(allowed))
-                .order_by(Video.title.asc())
+                standalone_q.order_by(Video.title.asc())
                 .offset(standalone_start)
                 .limit(standalone_end - standalone_start)
             ).all()
@@ -127,6 +142,7 @@ def list_series(db: DbSession, page: int = 0, size: int = 20):
 
 @series_router.get("/grouped-by-library")
 def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
+    page, size = clamp_paging(page, size)
     uid = current_user_id()
     mls = _mls(db)
     allowed = set(_allowed_ids(db))
@@ -137,30 +153,44 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
     ]
     libraries.sort(key=lambda x: x.sort_order or 0)
 
+    # 一次载入系列与「系列→库」归属，替代每库循环里全量查系列 + 逐系列查分集
+    all_series = list(db.scalars(select(VideoSeries)).all())
+    libs_of_series: dict[int, set[int]] = {}
+    for sid, lib_id in db.execute(
+        select(Video.series_id, Video.library_id).where(Video.series_id.is_not(None))
+    ).all():
+        libs_of_series.setdefault(sid, set()).add(lib_id)
+
     result: list[dict] = []
     for lib in libraries:
-        lib_series = [
-            s
-            for s in db.scalars(select(VideoSeries)).all()
-            if any(v.library_id == lib.id for v in vs.series_videos(db, s.id))
-        ]
+        lib_series = [s for s in all_series if lib.id in libs_of_series.get(s.id, ())]
         lib_series.sort(key=lambda s: (s.title or "").lower())
         paged_series = lib_series[page * size : (page + 1) * size]
-        standalone_all = list(
+        # 单集段：SQL count + offset/limit，不全量载入后内存切片
+        standalone_where = (Video.series_id.is_(None), Video.library_id == lib.id)
+        standalone_count = int(
+            db.scalar(
+                select(func.count()).select_from(Video).where(*standalone_where)
+            )
+            or 0
+        )
+        paged_standalone = list(
             db.scalars(
                 select(Video)
-                .where(Video.series_id.is_(None), Video.library_id == lib.id)
+                .where(*standalone_where)
                 .order_by(Video.title.asc())
+                .offset(page * size)
+                .limit(size)
             ).all()
         )
-        paged_standalone = standalone_all[page * size : (page + 1) * size]
         series_fav = vs.favorite_status_map(db, uid, vs.TYPE_SERIES, [s.id for s in paged_series])
         standalone_fav = vs.favorite_status_map(
             db, uid, vs.TYPE_VIDEO, [v.id for v in paged_standalone]
         )
+        episodes_map = vs.series_videos_map(db, [s.id for s in paged_series])
         series_dtos = [
             SeriesListDTO.from_entity(
-                s, vs.series_videos(db, s.id), series_fav.get(s.id, False)
+                s, episodes_map.get(s.id, []), series_fav.get(s.id, False)
             ).model_dump()
             for s in paged_series
         ]
@@ -178,7 +208,7 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
                     series=series_dtos,
                     standaloneVideos=standalone_dtos,
                     seriesCount=len(lib_series),
-                    standaloneCount=len(standalone_all),
+                    standaloneCount=standalone_count,
                 ).model_dump()
             )
     return ApiResponse.ok(result)
@@ -191,8 +221,7 @@ def series_calendar(db: DbSession):
     today = date.today()
     result = []
     for s in db.scalars(select(VideoSeries)).all():
-        if not _series_visible(db, s):
-            continue
+        # 便宜的纯内存过滤在前，_series_visible（受限用户要查分集）放最后
         if not s.next_episode_date or (s.media_type or "").lower() != "tv":
             continue
         try:
@@ -200,6 +229,8 @@ def series_calendar(db: DbSession):
         except ValueError:
             continue
         if d < today - timedelta(days=1):
+            continue
+        if not _series_visible(db, s):
             continue
         result.append(
             {
@@ -217,20 +248,37 @@ def series_calendar(db: DbSession):
 
 @series_router.get("/favorites")
 def favorite_series(db: DbSession, page: int = 0, size: int = 20):
+    page, size = clamp_paging(page, size)
     uid = current_user_id()
     fav_ids = vs.favorite_content_ids(db, uid, vs.TYPE_SERIES)
-    visible = []
-    for sid in fav_ids:
-        s = vs.get_series(db, sid)
-        if s and _series_visible(db, s):
-            visible.append(s)
+    if fav_ids:
+        candidates = list(
+            db.scalars(select(VideoSeries).where(VideoSeries.id.in_(fav_ids))).all()
+        )
+    else:
+        candidates = []
+    if candidates and _mls(db).is_restricted_current_user(db):
+        # 受限用户：一次查出「有可见分集」的收藏系列，替代逐个 _series_visible
+        with_visible = set(
+            db.scalars(
+                select(Video.series_id).where(
+                    Video.series_id.in_([s.id for s in candidates]),
+                    Video.library_id.in_(_allowed_ids(db)),
+                )
+            ).all()
+        )
+        visible = [s for s in candidates if s.id in with_visible]
+    else:
+        visible = candidates
     visible.sort(key=lambda s: (s.title or "").lower())
     total = len(visible)
     start = min(page * size, total)
     end = min(start + size, total)
+    paged = visible[start:end]
+    episodes_map = vs.series_videos_map(db, [s.id for s in paged])
     items = [
-        SeriesListDTO.from_entity(s, vs.series_videos(db, s.id), True).model_dump()
-        for s in visible[start:end]
+        SeriesListDTO.from_entity(s, episodes_map.get(s.id, []), True).model_dump()
+        for s in paged
     ]
     return ApiResponse.ok(PageResponse.of(items, page, size, total).model_dump())
 

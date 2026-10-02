@@ -22,7 +22,7 @@ from fryfrog.services import video_scrape as scrape
 from fryfrog.services import video_service as vs
 from fryfrog.services.tmdb import TmdbClient
 
-from ._common import _allowed_ids, _mls, _require_admin, _require_visible, submit_job
+from ._common import _allowed_ids, _mls, _require_admin, _require_visible, clamp_paging, submit_job
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +267,7 @@ def refresh_actor_detail(db: DbSession, actor_id: int):
 
 @router.get("/actor/{actor_id:int}/works")
 def get_actor_works(db: DbSession, actor_id: int, page: int = 0, size: int = 20):
+    page, size = clamp_paging(page, size)
     actor = db.get(VideoActor, actor_id)
     if actor is None:
         raise ResourceNotFoundException("VideoActor", "id", actor_id)
