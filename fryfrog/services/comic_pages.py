@@ -1,11 +1,12 @@
-"""漫画页图：目录列文件 / zip·cbz·rar·cbr·7z 读条目，自然序页序。"""
+"""漫画页图：目录列文件 / zip·cbz·rar·cbr·7z 读条目，自然序页序；PDF 按页渲染。"""
 
 from __future__ import annotations
 
+import io
 import zipfile
 from pathlib import Path
 
-from fryfrog.core.exceptions import ResourceNotFoundException
+from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
 from fryfrog.core.natural_order import natural_key
 from fryfrog.models.comic import ComicChapter
 
@@ -13,7 +14,12 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 ZIP_EXTS = {".zip", ".cbz"}
 RAR_EXTS = {".rar", ".cbr"}
 SEVEN_EXTS = {".7z"}
-ARCHIVE_EXTS = ZIP_EXTS | RAR_EXTS | SEVEN_EXTS
+PDF_EXTS = {".pdf"}
+ARCHIVE_EXTS = ZIP_EXTS | RAR_EXTS | SEVEN_EXTS | PDF_EXTS
+
+# 渲染目标宽度（px）：缩放按 PDF 页宽折算，限制在 1x~4x
+PDF_TARGET_WIDTH = 1600.0
+PDF_JPEG_QUALITY = 85
 
 
 def is_image_name(name: str) -> bool:
@@ -50,6 +56,34 @@ def _looks_like_zip(path: Path) -> bool:
         return False
 
 
+def _open_pdf(path: Path):
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        raise BadRequestException("未安装 pypdfium2：pip install pypdfium2")
+    return pdfium.PdfDocument(str(path))
+
+
+def _pdf_page_names(path: Path) -> list[str]:
+    with _open_pdf(path) as doc:
+        return [f"page_{i:05d}.jpg" for i in range(len(doc))]
+
+
+def _render_pdf_page(path: Path, index: int) -> bytes:
+    with _open_pdf(path) as doc:
+        if index < 0 or index >= len(doc):
+            raise ResourceNotFoundException("ComicPage", "index", index)
+        page = doc[index]
+        width = page.get_width() or 595.0
+        scale = min(4.0, max(1.0, PDF_TARGET_WIDTH / width))
+        image = page.render(scale=scale).to_pil()
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=PDF_JPEG_QUALITY)
+        return buf.getvalue()
+
+
 def _list_archive_names(path: Path) -> list[str]:
     if path.suffix.lower() in SEVEN_EXTS:
         import py7zr
@@ -71,6 +105,8 @@ def _list_archive_names(path: Path) -> list[str]:
 
 def list_page_names(chapter: ComicChapter) -> list[str]:
     path = Path(chapter.file_path)
+    if path.suffix.lower() in PDF_EXTS:
+        return _pdf_page_names(path)
     if (chapter.type or "").upper() == "ARCHIVE":
         names = _list_archive_names(path)
         names.sort(key=natural_key)
@@ -90,6 +126,9 @@ def page_count(chapter: ComicChapter) -> int | None:
 
 
 def read_page(chapter: ComicChapter, index: int) -> tuple[bytes, str]:
+    path = Path(chapter.file_path)
+    if path.suffix.lower() in PDF_EXTS:
+        return _render_pdf_page(path, index), "image/jpeg"
     names = list_page_names(chapter)
     if index < 0 or index >= len(names):
         raise ResourceNotFoundException("ComicPage", "index", index)

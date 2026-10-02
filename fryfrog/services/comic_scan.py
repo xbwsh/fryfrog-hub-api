@@ -1,4 +1,4 @@
-"""漫画扫描：作品目录聚合，子图片目录/zip·cbz 为卷；库根散图/压缩包按系列聚合。"""
+"""漫画扫描：作品目录聚合，子图片目录/zip·cbz·pdf 为卷；库根散图/压缩包按系列聚合。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from fryfrog.services import comic_pages
 
 logger = logging.getLogger(__name__)
 
-ARCHIVE_EXTS = {".cbz", ".zip", ".cbr", ".rar", ".7z"}
+ARCHIVE_EXTS = {".cbz", ".zip", ".cbr", ".rar", ".7z", ".pdf"}
 UNSUPPORTED_EXTS: set[str] = set()
 COVER_FILE = "cover.jpg"  # 仅历史参考；封面现存 data/covers
 VOLUME_SUFFIX = re.compile(

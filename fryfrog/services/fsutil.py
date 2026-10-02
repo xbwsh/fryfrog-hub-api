@@ -10,7 +10,7 @@ VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".ts", ".m2ts", ".
 MUSIC_EXTS = {".mp3", ".flac", ".m4a", ".wav", ".wma", ".aac", ".ogg", ".opus", ".ape"}
 AUDIOBOOK_EXTS = MUSIC_EXTS | {".m4b"}
 EBOOK_EXTS = {".epub", ".pdf", ".mobi", ".azw3"}
-COMIC_ARCHIVE_EXTS = {".zip", ".cbz", ".rar", ".cbr", ".7z"}
+COMIC_ARCHIVE_EXTS = {".zip", ".cbz", ".rar", ".cbr", ".7z", ".pdf"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 

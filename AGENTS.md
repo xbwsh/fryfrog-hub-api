@@ -91,7 +91,7 @@ python -m venv .venv
 - Docker 部署：`docker compose up -d`，镜像已内置 FFmpeg
 - 媒体 URL 需签名（`sig`+`exp`），`<img>/<video>` 用签名 URL 而非 Bearer
 - Subsonic 走 `/rest`，不经过 Bearer 中间件，使用 `u/p` 或 `t/s`
-- 漫画压缩包支持 zip/cbz/rar/cbr/7z（rar 需系统 `unrar`）
+- 漫画压缩包支持 zip/cbz/rar/cbr/7z（rar 需系统 `unrar`）与 .pdf（`pypdfium2` 按页渲染）
 - 文件热监听为轮询式（3s 轮询 + 5s debounce），无需 watchdog 依赖
 
 ## Environment
