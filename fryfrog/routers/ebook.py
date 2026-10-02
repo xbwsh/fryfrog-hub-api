@@ -15,7 +15,7 @@ from fryfrog.core.exceptions import BadRequestException, ForbiddenException, Res
 from fryfrog.core.security import AuthManager, UserService, current_user_id
 from fryfrog.core.signer import sign
 from fryfrog.models.ebook import Ebook, EbookProgress
-from fryfrog.services import ebook_scan, ebook_scrape
+from fryfrog.services import ebook_scan, ebook_scrape, ebook_text
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
 
@@ -26,6 +26,7 @@ FORMAT_MEDIA = {
     "EPUB": "application/epub+zip",
     "PDF": "application/pdf",
     "MOBI": "application/x-mobipocket-ebook",
+    "TXT": "text/plain; charset=utf-8",
 }
 
 
@@ -98,7 +99,22 @@ def _list_dto(book: Ebook, progress: EbookProgress | None) -> dict:
     }
 
 
+def _require_readable_txt(book: Ebook) -> Path:
+    if (book.format or "").upper() != "TXT":
+        raise BadRequestException("该格式暂不支持在线阅读")
+    path = Path(book.file_path)
+    if not path.is_file():
+        raise ResourceNotFoundException("File", "path", book.file_path)
+    return path
+
+
 def _detail_dict(book: Ebook, progress: EbookProgress | None) -> dict:
+    total_chapters = book.total_chapters
+    if total_chapters is None and (book.format or "").upper() == "TXT":
+        try:
+            total_chapters = ebook_text.chapter_count(Path(book.file_path))
+        except Exception:
+            total_chapters = None
     return {
         "id": book.id,
         "title": book.title,
@@ -113,7 +129,7 @@ def _detail_dict(book: Ebook, progress: EbookProgress | None) -> dict:
         "metadataSource": book.metadata_source,
         "format": book.format,
         "fileSize": book.file_size,
-        "totalChapters": book.total_chapters,
+        "totalChapters": total_chapters,
         "coverUrl": _cover_url(book),
         "fileUrl": sign(f"/api/v1/ebooks/{book.id}/file") if book.id else None,
         "progress": _progress_dto(progress),
@@ -235,6 +251,31 @@ def detail(
 ):
     book = _require_visible(db, media_lib, book_id)
     return ApiResponse.ok(_detail_dict(book, _progress(db, book_id)))
+
+
+@router.get("/{book_id}/chapters")
+def list_chapters(
+    book_id: int,
+    db: DbSession,
+    media_lib: MediaLibraryService = Depends(get_media_library_service),
+):
+    """TXT 在线阅读：章节目录（字符偏移供前端定位）。"""
+    book = _require_visible(db, media_lib, book_id)
+    path = _require_readable_txt(book)
+    return ApiResponse.ok(ebook_text.chapters_of(path))
+
+
+@router.get("/{book_id}/content")
+def chapter_content(
+    book_id: int,
+    db: DbSession,
+    media_lib: MediaLibraryService = Depends(get_media_library_service),
+    chapterIndex: int = 0,
+):
+    """TXT 在线阅读：某一章正文。"""
+    book = _require_visible(db, media_lib, book_id)
+    path = _require_readable_txt(book)
+    return ApiResponse.ok(ebook_text.chapter_content(path, chapterIndex))
 
 
 @router.get("/{book_id}/cover")

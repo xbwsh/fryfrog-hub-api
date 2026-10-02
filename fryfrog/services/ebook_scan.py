@@ -12,11 +12,12 @@ from fryfrog.core.natural_order import natural_key
 from fryfrog.core.utils import clean_title
 from fryfrog.models.ebook import Ebook, EbookProgress
 from fryfrog.models.library import MediaLibrary
+from fryfrog.services import ebook_text
 from fryfrog.services.fsutil import EBOOK_EXTS
 
 logger = logging.getLogger(__name__)
 
-FORMAT_MAP = {"epub": "EPUB", "pdf": "PDF", "mobi": "MOBI", "azw3": "MOBI"}
+FORMAT_MAP = {"epub": "EPUB", "pdf": "PDF", "mobi": "MOBI", "azw3": "MOBI", "txt": "TXT"}
 
 
 def _format_of(path: Path) -> str:
@@ -140,6 +141,8 @@ def scan_ebook_library(db: Session, library: MediaLibrary) -> dict:
                 _epub_meta(book, file)
             else:
                 _filename_meta(book, file)
+            if book.format == "TXT":
+                book.total_chapters = ebook_text.chapter_count(file)
 
     removed = 0
     for book in existing.values():

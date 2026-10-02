@@ -21,7 +21,7 @@ class Ebook(TimestampMixin, Base):
     series_part: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_id: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_source: Mapped[str | None] = mapped_column(String, nullable=True)
-    format: Mapped[str] = mapped_column(String(16), nullable=False)  # EPUB/PDF/MOBI
+    format: Mapped[str] = mapped_column(String(16), nullable=False)  # EPUB/PDF/MOBI/TXT
     file_path: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     file_mtime: Mapped[int | None] = mapped_column(Integer, nullable=True)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
