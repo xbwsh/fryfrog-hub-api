@@ -254,10 +254,16 @@ def bind_series(db: Session, video_id: int, tmdb_id: int, media_type: str) -> li
     media_type = (media_type or "").lower()
     bound: list[Video] = []
 
-    # 同标题视频一并绑定（剧集整季）
-    siblings = list(
-        db.scalars(select(Video).where(Video.title == video.title)).all()
-    ) or [video]
+    # 连带范围：剧集按 series_id 整季全集（分集 title 含 SxxExx 各不相同，
+    # 按 title 匹配只能命中重复文件）；电影/未入剧的退回同标题连带。
+    if media_type == "tv" and video.series_id is not None:
+        siblings = list(
+            db.scalars(select(Video).where(Video.series_id == video.series_id)).all()
+        )
+    else:
+        siblings = list(
+            db.scalars(select(Video).where(Video.title == video.title)).all()
+        )
     if video not in siblings:
         siblings.append(video)
 
