@@ -69,6 +69,20 @@ def get_favorites(db: DbSession, page: int = 0, size: int = 20):
     return ApiResponse.ok(_page_videos(db, rows, page, size, total))
 
 
+@router.get("/unscraped")
+def list_unscraped(db: DbSession, page: int = 0, size: int = 20):
+    """未刮削视频（tmdb_id 为空）平铺列表：前端「未刮削」入口，批量补刮削用。
+
+    文件不动库，仅按元数据状态过滤；DTO 与搜索结果同构，前端可复用列表渲染。
+    """
+    page, size = clamp_paging(page, size)
+    allowed = _allowed_ids(db)
+    base = select(Video).where(Video.library_id.in_(allowed), Video.tmdb_id.is_(None))
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    rows = list(db.scalars(base.order_by(Video.title.asc()).offset(page * size).limit(size)).all())
+    return ApiResponse.ok(_page_videos(db, rows, page, size, total))
+
+
 # ==================== /{id} 系列 ====================
 
 
