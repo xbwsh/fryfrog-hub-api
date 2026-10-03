@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("AUTH_ENABLED", "false")
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from fryfrog.db import Base
@@ -116,6 +116,28 @@ def _sql_budget(db):
         return counter["n"]
 
     return stop
+
+
+def test_grouped_hides_unscraped_standalones(tmp_path):
+    """未刮削单片只在 /unscraped 出现；库视图（分组列表）只收已绑定的。"""
+    db = _setup(tmp_path)
+
+    # 全部未刮削时：系列卡照常显示，单片段为空
+    data = series_router.grouped_by_library(db, page=0, size=20).data
+    assert len(data) == 1
+    assert len(data[0]["series"]) == 4
+    assert data[0]["standaloneVideos"] == []
+    assert data[0]["standaloneCount"] == 0
+
+    # 绑定一部单片 → 立即回流到库视图
+    mv = db.scalars(select(Video).where(Video.series_id.is_(None))).first()
+    mv.tmdb_id = 42
+    mv.metadata_source = "tmdb"
+    db.commit()
+
+    data = series_router.grouped_by_library(db, page=0, size=20).data
+    assert len(data[0]["standaloneVideos"]) == 1
+    assert data[0]["standaloneCount"] == 1
 
 
 def test_query_budget_paged_endpoints(tmp_path):
