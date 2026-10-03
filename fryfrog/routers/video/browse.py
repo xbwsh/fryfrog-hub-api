@@ -11,6 +11,7 @@ from fryfrog.core.api_response import ApiResponse, PageResponse
 from fryfrog.core.deps import DbSession
 from fryfrog.core.exceptions import ResourceNotFoundException
 from fryfrog.core.security import current_user_id
+from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video, VideoActor
 from fryfrog.schemas.video import (
     UpdatePositionRequest,
@@ -77,10 +78,16 @@ def list_unscraped(
 
     文件不动库，仅按元数据状态过滤；DTO 与搜索结果同构，前端可复用列表渲染。
     libraryId 可选——库内入口只看本库的未刮削。
+    只统计「本应用刮削」的库：外部刮削的库（enable_scraping=false）不进待办。
     """
     page, size = clamp_paging(page, size)
     allowed = _allowed_ids(db)
-    base = select(Video).where(Video.library_id.in_(allowed), Video.tmdb_id.is_(None))
+    managed = select(MediaLibrary.id).where(MediaLibrary.enable_scraping.is_(True))
+    base = select(Video).where(
+        Video.library_id.in_(allowed),
+        Video.library_id.in_(managed),
+        Video.tmdb_id.is_(None),
+    )
     if libraryId is not None:
         base = base.where(Video.library_id == libraryId)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0

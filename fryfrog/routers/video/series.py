@@ -167,13 +167,15 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
         lib_series.sort(key=lambda s: (s.title or "").lower())
         paged_series = lib_series[page * size : (page + 1) * size]
         # 单集段：SQL count + offset/limit，不全量载入后内存切片。
-        # 未刮削（tmdb_id 空）的单片只出现在 /unscraped 清单里——库视图
-        # 收已绑定的，绑定完成后自动回流，两个视图不再重叠。
+        # 仅对「本应用刮削」的库做视图分离：未绑定（tmdb_id 空）的单片
+        # 只出现在 /unscraped，绑定后回流。外部刮削的库
+        # （enable_scraping=false）tmdb_id 可能恒空——不过滤，否则整库消失。
         standalone_where = (
             Video.series_id.is_(None),
             Video.library_id == lib.id,
-            Video.tmdb_id.is_not(None),
         )
+        if lib.enable_scraping:
+            standalone_where = (*standalone_where, Video.tmdb_id.is_not(None))
         standalone_count = int(
             db.scalar(
                 select(func.count()).select_from(Video).where(*standalone_where)

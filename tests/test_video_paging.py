@@ -140,6 +140,22 @@ def test_grouped_hides_unscraped_standalones(tmp_path):
     assert data[0]["standaloneCount"] == 1
 
 
+def test_grouped_keeps_external_scrape_library(tmp_path):
+    """外部刮削的库（enable_scraping=false）不做视图分离——tmdb_id 恒空
+    也不能把整库过滤没。"""
+    db = _setup(tmp_path)
+    lib_id = db.scalars(select(MediaLibrary.id).limit(1)).first()
+    lib = db.get(MediaLibrary, lib_id)
+    lib.enable_scraping = False
+    db.commit()
+
+    data = series_router.grouped_by_library(db, page=0, size=20).data
+    assert len(data) == 1
+    assert len(data[0]["standaloneVideos"]) == 3  # 全部未刮削单片照常显示
+    assert data[0]["standaloneCount"] == 3
+    assert len(data[0]["series"]) == 4
+
+
 def test_query_budget_paged_endpoints(tmp_path):
     """列表接口单页 SQL 次数预算：与数据规模无关，超限即回归。"""
     db = _setup(tmp_path)  # 4 系列 + 3 单集

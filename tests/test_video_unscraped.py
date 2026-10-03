@@ -106,3 +106,19 @@ def test_unscraped_filters_by_library(tmp_path):
     only_lib1 = browse.list_unscraped(db, page=0, size=20, libraryId=lib1_id).data
     assert only_lib1["totalElements"] == 3
     assert all(v["title"].startswith("未刮削") for v in only_lib1["content"])
+
+
+def test_unscraped_excludes_external_scrape_library(tmp_path):
+    """外部刮削的库不进本应用待办：它的 tmdb_id 恒空不是待办信号。"""
+    db = _setup(tmp_path)
+    lib = db.scalars(select(MediaLibrary).limit(1)).first()
+    lib.enable_scraping = False
+    db.commit()
+
+    data = browse.list_unscraped(db, page=0, size=20).data
+    assert data["totalElements"] == 0
+
+    scoped = browse.list_unscraped(
+        db, page=0, size=20, libraryId=lib.id
+    ).data
+    assert scoped["content"] == []
