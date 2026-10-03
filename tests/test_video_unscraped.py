@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("AUTH_ENABLED", "false")
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from fryfrog.db import Base
@@ -74,3 +74,35 @@ def test_unscraped_paging(tmp_path):
 
     empty = browse.list_unscraped(db, page=9, size=2).data
     assert empty["content"] == []
+
+
+def test_unscraped_filters_by_library(tmp_path):
+    """libraryId 只返回该库的未刮削——「库内未刮削」入口场景。"""
+    db = _setup(tmp_path)
+    lib2 = MediaLibrary(
+        name="剧集库", path=str(tmp_path / "tv"), type="VIDEO", enabled=True
+    )
+    db.add(lib2)
+    db.flush()
+    db.add(
+        Video(
+            file_path=str(tmp_path / "tv" / "库B未刮削.mkv"),
+            file_name="库B未刮削.mkv",
+            title="库B未刮削",
+            library_id=lib2.id,
+            tmdb_id=None,
+        )
+    )
+    db.commit()
+
+    total = browse.list_unscraped(db, page=0, size=20).data["totalElements"]
+    assert total == 4  # 不带过滤 = 两库合计
+
+    only_lib2 = browse.list_unscraped(db, page=0, size=20, libraryId=lib2.id).data
+    assert only_lib2["totalElements"] == 1
+    assert only_lib2["content"][0]["title"] == "库B未刮削"
+
+    lib1_id = db.scalar(select(MediaLibrary.id).where(MediaLibrary.name == "影片"))
+    only_lib1 = browse.list_unscraped(db, page=0, size=20, libraryId=lib1_id).data
+    assert only_lib1["totalElements"] == 3
+    assert all(v["title"].startswith("未刮削") for v in only_lib1["content"])
