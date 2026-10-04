@@ -114,11 +114,14 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             from fryfrog.services.video_assets import (
                 parse_nfo,
                 parse_series_nfo,
+                prune_private_vertical_cover,
             )
 
             parse_nfo(db, video)
             sync_series_from_episode(db, video)
             parse_series_nfo(db, video)
+            # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
+            prune_private_vertical_cover(db, video)
 
             frames_removed += cleanup_redundant_frames(db, video)
 

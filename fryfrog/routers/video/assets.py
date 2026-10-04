@@ -52,13 +52,19 @@ def get_nfo(db: DbSession, id: int):
 @router.get("/{id:int}/cover")
 def get_cover(db: DbSession, id: int):
     video = vs.get_video(db, id)
-    # 分集竖屏封面共用季海报，避免每集各存一张（季海报缺失时回退下方分集图）
+    # 分集竖屏封面共用季海报，避免每集各存一张（季海报缺失时回退剧根
+    # 目录总海报，最后才落到分集私有图）
     if video.is_episode:
         season_dir = vs.get_season_dir(db, video)
         if season_dir:
             season_poster = season_dir / "tvshow-poster.jpg"
             if season_poster.is_file():
                 return FileResponse(str(season_poster), media_type="image/jpeg")
+        root_dir = vs.get_series_root_dir(db, [video])
+        if root_dir:
+            root_poster = root_dir / "tvshow-poster.jpg"
+            if root_poster.is_file():
+                return FileResponse(str(root_poster), media_type="image/jpeg")
     if video.cover_art_path and Path(video.cover_art_path).exists():
         return FileResponse(video.cover_art_path, media_type="image/jpeg")
     # 本地刮削产物优先（含无前缀 poster.jpg/folder.jpg/thumb.jpg），最后才截帧

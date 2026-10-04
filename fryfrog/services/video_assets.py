@@ -448,11 +448,59 @@ def _build_nfo(video: Video) -> str:
 
 # -------------------- 封面 / Logo --------------------
 
+def find_shared_vertical_poster(db: Session, video: Video) -> Path | None:
+    """分集竖屏封面的共享来源：季海报 → 剧根目录总海报。
+
+    与「刷新季海报」的既定策略一致：竖图整季共用，横屏 still 每集单独。
+    """
+    if not video.is_episode:
+        return None
+    season = get_season_dir(db, video)
+    if season:
+        p = season / "tvshow-poster.jpg"
+        if p.is_file():
+            return p
+    root = get_series_root_dir(db, [video])
+    if root:
+        p = root / "tvshow-poster.jpg"
+        if p.is_file():
+            return p
+    return None
+
+
+def prune_private_vertical_cover(db: Session, video: Video) -> bool:
+    """分集已有共享竖图（季/剧海报）时，删除其私有竖图副本并清空字段。
+
+    与「刷新季海报」的清理一致；扫描时对已绑定的分集也生效
+    （它们不会再走下载路径，不主动清就永远留着）。
+    """
+    if not video.is_episode or not video.cover_art_path:
+        return False
+    shared = find_shared_vertical_poster(db, video)
+    if shared is None:
+        return False
+    stale = Path(video.cover_art_path)
+    try:
+        if stale.exists() and stale != shared:
+            stale.unlink()
+        video.cover_art_path = None
+        db.flush()
+        return True
+    except OSError:
+        logger.debug("清理分集私有竖图失败: %s", stale, exc_info=True)
+        return False
+
+
 def download_all_covers(
     db: Session, video: Video, force: bool = False, poster: bool = True
 ) -> bool:
     poster_ok = False
     fanart_ok = False
+    # 分集竖屏共用季/剧海报：共享图已存在时不再为分集落竖图，
+    # 并清掉历史遗留的私有副本（横屏 still 每集照旧保留）。
+    if poster and video.is_episode and find_shared_vertical_poster(db, video):
+        poster = False
+        prune_private_vertical_cover(db, video)
     if poster and video.poster_url:
         poster_ok = download_image(_full_image_url(video.poster_url), get_poster_path(db, video), force)
         if poster_ok:
