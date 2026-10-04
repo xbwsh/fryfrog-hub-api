@@ -9,8 +9,9 @@ from sqlalchemy.orm import sessionmaker
 
 from fryfrog.db import Base
 from fryfrog.models.library import MediaLibrary
-from fryfrog.models.video import Video
+from fryfrog.models.video import Video, VideoSeries
 from fryfrog.routers.video import browse
+from fryfrog.services.video_scan import sync_series_from_episode
 
 
 def _setup(tmp_path):
@@ -122,3 +123,81 @@ def test_unscraped_excludes_external_scrape_library(tmp_path):
         db, page=0, size=20, libraryId=lib.id
     ).data
     assert scoped["content"] == []
+
+
+
+def _setup_backfill():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)()
+
+
+def test_backfills_missing_series_tmdb_from_bound_episode():
+    """NFO 恢复只写分集：系列行缺 tmdb_id 时用分集回填（共用剧 ID）。"""
+    db = _setup_backfill()
+    series = VideoSeries(title="剧A")
+    db.add(series)
+    db.flush()
+    video = Video(
+        file_path="/x/episode.mkv",
+        file_name="episode.mkv",
+        title="剧A S01E01",
+        series_id=series.id,
+        tmdb_id=285479,
+        metadata_source="nfo",
+    )
+    db.add(video)
+    db.commit()
+
+    assert sync_series_from_episode(db, video) is True
+    db.commit()
+    assert series.tmdb_id == 285479
+    assert series.metadata_source == "nfo"
+
+
+def test_keeps_existing_series_tmdb_and_skips_standalone():
+    """已有系列绑定不覆盖；无系列归属的分集不处理。"""
+    db = _setup_backfill()
+    series = VideoSeries(title="剧B", tmdb_id=1, metadata_source="tmdb")
+    db.add(series)
+    db.flush()
+    bound = Video(
+        file_path="/x/b.mkv",
+        file_name="b.mkv",
+        title="b S01E01",
+        series_id=series.id,
+        tmdb_id=2,
+        metadata_source="nfo",
+    )
+    solo = Video(
+        file_path="/x/solo.mkv",
+        file_name="solo.mkv",
+        title="solo",
+        tmdb_id=3,
+        metadata_source="nfo",
+    )
+    db.add_all([bound, solo])
+    db.commit()
+
+    assert sync_series_from_episode(db, bound) is False
+    assert series.tmdb_id == 1
+    assert sync_series_from_episode(db, solo) is False
+
+
+def test_backfill_noop_when_episode_unbound():
+    db = _setup_backfill()
+    series = VideoSeries(title="剧C")
+    db.add(series)
+    db.flush()
+    video = Video(
+        file_path="/x/c.mkv",
+        file_name="c.mkv",
+        title="c S01E01",
+        series_id=series.id,
+        tmdb_id=None,
+    )
+    db.add(video)
+    db.commit()
+
+    assert sync_series_from_episode(db, video) is False
+    assert series.tmdb_id is None

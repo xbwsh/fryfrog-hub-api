@@ -15,6 +15,23 @@ from fryfrog.services.fsutil import VIDEO_EXTS, iter_files, parse_episode
 logger = logging.getLogger(__name__)
 
 
+def sync_series_from_episode(db: Session, video: Video) -> bool:
+    """分集已绑（典型来源：NFO 恢复）但系列行缺 tmdb_id 时回填。
+
+    NFO 路径只写分集字段，系列行不落——而详情页的刮削菜单和系列级
+    操作（季海报 / Logo）都看系列行，缺了会把整部剧误判成未绑定。
+    同一部剧的分集共用剧 ID，任取一条已绑分集即可修复。
+    """
+    series = video.series
+    if video.tmdb_id is None or series is None or series.tmdb_id is not None:
+        return False
+    series.tmdb_id = video.tmdb_id
+    if series.metadata_source is None:
+        series.metadata_source = video.metadata_source or "nfo"
+    db.flush()
+    return True
+
+
 def scan_video_library(db: Session, library: MediaLibrary) -> int:
     """扫描视频库：遍历 VIDEO_EXTS，upsert Video 行。"""
     root = Path(library.path)
@@ -97,6 +114,7 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             from fryfrog.services.video_assets import parse_nfo
 
             parse_nfo(db, video)
+            sync_series_from_episode(db, video)
 
             frames_removed += cleanup_redundant_frames(db, video)
 
