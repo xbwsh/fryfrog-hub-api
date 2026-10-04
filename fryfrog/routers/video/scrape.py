@@ -382,23 +382,3 @@ def tmdb_unbind(db: DbSession, id: int):
     count = scrape.unbind_by_tmdb_id(db, tmdb_id)
     return ApiResponse.ok({"tmdbId": tmdb_id, "unbound": count})
 
-
-@router.post("/{id:int}/tmdb/refresh")
-def tmdb_refresh(db: DbSession, id: int):
-    video = vs.get_video(db, id)
-    _require_visible(db, video.library_id, "Video", id)
-    module = f"bind:{id}"
-
-    def work(session):
-        results = scrape.rescrape_video(session, id)
-        progress_svc.update_progress(module, stage="organize")
-        for v in results:
-            assets.upgrade_legacy_assets(session, v)
-        progress_svc.update_progress(module, stage="assets")
-        for v in results:
-            assets.generate_nfo(session, v)
-            assets.download_all_covers(session, v, force=True)
-        _download_root_art_if_series(session, results)
-
-    submit_job(module, "bind", 1, work, error_fields={"completed": 1}, completed=1)
-    return ApiResponse.ok({"status": "started", "videoId": id})
