@@ -47,6 +47,7 @@ _TVSHOW_NFO = """<?xml version="1.0" encoding="UTF-8"?>
   <rating>8.7</rating>
   <premiered>2023-01-01</premiered>
   <status>Ended</status>
+  <adult>true</adult>
 </tvshow>
 """
 
@@ -63,6 +64,8 @@ def _episode_with_tvshow_nfo(tmp_path: Path, series: VideoSeries) -> Video:
     return video
 
 
+
+
 def test_parse_series_nfo_fills_from_season_tvshow(tmp_path: Path):
     """季目录的 tvshow.nfo → 系列行简介/评分/年份等（此前从未解析）。"""
     series = VideoSeries(title="剧名")
@@ -77,11 +80,21 @@ def test_parse_series_nfo_fills_from_season_tvshow(tmp_path: Path):
     assert series.original_title == "Show Name"
     assert series.release_date == "2023-01-01"
     assert series.status == "Ended"
+    assert series.is_adult is True
 
 
 def test_parse_series_nfo_respects_existing_fields(tmp_path: Path):
     """已有值不覆盖（fill-if-empty 语义）。"""
-    series = VideoSeries(title="剧名", overview="原有简介", rating=9.9, year=2020)
+    series = VideoSeries(
+        title="剧名",
+        overview="原有简介",
+        rating=9.9,
+        year=2020,
+        original_title="已有原名",
+        release_date="2020-05-01",
+        status="Ended",
+        is_adult=True,
+    )
     video = _episode_with_tvshow_nfo(tmp_path, series)
 
     ok = parse_series_nfo(_FakeDB(), video)
@@ -90,3 +103,28 @@ def test_parse_series_nfo_respects_existing_fields(tmp_path: Path):
     assert series.rating == 9.9
     assert series.year == 2020
     assert not ok
+
+
+def test_parse_nfo_adult_upgrade_only(tmp_path: Path):
+    """分集 NFO 的 <adult>true> 只升不降。"""
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>某片</title>
+  <adult>true</adult>
+</movie>
+"""
+    vf = tmp_path / "某片.mkv"
+    vf.write_bytes(b"x")
+    (tmp_path / "某片.nfo").write_text(xml, encoding="utf-8")
+
+    v1 = Video(file_path=str(vf), file_name=vf.name, title="某片")
+    assert parse_nfo(_FakeDB(), v1)
+    assert v1.is_adult is True
+
+    v2 = Video(file_path=str(vf), file_name=vf.name, title="某片", is_adult=True)
+    (tmp_path / "某片.nfo").write_text(
+        xml.replace("<adult>true</adult>", "<adult>false</adult>"),
+        encoding="utf-8",
+    )
+    parse_nfo(_FakeDB(), v2)
+    assert v2.is_adult is True

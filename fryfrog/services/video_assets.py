@@ -255,6 +255,13 @@ def parse_nfo(db: Session, video: Video) -> bool:
         except ValueError:
             pass
 
+    # <adult>true</adult> 只升不降：库里已有 18+ 标记时不被 NFO 的 false 摘掉。
+    if not video.is_adult:
+        adult = text("adult")
+        if adult and adult.strip().lower() in ("true", "1", "yes"):
+            video.is_adult = True
+            changed = True
+
     actors = []
     for actor in root.findall("actor"):
         name = actor.findtext("name")
@@ -312,8 +319,6 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
 
     series = video.series
     if series is None:
-        return False
-    if series.overview and series.rating and series.year:
         return False
     nfo = find_series_nfo(video)
     if nfo is None:
@@ -375,6 +380,12 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
         status = text("status")
         if status:
             series.status = status
+            changed = True
+
+    if not series.is_adult:
+        adult = text("adult")
+        if adult and adult.strip().lower() in ("true", "1", "yes"):
+            series.is_adult = True
             changed = True
 
     if changed:
