@@ -53,6 +53,8 @@ def rescrape_library(db: DbSession, library_id: int):
 
     def work(session):
         scrape.rescrape_by_library(session, library_id)
+        for v in session.scalars(select(Video).where(Video.library_id == library_id)).all():
+            assets.upgrade_legacy_assets(session, v)
         progress_svc.update_progress(module, completed=total)
         logger.info("[Rescrape] Library %s completed", library_id)
 
@@ -358,7 +360,8 @@ def tmdb_bind(db: DbSession, id: int, body: VideoBindRequest):
     def work(session):
         bound = scrape.bind_series(session, id, body.tmdbId, body.mediaType)
         progress_svc.update_progress(module, stage="organize")
-        assets.organize_videos(session, bound)
+        for v in bound:
+            assets.upgrade_legacy_assets(session, v)
         progress_svc.update_progress(module, stage="assets")
         for v in bound:
             assets.generate_nfo(session, v)
@@ -389,7 +392,8 @@ def tmdb_refresh(db: DbSession, id: int):
     def work(session):
         results = scrape.rescrape_video(session, id)
         progress_svc.update_progress(module, stage="organize")
-        assets.organize_videos(session, results)
+        for v in results:
+            assets.upgrade_legacy_assets(session, v)
         progress_svc.update_progress(module, stage="assets")
         for v in results:
             assets.generate_nfo(session, v)

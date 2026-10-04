@@ -347,6 +347,9 @@ def scrape_video_if_needed(db: Session, video: Video) -> None:
         return
     try:
         bind_series(db, video.id, pick["id"], pick["mediaType"] or media_pref)
+        from fryfrog.services import video_assets as assets
+
+        assets.upgrade_legacy_assets(db, video)
         generate_nfo(db, video)
         download_all_covers(db, video, force=False)
     except Exception:

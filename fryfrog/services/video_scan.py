@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 
 from sqlalchemy import select
@@ -13,6 +14,66 @@ from fryfrog.models.video import Video, VideoSeries
 from fryfrog.services.fsutil import VIDEO_EXTS, iter_files, parse_episode
 
 logger = logging.getLogger(__name__)
+
+ASSET_ONLY_SUFFIXES = {".nfo", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx"}
+HIDDEN_ASSET_DIR_PREFIX = ".frames-"
+
+
+def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
+    """删除「只有素材没有视频」的孤儿目录（旧方案残留/手动遗留）。
+
+    保守规则：目录内没有任何视频文件；所有文件都是素材类后缀；
+    且目录内文件未被任何 Video 的 cover_art_path/backdrop_local_path/logo_local_path 引用。
+    """
+    referenced: set[str] = set()
+    for v in db.scalars(select(Video)).all():
+        for p in (v.cover_art_path, v.backdrop_local_path, v.logo_local_path):
+            if p:
+                try:
+                    referenced.add(str(Path(p).resolve()))
+                except OSError:
+                    pass
+    removed = 0
+    try:
+        for d in root.rglob("*"):
+            if not d.is_dir() or d.resolve() == root.resolve():
+                continue
+            # 目录里还有视频 → 不是空壳，跳过
+            if any(p.is_file() and p.suffix.lower() in VIDEO_EXTS for p in d.rglob("*")):
+                continue
+            # 目录内文件全为素材类且未被引用 → 删除（rmtree 空壳）
+            if _is_orphan_asset_dir(d) and not _dir_references_media(d, referenced):
+                shutil.rmtree(d, ignore_errors=True)
+                removed += 1
+    except OSError:
+        logger.debug("孤儿素材目录清理失败: %s", root, exc_info=True)
+    return removed
+
+
+def _is_orphan_asset_dir(d: Path) -> bool:
+    """目录中只有素材类文件（无视频）且无被引用文件时视为孤儿空壳。"""
+    if not d.is_dir():
+        return False
+    for p in d.rglob("*"):
+        if p.is_dir():
+            if p.name.startswith(HIDDEN_ASSET_DIR_PREFIX):
+                continue
+            return False
+        if p.suffix.lower() not in ASSET_ONLY_SUFFIXES:
+            return False
+    return True
+
+
+def _dir_references_media(d: Path, referenced: set[str]) -> bool:
+    """目录内任一文件被 DB 素材字段引用时，不能当作孤儿目录删除。"""
+    for p in d.rglob("*"):
+        if p.is_file():
+            try:
+                if str(p.resolve()) in referenced:
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 def sync_series_from_episode(db: Session, video: Video) -> bool:
@@ -138,6 +199,9 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
     db.flush()
     if frames_removed:
         logger.info("视频库扫描清理帧截图 %d 个: %s", frames_removed, library.name)
+    removed_dirs = cleanup_orphan_asset_dirs(db, root)
+    if removed_dirs:
+        logger.info("视频库扫描清理空壳素材目录 %d 个: %s", removed_dirs, library.name)
     logger.info("视频库扫描完成: %s, 新增/更新 %d 条", library.name, count)
     return count
 

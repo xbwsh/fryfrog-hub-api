@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -71,6 +72,65 @@ def get_metadata_dir(db: Session, video: Video) -> Path:
     return dir_path
 
 
+def rename_show_dir(db: Session, video: Video) -> bool:
+    """重刮后剧名变化时，原地重命名剧名级目录（不新建目录搬文件）。
+
+    目录布局由用户文件系统决定，这里只做「目录名跟随剧名」的最小改动：
+    散放库根 / 目录里混着其他剧 / 目标目录已存在 时放弃，保持原位。
+    """
+    try:
+        video_dir = Path(video.file_path).parent
+        base: Path | None = None
+        if video.library_id is not None:
+            from fryfrog.models.library import MediaLibrary
+
+            lib = db.get(MediaLibrary, video.library_id)
+            if lib and lib.path:
+                base = Path(lib.path)
+        if base is None:
+            return False
+        if video_dir == base:
+            return False  # 散放库根，没有剧名级目录可改名
+        # 剧名级目录：剧集向上两级（库根/剧名/第N季/第N集）；
+        # 电影则是视频所在目录自身（库根/剧名/），散放库根时等于 base 会被拦下
+        root = video_dir.parent.parent if video.is_episode else video_dir
+        if root == base:
+            return False
+        new_name = _clean_folder(_select_show_name(video))
+        if not new_name or root.name == new_name:
+            return False
+        new_root = root.parent / new_name
+        if new_root.exists() or new_root == root:
+            return False
+        # 目录里出现其他剧的视频 → 不擅自改名，避免误伤
+        from fryfrog.services.fsutil import VIDEO_EXTS
+
+        for p in root.rglob("*"):
+            if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS:
+                continue
+            if str(p.resolve()) == str(Path(video.file_path).resolve()):
+                continue
+            row = db.scalar(select(Video).where(Video.file_path == str(p.resolve())))
+            if row is None:
+                continue
+            if video.is_episode:
+                if row.series_id != video.series_id:
+                    return False
+            elif row.title != video.title:
+                return False
+        os.rename(str(root), str(new_root))
+        old_prefix = str(root.resolve())
+        for row in db.scalars(select(Video)).all():
+            if row.file_path and row.file_path.startswith(old_prefix):
+                row.file_path = str(new_root.resolve()) + row.file_path[len(old_prefix):]
+        db.flush()
+        logger.info("剧名级目录重命名: %s → %s", root, new_root)
+        return True
+    except Exception:
+        logger.exception("剧名级目录重命名失败: %s", video.file_name)
+        return False
+
+
 def get_season_dir(db: Session, video: Video) -> Path | None:
     md = get_metadata_dir(db, video)
     return md.parent if md else None
@@ -114,42 +174,51 @@ def find_series_root_file(db: Session, episodes: list[Video], name: str) -> Path
     return None
 
 
+def get_video_assets_dir(video: Video) -> Path:
+    """素材目录：nfo/封面/背景与视频放同一目录（Emby 式，素材跟随视频）。"""
+    return Path(video.file_path).parent
+
+
 def get_nfo_path(db: Session, video: Video) -> Path:
-    return get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}.nfo"
+    return get_video_assets_dir(video) / f"{get_base_name(video.file_name)}.nfo"
 
 
 def get_poster_path(db: Session, video: Video) -> Path:
-    return get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}-poster.jpg"
+    """固定命名 poster.jpg（电影/独立条目）；分集竖屏共用季海报。"""
+    return get_video_assets_dir(video) / "poster.jpg"
 
 
 def get_fanart_path(db: Session, video: Video) -> Path:
-    return get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}-fanart.jpg"
+    return get_video_assets_dir(video) / "fanart.jpg"
 
 
 def local_poster_candidates(db: Session, video: Video) -> list[Path]:
-    """封面候选（有序）：metadata 目录 → 同目录 {base}-poster → 无前缀 poster/folder/thumb。
+    """封面候选（有序）：视频同目录固定 poster.jpg → 旧 {base}-poster → 无前缀 → 老 metadata 目录。
 
-    无前缀命名是手工/外部刮削的常见产物（poster.jpg fanart.jpg thumb.jpg），
-    库关掉扫描刮削时它们是唯一素材，必须识别，否则封面会退化到截帧。
+    固定命名是 Emby/Kodi 约定；旧变体与老方案（素材写去 metadata 目录）
+    保留兼容，重新刮削时会被 sync_legacy_assets 迁移整理。
     """
-    video_dir = Path(video.file_path).parent
+    video_dir = get_video_assets_dir(video)
     base = get_base_name(video.file_name)
+    legacy = get_metadata_dir(db, video)
     return [
-        get_poster_path(db, video),
-        video_dir / f"{base}-poster.jpg",
         video_dir / "poster.jpg",
+        video_dir / f"{base}-poster.jpg",
         video_dir / "folder.jpg",
         video_dir / "thumb.jpg",
+        legacy / f"{base}-poster.jpg",
+        legacy / "poster.jpg",
     ]
 
 
 def local_fanart_candidates(db: Session, video: Video) -> list[Path]:
-    video_dir = Path(video.file_path).parent
+    video_dir = get_video_assets_dir(video)
     base = get_base_name(video.file_name)
+    legacy = get_metadata_dir(db, video)
     return [
-        get_fanart_path(db, video),
-        video_dir / f"{base}-fanart.jpg",
         video_dir / "fanart.jpg",
+        video_dir / f"{base}-fanart.jpg",
+        legacy / f"{base}-fanart.jpg",
     ]
 
 

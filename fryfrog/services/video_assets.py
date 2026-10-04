@@ -19,8 +19,10 @@ from fryfrog.services.video_service import (
     get_metadata_dir,
     get_nfo_path,
     get_poster_path,
+    rename_show_dir,
     get_season_dir,
     get_series_root_dir,
+    get_video_assets_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -394,8 +396,6 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
 
 def generate_nfo(db: Session, video: Video) -> str | None:
     try:
-        metadata_dir = get_metadata_dir(db, video)
-        metadata_dir.mkdir(parents=True, exist_ok=True)
         nfo_path = get_nfo_path(db, video)
         nfo_path.write_text(_build_nfo(video), encoding="utf-8")
         return str(nfo_path)
@@ -609,7 +609,7 @@ def download_movie_logo(db: Session, video: Video, file_path: str | None = None,
         target_path = logos[0].get("file_path") if logos else None
     if not target_path:
         return False
-    dest = get_metadata_dir(db, video) / f"{get_base_name(video.file_name)}-logo.png"
+    dest = get_video_assets_dir(video) / f"{get_base_name(video.file_name)}-logo.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     ok = False
     for url in _tmdb_image_urls(target_path):
@@ -842,7 +842,13 @@ def organize_videos(db: Session, videos: list[Video]) -> dict:
                     if not sibling.is_file():
                         continue
                     s_base = get_base_name(sibling.name)
-                    if s_base == base or sibling.suffix.lower() in {".srt", ".ass", ".ssa", ".vtt"}:
+                    fixed = sibling.name in {"poster.jpg", "fanart.jpg", "folder.jpg", "thumb.jpg"}
+                    if (
+                        s_base == base
+                        or (base and s_base.startswith(base))
+                        or fixed
+                        or sibling.suffix.lower() in {".srt", ".ass", ".ssa", ".vtt"}
+                    ):
                         if sibling.suffix.lower() in SUBTITLE_EXTS or sibling.suffix.lower() in {
                             ".nfo",
                             ".jpg",
@@ -884,3 +890,143 @@ def organize_videos(db: Session, videos: list[Video]) -> dict:
         "total": len(videos),
         "cleanedEmptyDirs": cleaned_dirs,
     }
+
+
+def upgrade_legacy_assets(db: Session, video: Video) -> None:
+    """把老方案的素材整理成新结构：素材贴视频、固定命名、散放归置、清理空壳。
+
+    老方案（升级前）把 nfo/封面写到 get_metadata_dir（库根/剧名/第N季/第N集/），
+    命名带 -poster/-fanart 前缀；重新刮削（bind/refresh/rescrape-library）时
+        调用本函数：素材迁到视频同目录的固定命名（poster.jpg/fanart.jpg/{base}.nfo），
+        删除旧变体与 -frame-v3 截帧，修正 DB 素材字段；散放在库根的视频
+        归置进「剧名/第N季/第N集」规范目录，并在搬移后清理空目录。
+    """
+    try:
+        rename_show_dir(db, video)
+        video_dir = get_video_assets_dir(video)
+        base = get_base_name(video.file_name)
+        legacy = get_metadata_dir(db, video)
+        if legacy == video_dir:
+            legacy = None
+        if legacy is not None:
+            _migrate_legacy_files(legacy, video_dir, base)
+        _collect_stray_assets(video)
+        _converge_asset_variants(video_dir, base)
+        _repair_asset_paths(db, video)
+        if legacy is not None:
+            root = None
+            if video.library_id is not None:
+                from fryfrog.models.library import MediaLibrary
+
+                lib = db.get(MediaLibrary, video.library_id)
+                if lib and lib.path:
+                    root = Path(lib.path)
+            _prune_empty_dirs(legacy, root or legacy.parent)
+        # 散放/非规范位置：归置进规范目录（视频与素材一起搬，不洒在库根）
+        if get_metadata_dir(db, video) != get_video_assets_dir(video):
+            organize_videos(db, [video])
+    except Exception:
+        logger.exception("升级素材整理失败: %s", video.file_name)
+
+
+def _migrate_legacy_files(legacy: Path, video_dir: Path, base: str) -> None:
+    """老位置素材按固定命名规则搬到视频目录；目标已存在时删除旧副本。"""
+    for src_name, dst_name in (
+        (f"{base}.nfo", f"{base}.nfo"),
+        (f"{base}-poster.jpg", "poster.jpg"),
+        (f"{base}-fanart.jpg", "fanart.jpg"),
+        (f"{base}-logo.png", f"{base}-logo.png"),
+        ("poster.jpg", "poster.jpg"),
+        ("fanart.jpg", "fanart.jpg"),
+        ("folder.jpg", "folder.jpg"),
+        ("thumb.jpg", "thumb.jpg"),
+    ):
+        src = legacy / src_name
+        if not src.is_file():
+            continue
+        dst = video_dir / dst_name
+        if dst.exists():
+            if dst.resolve() == src.resolve():
+                continue
+            src.unlink()
+        else:
+            shutil.move(str(src), str(dst))
+
+
+def _converge_asset_variants(video_dir: Path, base: str) -> None:
+    """视频目录内旧变体收敛到固定命名；清理未被 DB 引用的兜底截帧。"""
+    for old, new in (
+        (video_dir / f"{base}-poster.jpg", video_dir / "poster.jpg"),
+        (video_dir / f"{base}-fanart.jpg", video_dir / "fanart.jpg"),
+    ):
+        if not old.exists() or old.resolve() == new.resolve():
+            continue
+        if new.exists():
+            if new.is_file():
+                old.unlink()
+        else:
+            old.rename(new)
+
+
+def _collect_stray_assets(video: Video) -> None:
+    """回收其他目录里遗留的同名素材（老方案名称变化后剩余的），搬到视频目录。
+
+    覆盖「视频已被旧 organize 搬去新名目录、素材留在旧名目录」的场景：
+    只移动与视频 base 同名（或同 base 的 poster/fanart 变体）的素材文件，
+    收敛为固定命名；搬空的源目录顺带尝试删除。
+    """
+    video_dir = get_video_assets_dir(video)
+    base = get_base_name(video.file_name)
+    wanted = {
+        f"{base}.nfo": f"{base}.nfo",
+        f"{base}-poster.jpg": "poster.jpg",
+        f"{base}-fanart.jpg": "fanart.jpg",
+        f"{base}-logo.png": f"{base}-logo.png",
+    }
+    search_root = video_dir.parent
+    try:
+        if not search_root.is_dir():
+            return
+        for p in search_root.rglob("*"):
+            if not p.is_file() or p.name not in wanted:
+                continue
+            if p.parent.resolve() == video_dir.resolve():
+                continue
+            dst = video_dir / wanted[p.name]
+            if dst.exists():
+                continue
+            try:
+                shutil.move(str(p), str(dst))
+                try:
+                    p.parent.rmdir()
+                except OSError:
+                    pass
+            except OSError:
+                logger.debug("回收散落素材失败: %s", p)
+    except OSError:
+        logger.debug("扫描散落素材失败: %s", search_root, exc_info=True)
+
+
+def _repair_asset_paths(db: Session, video: Video) -> None:
+    """cover_art_path/backdrop_local_path 指向已迁移/收敛后的素材（或置空）。"""
+    video_dir = get_video_assets_dir(video)
+    base = get_base_name(video.file_name)
+    if video.cover_art_path:
+        p = Path(video.cover_art_path)
+        if not p.exists():
+            poster = video_dir / "poster.jpg"
+            video.cover_art_path = str(poster) if poster.exists() else None
+        elif p.name == f"{base}-poster.jpg":
+            poster = video_dir / "poster.jpg"
+            if poster.exists() and poster.resolve() != p.resolve():
+                video.cover_art_path = str(poster)
+    if video.backdrop_local_path:
+        p = Path(video.backdrop_local_path)
+        if not p.exists():
+            fanart = video_dir / "fanart.jpg"
+            video.backdrop_local_path = str(fanart) if fanart.exists() else None
+        elif p.name == f"{base}-fanart.jpg":
+            fanart = video_dir / "fanart.jpg"
+            if fanart.exists() and fanart.resolve() != p.resolve():
+                video.backdrop_local_path = str(fanart)
+    db.flush()

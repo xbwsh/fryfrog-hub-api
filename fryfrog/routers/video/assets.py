@@ -71,6 +71,15 @@ def get_cover(db: DbSession, id: int):
     for candidate in vs.local_poster_candidates(db, video):
         if candidate.exists():
             return FileResponse(str(candidate), media_type="image/jpeg")
+    # 远程 TMDB 兜底（经 make_client 走代理），避免退化到截帧/占位
+    if video.poster_url:
+        data = assets.fetch_tmdb_image(video.poster_url)
+        if data:
+            return Response(
+                content=data,
+                media_type="image/jpeg",
+                headers={"Cache-Control": assets.IMAGE_CACHE},
+            )
     frame = Path(video.file_path).parent / f"{vs.get_base_name(video.file_name)}-frame-v3.jpg"
     if not frame.exists():
         try:
@@ -106,6 +115,14 @@ def get_fanart(db: DbSession, id: int):
             if series is not None and series.backdrop_local_path:
                 if Path(series.backdrop_local_path).exists():
                     return FileResponse(series.backdrop_local_path, media_type="image/jpeg")
+        if video.backdrop_url:
+            data = assets.fetch_tmdb_image(video.backdrop_url)
+            if data:
+                return Response(
+                    content=data,
+                    media_type="image/jpeg",
+                    headers={"Cache-Control": assets.IMAGE_CACHE},
+                )
         return Response(
             content=placeholder_jpeg(1920, 400, video.title or ""),
             media_type="image/jpeg",
@@ -126,6 +143,14 @@ def get_fanart(db: DbSession, id: int):
         logger.debug("背景截帧失败 id=%s", id)
     if frame.exists():
         return FileResponse(str(frame), media_type="image/jpeg")
+    if video.backdrop_url:
+        data = assets.fetch_tmdb_image(video.backdrop_url)
+        if data:
+            return Response(
+                content=data,
+                media_type="image/jpeg",
+                headers={"Cache-Control": assets.IMAGE_CACHE},
+            )
     return Response(
         content=placeholder_jpeg(1920, 400, video.title or ""),
         media_type="image/jpeg",

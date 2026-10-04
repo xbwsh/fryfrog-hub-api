@@ -110,6 +110,6 @@ def test_local_candidates_order(tmp_path):
     db.add(video)
     db.flush()
     poster_names = [p.name for p in vs.local_poster_candidates(db, video)]
-    assert poster_names == ["adn-499-poster.jpg", "adn-499-poster.jpg", "poster.jpg", "folder.jpg", "thumb.jpg"]
+    assert poster_names == ["poster.jpg", "adn-499-poster.jpg", "folder.jpg", "thumb.jpg", "adn-499-poster.jpg", "poster.jpg"]
     fanart_names = [p.name for p in vs.local_fanart_candidates(db, video)]
-    assert fanart_names == ["adn-499-fanart.jpg", "adn-499-fanart.jpg", "fanart.jpg"]
+    assert fanart_names == ["fanart.jpg", "adn-499-fanart.jpg", "adn-499-fanart.jpg"]
