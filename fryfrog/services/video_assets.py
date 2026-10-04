@@ -287,6 +287,100 @@ def parse_nfo(db: Session, video: Video) -> bool:
         db.flush()
     return bool(video.tmdb_id or changed)
 
+
+def find_series_nfo(video: Video) -> Path | None:
+    """从分集目录向上找 tvshow.nfo（分集目录 → 季目录 → 剧目录）。"""
+    d = Path(video.file_path).parent
+    for _ in range(4):
+        p = d / "tvshow.nfo"
+        if p.is_file():
+            return p
+        parent = d.parent
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
+def parse_series_nfo(db: Session, video: Video) -> bool:
+    """从 tvshow.nfo 回填系列行的简介/评分/年份等（字段为空才写）。
+
+    详情页的「简介」和 ★ 评分读的是系列行；此前只有分集 NFO 解析器，
+    系列级 tvshow.nfo 从未被读取——外部刮削的剧这两项一直是空的。
+    """
+    import xml.etree.ElementTree as ET
+
+    series = video.series
+    if series is None:
+        return False
+    if series.overview and series.rating and series.year:
+        return False
+    nfo = find_series_nfo(video)
+    if nfo is None:
+        return False
+    try:
+        root = ET.parse(nfo).getroot()
+    except Exception:
+        logger.debug("解析 tvshow.nfo 失败: %s", nfo, exc_info=True)
+        return False
+
+    def text(tag: str) -> str | None:
+        el = root.find(tag)
+        if el is not None and el.text and el.text.strip():
+            return el.text.strip()
+        return None
+
+    changed = False
+    if not series.overview:
+        plot = text("plot")
+        if plot:
+            series.overview = plot
+            changed = True
+
+    if not series.rating:
+        rating_el = root.find("ratings/rating/value")
+        raw = rating_el.text if rating_el is not None else None
+        if not (raw and raw.strip()):
+            flat = root.find("rating")
+            raw = flat.text if flat is not None else raw
+        if raw and raw.strip():
+            try:
+                series.rating = float(raw.strip())
+                changed = True
+            except ValueError:
+                pass
+
+    if not series.year:
+        year = text("year")
+        if year:
+            try:
+                series.year = int(year)
+                changed = True
+            except ValueError:
+                pass
+
+    if not series.original_title:
+        original = text("originaltitle")
+        if original:
+            series.original_title = original
+            changed = True
+
+    if not series.release_date:
+        premiered = text("premiered") or text("releasedate")
+        if premiered:
+            series.release_date = premiered
+            changed = True
+
+    if not series.status:
+        status = text("status")
+        if status:
+            series.status = status
+            changed = True
+
+    if changed:
+        db.flush()
+    return changed
+
 def generate_nfo(db: Session, video: Video) -> str | None:
     try:
         metadata_dir = get_metadata_dir(db, video)

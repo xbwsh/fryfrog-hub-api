@@ -111,10 +111,14 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                         break
 
             # 从已有 NFO 恢复元数据（含 tmdbId）
-            from fryfrog.services.video_assets import parse_nfo
+            from fryfrog.services.video_assets import (
+                parse_nfo,
+                parse_series_nfo,
+            )
 
             parse_nfo(db, video)
             sync_series_from_episode(db, video)
+            parse_series_nfo(db, video)
 
             frames_removed += cleanup_redundant_frames(db, video)
 
