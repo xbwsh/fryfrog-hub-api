@@ -163,7 +163,15 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
 
     result: list[dict] = []
     for lib in libraries:
-        lib_series = [s for s in all_series if lib.id in libs_of_series.get(s.id, ())]
+        # 与单片段一致:本应用刮削的库做视图分离——未绑定（tmdb_id 空）的系列
+        # 也在 /unscraped 以分集平铺出现，不占库视图的系列段；外部刮削的库
+        # （enable_scraping=false）tmdb_id 可能恒空——不过滤，否则整个系列消失。
+        lib_series = [
+            s
+            for s in all_series
+            if lib.id in libs_of_series.get(s.id, ())
+            and (not lib.enable_scraping or s.tmdb_id is not None)
+        ]
         lib_series.sort(key=lambda s: (s.title or "").lower())
         paged_series = lib_series[page * size : (page + 1) * size]
         # 单集段：SQL count + offset/limit，不全量载入后内存切片。

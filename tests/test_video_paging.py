@@ -13,6 +13,8 @@ from fryfrog.models.user import User, UserRole
 from fryfrog.models.video import Video, VideoSeries
 from fryfrog.routers.video import series as series_router
 from fryfrog.routers.video._common import MAX_PAGE_SIZE, clamp_paging
+from fryfrog.routers.video import browse
+from fryfrog.services.video_scrape import unbind_by_tmdb_id
 
 
 def _setup(tmp_path):
@@ -119,15 +121,12 @@ def _sql_budget(db):
 
 
 def test_grouped_hides_unscraped_standalones(tmp_path):
-    """未刮削单片只在 /unscraped 出现；库视图（分组列表）只收已绑定的。"""
+    """未刮削（单片与系列）只在 /unscraped 出现；库视图（分组列表）只收已绑定的。"""
     db = _setup(tmp_path)
 
-    # 全部未刮削时：系列卡照常显示，单片段为空
+    # 全部未刮削时：库分组整体不出现（未绑定统一进 /unscraped）
     data = series_router.grouped_by_library(db, page=0, size=20).data
-    assert len(data) == 1
-    assert len(data[0]["series"]) == 4
-    assert data[0]["standaloneVideos"] == []
-    assert data[0]["standaloneCount"] == 0
+    assert data == []
 
     # 绑定一部单片 → 立即回流到库视图
     mv = db.scalars(select(Video).where(Video.series_id.is_(None))).first()
@@ -138,6 +137,51 @@ def test_grouped_hides_unscraped_standalones(tmp_path):
     data = series_router.grouped_by_library(db, page=0, size=20).data
     assert len(data[0]["standaloneVideos"]) == 1
     assert data[0]["standaloneCount"] == 1
+
+    # 绑定一个系列 → 系列段回流
+    s = db.scalars(select(VideoSeries)).first()
+    s.tmdb_id = 10
+    s.metadata_source = "tmdb"
+    db.commit()
+
+    data = series_router.grouped_by_library(db, page=0, size=20).data
+    assert len(data[0]["series"]) == 1
+    assert data[0]["seriesCount"] == 1
+
+
+def test_grouped_hides_unbound_series(tmp_path):
+    """解除绑定后系列退出库视图系列段，分集归属 /unscraped。"""
+    db = _setup(tmp_path)
+    for s in db.scalars(select(VideoSeries)).all():
+        s.tmdb_id = 900 + s.id
+        s.metadata_source = "tmdb"
+    mv = db.scalars(select(Video).where(Video.series_id.is_(None))).first()
+    mv.tmdb_id = 42
+    mv.metadata_source = "tmdb"
+    db.commit()
+
+    first = db.scalars(select(VideoSeries).order_by(VideoSeries.id)).first()
+    episode_titles = [
+        e.title
+        for e in db.scalars(select(Video).where(Video.series_id == first.id)).all()
+    ]
+    assert episode_titles
+
+    data = series_router.grouped_by_library(db, page=0, size=20).data
+    assert len(data[0]["series"]) == 4
+
+    # 同后端「解除绑定」路径：清空该剧视频与系列行的 tmdb_id
+    unbind_by_tmdb_id(db, first.tmdb_id)
+    db.commit()
+    assert first.tmdb_id is None
+
+    data = series_router.grouped_by_library(db, page=0, size=20).data
+    assert len(data[0]["series"]) == 3
+    assert all(s["id"] != first.id for s in data[0]["series"])
+
+    unscraped = browse.list_unscraped(db, page=0, size=20).data
+    titles = [v["title"] for v in unscraped["content"]]
+    assert set(episode_titles) <= set(titles)
 
 
 def test_grouped_keeps_external_scrape_library(tmp_path):
