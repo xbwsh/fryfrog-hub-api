@@ -5,15 +5,17 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from fryfrog.core.api_response import ApiResponse, PageResponse
 from fryfrog.core.deps import DbSession
 from fryfrog.core.exceptions import ResourceNotFoundException
 from fryfrog.core.security import current_user_id
 from fryfrog.models.library import MediaLibrary
-from fryfrog.models.video import Video, VideoActor
+from fryfrog.models.video import Video, VideoActor, VideoSeries
 from fryfrog.schemas.video import (
+    LibrarySeriesGroupDTO,
+    SeriesListDTO,
     UpdatePositionRequest,
     UpdateWatchedRequest,
     VideoMetadataUpdateRequest,
@@ -54,6 +56,128 @@ def search_by_director(db: DbSession, q: str, page: int = 0, size: int = 20):
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = list(db.scalars(base.order_by(Video.title.asc()).offset(page * size).limit(size)).all())
     return ApiResponse.ok(_page_videos(db, rows, page, size, total))
+
+
+@router.get("/search/library")
+def search_by_library(
+    db: DbSession,
+    libraryId: int,
+    q: str,
+    page: int = 0,
+    size: int = 20,
+):
+    """库内搜索：返回与库分组（grouped-by-library）同构的两段结果。
+
+    系列按剧名（含原名）匹配，命中返回剧卡而非平铺分集；单片按片名
+    匹配。与分组视图保持同一套可见性规则——本应用刮削的库只显示已
+    绑定（tmdb_id 非空）条目，避免把未刮削内容搜进库视图；外部刮削
+    的库不过滤。两段各自按 page/size 切片，调用方翻页拼接。
+    """
+    page, size = clamp_paging(page, size)
+    allowed = set(_allowed_ids(db))
+    if libraryId not in allowed:
+        raise ResourceNotFoundException("MediaLibrary", "id", libraryId)
+    lib = db.get(MediaLibrary, libraryId)
+    if lib is None or not lib.is_video_type() or not lib.enabled:
+        raise ResourceNotFoundException("MediaLibrary", "id", libraryId)
+
+    keyword = q.strip()
+    empty = LibrarySeriesGroupDTO(
+        libraryId=lib.id,
+        libraryName=lib.name,
+        libraryPath=lib.path,
+        subType=lib.sub_type,
+        series=[],
+        standaloneVideos=[],
+        seriesCount=0,
+        standaloneCount=0,
+    )
+    if not keyword:
+        # 空关键词 = 空结果，搜索页不应退化成整库拉取
+        return ApiResponse.ok(empty.model_dump())
+
+    pat = f"%{keyword}%"
+    match_title = or_(
+        VideoSeries.title.ilike(pat), VideoSeries.original_title.ilike(pat)
+    )
+    series_q = (
+        select(VideoSeries)
+        .where(match_title)
+        .where(
+            select(Video.id)
+            .where(
+                Video.series_id == VideoSeries.id,
+                Video.library_id == lib.id,
+            )
+            .exists()
+        )
+    )
+    standalone_where = (
+        Video.series_id.is_(None),
+        Video.library_id == lib.id,
+        Video.title.ilike(pat),
+    )
+    # 与 grouped_by_library 的视图分离一致：enable_scraping=false 的库
+    # tmdb_id 可能恒空，不过滤，否则整库搜索消失。
+    if lib.enable_scraping:
+        series_q = series_q.where(VideoSeries.tmdb_id.is_not(None))
+        standalone_where = (*standalone_where, Video.tmdb_id.is_not(None))
+
+    series_total = int(
+        db.scalar(select(func.count()).select_from(series_q.subquery())) or 0
+    )
+    standalone_total = int(
+        db.scalar(
+            select(func.count()).select_from(Video).where(*standalone_where)
+        )
+        or 0
+    )
+    paged_series = list(
+        db.scalars(
+            series_q.order_by(func.lower(VideoSeries.title).asc())
+            .offset(page * size)
+            .limit(size)
+        ).all()
+    )
+    paged_standalone = list(
+        db.scalars(
+            select(Video)
+            .where(*standalone_where)
+            .order_by(Video.title.asc())
+            .offset(page * size)
+            .limit(size)
+        ).all()
+    )
+    uid = current_user_id()
+    series_fav = vs.favorite_status_map(
+        db, uid, vs.TYPE_SERIES, [s.id for s in paged_series]
+    )
+    standalone_fav = vs.favorite_status_map(
+        db, uid, vs.TYPE_VIDEO, [v.id for v in paged_standalone]
+    )
+    episodes_map = vs.series_videos_map(db, [s.id for s in paged_series])
+    series_dtos = [
+        SeriesListDTO.from_entity(
+            s, episodes_map.get(s.id, []), series_fav.get(s.id, False)
+        ).model_dump()
+        for s in paged_series
+    ]
+    standalone_dtos = [
+        SeriesListDTO.from_standalone_video(v, standalone_fav.get(v.id, False)).model_dump()
+        for v in paged_standalone
+    ]
+    return ApiResponse.ok(
+        LibrarySeriesGroupDTO(
+            libraryId=lib.id,
+            libraryName=lib.name,
+            libraryPath=lib.path,
+            subType=lib.sub_type,
+            series=series_dtos,
+            standaloneVideos=standalone_dtos,
+            seriesCount=series_total,
+            standaloneCount=standalone_total,
+        ).model_dump()
+    )
 
 
 @router.get("/favorites")
