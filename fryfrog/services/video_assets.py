@@ -712,13 +712,13 @@ def _tv_logos(client, tmdb_id: int) -> list[dict]:
     return logos
 
 
-def _proxy_image_url(path: str | None) -> str | None:
+def _proxy_image_url(path: str | None, size: str = "w500") -> str | None:
     """走本站代理预览，避免浏览器直连 image.tmdb.org 失败。"""
     if not path:
         return None
     from urllib.parse import quote
 
-    return f"/api/v1/video/tmdb-image-proxy?path={quote(path, safe='/')}&size=w500"
+    return f"/api/v1/video/tmdb-image-proxy?path={quote(path, safe='/')}&size={size}"
 
 
 def movie_logo_options(tmdb_id: int) -> list[dict]:
@@ -759,6 +759,69 @@ def tv_logo_options(tmdb_id: int) -> list[dict]:
             }
         )
     return result
+
+
+def episode_still_options(
+    db: Session, video: Video, series_tmdb_id: int | None = None
+) -> list[dict]:
+    """某分集在 TMDB 上的候选横屏图（本集剧照 still）。
+
+    分集横屏在本项目里就是「本集 still」（见 video_scrape._apply_episode_detail），
+    但那是自动取一张。这里把 TMDB 的候选列出来让用户挑。
+    `/tv/{id}/season/{s}/episode/{e}?append_to_response=images` 会带 images.stills，
+    一次请求即可；没有候选时退回单集自带的 still_path。
+    """
+    from fryfrog.services.tmdb import TmdbClient
+
+    tmdb_id = series_tmdb_id
+    if tmdb_id is None:
+        from fryfrog.models.video import VideoSeries
+
+        series = db.get(VideoSeries, video.series_id) if video.series_id else None
+        tmdb_id = series.tmdb_id if series else None
+    season = video.season_number or 1
+    episode = video.episode_number or 1
+    if not tmdb_id:
+        return []
+
+    client = TmdbClient()
+    detail = client.get_episode_images(tmdb_id, season, episode) or {}
+    stills = [
+        s
+        for s in ((detail.get("images") or {}).get("stills") or [])
+        if s.get("file_path")
+    ]
+    if not stills and detail.get("still_path"):
+        stills = [{"file_path": detail["still_path"]}]
+
+    result: list[dict] = []
+    for still in stills:
+        path = still.get("file_path")
+        result.append(
+            {
+                "filePath": path,
+                # 预览用 w780：still 是 16:9，w500 在高分屏上偏糊
+                "url": _proxy_image_url(path, size="w780"),
+                "width": still.get("width"),
+                "height": still.get("height"),
+                "voteCount": still.get("vote_count"),
+                "iso6391": still.get("iso_639_1"),
+            }
+        )
+    return result
+
+
+def apply_video_backdrop(db: Session, video: Video, file_path: str) -> bool:
+    """把选定的 TMDB 图落成本集横屏（fanart.jpg 固定命名，覆盖旧图）。"""
+    if not file_path:
+        return False
+    target = get_fanart_path(db, video)
+    ok = download_image(_full_image_url(file_path), target, force=True)
+    if ok:
+        video.backdrop_url = file_path
+        video.backdrop_local_path = str(target)
+        db.flush()
+    return ok
 
 
 # -------------------- 截帧 --------------------

@@ -102,7 +102,10 @@ async def auth_middleware(request: Request, call_next):
     ):
         return await call_next(request)
 
-    if _matches_any(path, STATIC_RESOURCE_PATTERNS):
+    if _matches_any(path, STATIC_RESOURCE_PATTERNS) and method in ("GET", "HEAD", "OPTIONS"):
+        # 只有读请求按静态资源放行（再做签名校验）。写请求即便路径像图片资源
+        # （如 POST /video/{id}/cover）也必须走正常鉴权，否则 current_user 不会
+        # 被写入，路由里的 _require_admin 永远判为匿名 → 403。
         if _matches_any(path, SIGNED_MEDIA_PATTERNS):
             exp = request.query_params.get("exp")
             sig = request.query_params.get("sig")

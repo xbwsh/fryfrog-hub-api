@@ -13,7 +13,7 @@ from fryfrog.core.deps import DbSession
 from fryfrog.core.exceptions import ResourceNotFoundException
 from fryfrog.core.utils import placeholder_jpeg
 from fryfrog.media_core import get_media_probe
-from fryfrog.schemas.video import FrameSelectRequest, LogoSelectRequest
+from fryfrog.schemas.video import CoverSelectRequest, FrameSelectRequest, LogoSelectRequest
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_service as vs
 
@@ -306,17 +306,55 @@ def generate_nfo_endpoint(db: DbSession, id: int):
 
 @router.post("/{id:int}/refresh-covers")
 def download_covers(db: DbSession, id: int):
-    """从 TMDB 重新拉取封面。
+    """一键从 TMDB 重新拉取封面与横屏（自动取默认那张）。
 
     路径不能叫 `/covers`：中间件把 `.*/cover` 当静态图片资源提前放行，
     不会写入当前用户，导致这里的 _require_admin 永远判为匿名 → 403。
     （旧路径 /covers 因此从未可用，客户端已同步改名。）
+    想自己挑图请用 `GET /{id}/cover-options` + `POST /{id}/cover`。
     """
     _require_admin(db)
     video = vs.get_video(db, id)
     _require_visible(db, video.library_id, "Video", id)
     success = assets.download_all_covers(db, video, force=True)
     return ApiResponse.ok({"videoId": str(id), "success": str(success).lower()})
+
+
+@router.get("/{id:int}/cover-options")
+def video_cover_options(db: DbSession, id: int):
+    """本集在 TMDB 上的候选横屏图（本集剧照 still），供用户挑选。
+
+    分集横屏按项目约定就是「本集 still」；这里把候选列出来而不是只自动取一张。
+    """
+    _require_admin(db)
+    video = vs.get_video(db, id)
+    _require_visible(db, video.library_id, "Video", id)
+    options = assets.episode_still_options(db, video)
+    return ApiResponse.ok(
+        {
+            "videoId": video.id,
+            "seasonNumber": video.season_number,
+            "episodeNumber": video.episode_number,
+            "current": video.backdrop_url,
+            "options": options,
+        }
+    )
+
+
+@router.post("/{id:int}/cover")
+def set_video_cover(db: DbSession, id: int, body: CoverSelectRequest):
+    """把选定的 TMDB 图应用为本集横屏封面（落 fanart.jpg）。"""
+    _require_admin(db)
+    video = vs.get_video(db, id)
+    _require_visible(db, video.library_id, "Video", id)
+    if not body.filePath:
+        return ApiResponse.error("filePath 不能为空")
+    ok = assets.apply_video_backdrop(db, video, body.filePath)
+    if not ok:
+        return ApiResponse.error("图片下载失败，请确认代理或网络")
+    return ApiResponse.ok(
+        {"videoId": video.id, "applied": body.filePath, "success": True}
+    )
 
 
 ALLOWED_SIZES = {"w92", "w154", "w185", "w342", "w500", "w780", "original"}

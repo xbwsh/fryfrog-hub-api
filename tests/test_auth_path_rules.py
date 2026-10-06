@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 os.environ.setdefault("AUTH_ENABLED", "false")
 
@@ -23,36 +24,71 @@ from fryfrog.core.deps import (
 from fryfrog.main import app
 
 
+def _walk_routes(routes, prefix: str = "") -> Iterator[tuple[list[str], str]]:
+    """递归枚举路由（带前缀累积）。
+
+    FastAPI 0.141 起用 `_IncludedRouter` 惰性挂载：`app.routes` / 各子 router 的
+    顶层只有包装对象（`path` 为 None），真实路由在 `original_router.routes` 里，
+    且自身不带前缀。不递归、不累积前缀就会扫到 0 条或相对路径（测试假通过）。
+    """
+    for route in routes:
+        path = getattr(route, "path", "") or ""
+        methods = sorted(getattr(route, "methods", None) or [])
+        full = f"{prefix}{path}"
+        if methods and path:
+            yield methods, full
+        nested = getattr(route, "original_router", None)
+        if nested is not None:
+            child_prefix = f"{prefix}{getattr(nested, 'prefix', '') or ''}"
+            yield from _walk_routes(getattr(nested, "routes", []), child_prefix)
+
+
 def _write_routes() -> list[tuple[list[str], str]]:
     out: list[tuple[list[str], str]] = []
-    for route in app.routes:
-        methods = getattr(route, "methods", None) or set()
-        path = getattr(route, "path", "")
-        if not path.startswith("/api/") or not methods:
+    for methods, path in _walk_routes(app.routes):
+        if not path.startswith("/api/"):
             continue
-        if methods & {"GET", "HEAD", "OPTIONS"}:
+        if set(methods) & {"GET", "HEAD", "OPTIONS"}:
             continue
-        out.append((sorted(methods), path))
+        out.append((methods, path))
     return out
 
 
-def test_no_write_route_looks_like_a_static_resource():
-    """任何写操作路由都不能匹配静态资源规则（否则会被跳过鉴权）。"""
-    offenders = [
-        (methods, path)
-        for methods, path in _write_routes()
-        if _matches_any(path, STATIC_RESOURCE_PATTERNS)
-    ]
-    assert offenders == [], f"这些写操作会被当作静态资源放行: {offenders}"
+def test_route_enumeration_is_not_empty():
+    """防止路由枚举失效导致下面的护栏测试空跑（曾因 FastAPI 惰性挂载假通过）。"""
+    writes = _write_routes()
+    assert len(writes) > 20, f"只枚举到 {len(writes)} 个写路由，枚举逻辑可能失效"
+    paths = {p for _, p in writes}
+    # 路径模板带转换器后缀（如 {id:int}），用后缀匹配
+    assert any(p.endswith("/refresh-covers") for p in paths), paths
+    assert any(p.endswith("/cover") and "/video/" in p for p in paths), paths
+
+
+def test_static_looking_write_routes_are_still_admin_guarded():
+    """路径像静态资源（`.*/cover` 等）的写路由，必须仍然强制鉴权。
+
+    中间件现在只对读请求按静态资源放行；写请求一律走鉴权，所以
+    `POST /video/{id}/cover` 这类自然命名可以保留，但仍需管理员。
+    """
+    guarded = []
+    for methods, path in _write_routes():
+        if not _matches_any(path, STATIC_RESOURCE_PATTERNS):
+            continue
+        for m in methods:
+            assert _requires_admin(m, path) is True, f"{m} {path} 未被鉴权拦截"
+        guarded.append(path)
+    # 至少要有 POST /cover 这条（新增的选图接口），否则说明枚举又失效了
+    assert any(p.endswith("/cover") for p in guarded), guarded
 
 
 def test_cover_refresh_route_is_admin_protected():
     """封面重拉必须走鉴权（改名前 /covers 被静态规则吞掉）。"""
     assert _requires_admin("POST", "/api/v1/video/1/refresh-covers") is True
     assert _matches_any("/api/v1/video/1/refresh-covers", STATIC_RESOURCE_PATTERNS) is False
-
-    # 旧的 /covers 路径确实属于静态资源规则命中范围——记录这个坑
-    assert _matches_any("/api/v1/video/1/covers", STATIC_RESOURCE_PATTERNS) is True
+    # 选图接口路径带 /cover，会命中静态规则——但中间件只对读请求放行
+    assert _matches_any("/api/v1/video/1/cover", STATIC_RESOURCE_PATTERNS) is True
+    assert _requires_admin("POST", "/api/v1/video/1/cover") is True
+    assert _requires_admin("GET", "/api/v1/video/1/cover") is False  # 读：走签名
 
 
 def test_static_media_reads_are_skipped_only_when_signed():

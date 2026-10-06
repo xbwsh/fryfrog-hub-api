@@ -131,6 +131,13 @@ class TmdbClient:
     def get_episode(self, tv_id: int, season: int, episode: int) -> dict | None:
         return self._get(f"/tv/{tv_id}/season/{season}/episode/{episode}")
 
+    def get_episode_images(self, tv_id: int, season: int, episode: int) -> dict | None:
+        """单集详情并附带 images.stills（本集剧照候选），一次请求。"""
+        return self._get(
+            f"/tv/{tv_id}/season/{season}/episode/{episode}",
+            {"append_to_response": "images"},
+        )
+
     def get_person(self, person_id: int) -> dict | None:
         return self._get(f"/person/{person_id}", {"append_to_response": "combined_credits"})
 

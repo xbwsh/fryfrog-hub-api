@@ -82,6 +82,12 @@ class LogoSelectRequest(BaseModel):
     filePath: str | None = None
 
 
+class CoverSelectRequest(BaseModel):
+    """选定某个 TMDB 图（still_path 或完整 URL）作为本集横屏封面。"""
+
+    filePath: str | None = None
+
+
 class FrameSelectRequest(BaseModel):
     index: int = 0
     type: str | None = None
