@@ -439,11 +439,17 @@ def rescrape_by_library(db: Session, library_id: int) -> int:
     return refresh_bound_by_library(db, library_id)["refreshed"]
 
 
-def refresh_bound_by_library(db: Session, library_id: int) -> dict:
+def refresh_bound_by_library(
+    db: Session, library_id: int, on_progress=None
+) -> dict:
     """用**已有 tmdb_id** 刷新该库已绑定的视频，不搜索、不改绑定。
 
     与 `rescrape_by_library` 的区别：那个会先清掉绑定再按文件名重搜，可能把
     正确的绑定改坏，也会去搜用户刻意未绑定的视频。这里只认已绑定的记录。
+
+    [on_progress] 可选回调 `(refreshed, skipped, failed, total)`：每处理完一部剧
+    （或一个独立视频）调用一次。库大时整批可能跑几分钟，没有它界面会一直显示
+    0%（实测 400+ 部剧的库跑了 4 分钟仍显示 0，看起来像卡死）。
 
     返回 {"refreshed": n, "skipped": 未绑定数, "failed": 失败数}。
     """
@@ -456,34 +462,50 @@ def refresh_bound_by_library(db: Session, library_id: int) -> dict:
     # 按 series_id 聚合：整剧只需取一次详情，避免每集重复请求
     series_ids = sorted({v.series_id for v in bound if v.series_id is not None})
     solo = [v for v in bound if v.series_id is None]
+    total = len(series_ids) + len(solo)
 
     refreshed = failed = 0
     client = TmdbClient()
+
+    def report() -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(refreshed, skipped, failed, total)
+        except Exception:
+            logger.debug("刷新进度回调失败", exc_info=True)
+
+    report()
 
     for series_id in series_ids:
         series = vs.get_series(db, series_id)
         episodes = vs.series_videos(db, series_id) or []
         if series is None or not series.tmdb_id or not episodes:
             failed += 1
-            continue
-        try:
-            detail = client.get_tv(series.tmdb_id)
-            if not detail:
+        else:
+            try:
+                detail = client.get_tv(series.tmdb_id)
+                if not detail:
+                    failed += 1
+                else:
+                    for ep in episodes:
+                        _apply_tv_detail(db, ep, detail, client)
+                    # 剧根素材 + 剧级/季级 NFO 都在这一步里（detail 复用，零额外请求）
+                    assets.download_series_root_art(db, series, episodes, detail)
+                    for ep in episodes:
+                        assets.ensure_season_poster(db, ep)
+                        assets.ensure_season_nfo_from_detail(db, ep, detail)
+                        assets.download_all_covers(db, ep, force=False)
+                        generate_nfo(db, ep)
+                        refreshed += 1
+            except Exception:
+                logger.exception("刷新剧集失败: series=%s", series_id)
                 failed += 1
-                continue
-            for ep in episodes:
-                _apply_tv_detail(db, ep, detail, client)
-            # 剧根素材 + 剧级/季级 NFO 都在这一步里（detail 复用，零额外请求）
-            assets.download_series_root_art(db, series, episodes, detail)
-            for ep in episodes:
-                assets.ensure_season_poster(db, ep)
-                assets.ensure_season_nfo_from_detail(db, ep, detail)
-                assets.download_all_covers(db, ep, force=False)
-                generate_nfo(db, ep)
-                refreshed += 1
+        report()
+        try:
+            db.commit()
         except Exception:
-            logger.exception("刷新剧集失败: series=%s", series_id)
-            failed += 1
+            db.rollback()
 
     for video in solo:
         try:
@@ -491,12 +513,14 @@ def refresh_bound_by_library(db: Session, library_id: int) -> dict:
                 detail = client.get_movie(video.tmdb_id)
                 if not detail:
                     failed += 1
+                    report()
                     continue
                 _apply_movie_detail(video, detail, client)
             else:
                 detail = client.get_tv(video.tmdb_id)
                 if not detail:
                     failed += 1
+                    report()
                     continue
                 _apply_tv_detail(db, video, detail, client)
             video.metadata_updated_at = datetime.now()
@@ -506,6 +530,7 @@ def refresh_bound_by_library(db: Session, library_id: int) -> dict:
         except Exception:
             logger.exception("刷新视频失败: %s", video.file_name)
             failed += 1
+        report()
 
     db.flush()
     logger.info(

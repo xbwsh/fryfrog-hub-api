@@ -182,3 +182,35 @@ def test_rescrape_by_library_returns_refreshed_count(env):
 
     assert count == 2
     assert calls["search"] == 0
+
+
+def test_progress_callback_reports_incrementally(env):
+    """整批可能跑几分钟，必须逐部剧上报；只在结束时上报一次界面会一直显示 0%。
+
+    实测：库 5（400+ 部剧）刷新跑了 4 分钟，进度条仍是 0%，看起来像卡死。
+    """
+    db, lib, _series, _bound, _unbound, _show, _calls = env
+
+    ticks: list[tuple] = []
+    scrape.refresh_bound_by_library(
+        db, lib.id, lambda r, s, f, t: ticks.append((r, s, f, t))
+    )
+
+    assert len(ticks) >= 2, f"应至少上报两次（开始 + 每部剧），实际 {ticks}"
+    assert ticks[0] == (0, 2, 0, 1), f"首次应上报初始状态，实际 {ticks[0]}"
+    assert ticks[-1][0] == 2, f"最后一次 completed 应为 2，实际 {ticks[-1]}"
+    assert all(t[3] == 1 for t in ticks), "计划总数应稳定为 1 部剧"
+    # 进度必须单调不减，否则客户端进度条会跳
+    assert [t[0] for t in ticks] == sorted(t[0] for t in ticks)
+
+
+def test_progress_callback_failure_does_not_break_refresh(env):
+    """回调抛异常不能中断刷新（进度上报是附带功能）。"""
+    db, lib, _series, bound, _unbound, _show, _calls = env
+
+    def boom(*_a):
+        raise RuntimeError("回调炸了")
+
+    result = scrape.refresh_bound_by_library(db, lib.id, boom)
+
+    assert result["refreshed"] == 2, "刷新本身应照常完成"

@@ -60,7 +60,17 @@ def rescrape_library(db: DbSession, library_id: int):
     module = f"rescrape:{library_id}"
 
     def work(session):
-        result = scrape.refresh_bound_by_library(session, library_id)
+        # 逐部剧上报进度：整批可能几分钟，只在结束时上报一次会让界面一直显示 0%
+        def on_progress(refreshed, skipped, failed, planned):
+            progress_svc.update_progress(
+                module,
+                total=planned,
+                completed=refreshed,
+                failed=failed,
+                skipped=skipped,
+            )
+
+        result = scrape.refresh_bound_by_library(session, library_id, on_progress)
         for v in session.scalars(select(Video).where(Video.library_id == library_id)).all():
             assets.upgrade_legacy_assets(session, v)
         progress_svc.update_progress(
