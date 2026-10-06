@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 from fryfrog.core.utils import _CJK, clean_title, primary_title, title_head, title_parts
 from fryfrog.models.video import ActorProfile, Video, VideoActor, VideoSeries
 from fryfrog.services.tmdb import TmdbClient
-from fryfrog.services.video_assets import download_all_covers, generate_nfo
+from fryfrog.services.video_assets import (
+    download_all_covers,
+    generate_nfo,
+)
+from fryfrog.services import video_assets as assets
 
 logger = logging.getLogger(__name__)
 
@@ -412,18 +416,99 @@ def rescrape_video(db: Session, video_id: int) -> list[Video]:
 
 
 def rescrape_by_library(db: Session, library_id: int) -> int:
+    """批量刷新该库**已绑定**视频的元数据（安全语义，不做搜索）。
+
+    历史实现是「先把所有绑定 unbind，再按文件名 search_tmdb_best 重绑」，有两个
+    严重问题：
+      1. 原本正确的绑定被清掉后重搜，搜到别的条目就**绑错了**；
+      2. 对**未绑定**的视频也强行搜索——而用户把某些视频留在未刮削状态，
+         正是因为 TMDB 上根本没有它们，强搜只会写入错误内容。
+
+    现在只处理有 `tmdb_id` 的记录，并**用已知 ID 拉取**（不搜索、不清绑定）。
+    代价是绑错的条目修不了——那属于逐个手动重绑的场景。
+
+    返回实际处理的视频数。
+    """
+    return refresh_bound_by_library(db, library_id)["refreshed"]
+
+
+def refresh_bound_by_library(db: Session, library_id: int) -> dict:
+    """用**已有 tmdb_id** 刷新该库已绑定的视频，不搜索、不改绑定。
+
+    与 `rescrape_by_library` 的区别：那个会先清掉绑定再按文件名重搜，可能把
+    正确的绑定改坏，也会去搜用户刻意未绑定的视频。这里只认已绑定的记录。
+
+    返回 {"refreshed": n, "skipped": 未绑定数, "failed": 失败数}。
+    """
+    from fryfrog.services import video_service as vs
+
     videos = list(db.scalars(select(Video).where(Video.library_id == library_id)).all())
-    for v in videos:
-        if v.tmdb_id:
-            unbind_by_tmdb_id(db, v.tmdb_id)
-    count = 0
-    for v in videos:
+    bound = [v for v in videos if v.tmdb_id]
+    skipped = len(videos) - len(bound)
+
+    # 按 series_id 聚合：整剧只需取一次详情，避免每集重复请求
+    series_ids = sorted({v.series_id for v in bound if v.series_id is not None})
+    solo = [v for v in bound if v.series_id is None]
+
+    refreshed = failed = 0
+    client = TmdbClient()
+
+    for series_id in series_ids:
+        series = vs.get_series(db, series_id)
+        episodes = vs.series_videos(db, series_id) or []
+        if series is None or not series.tmdb_id or not episodes:
+            failed += 1
+            continue
         try:
-            rescrape_video(db, v.id)
-            count += 1
+            detail = client.get_tv(series.tmdb_id)
+            if not detail:
+                failed += 1
+                continue
+            for ep in episodes:
+                _apply_tv_detail(db, ep, detail, client)
+            # 剧根素材 + 剧级/季级 NFO 都在这一步里（detail 复用，零额外请求）
+            assets.download_series_root_art(db, series, episodes, detail)
+            for ep in episodes:
+                assets.ensure_season_poster(db, ep)
+                assets.ensure_season_nfo_from_detail(db, ep, detail)
+                assets.download_all_covers(db, ep, force=False)
+                generate_nfo(db, ep)
+                refreshed += 1
         except Exception:
-            logger.exception("重新刮削失败: %s", v.file_name)
-    return count
+            logger.exception("刷新剧集失败: series=%s", series_id)
+            failed += 1
+
+    for video in solo:
+        try:
+            if (video.media_type or "").lower() == "movie":
+                detail = client.get_movie(video.tmdb_id)
+                if not detail:
+                    failed += 1
+                    continue
+                _apply_movie_detail(video, detail, client)
+            else:
+                detail = client.get_tv(video.tmdb_id)
+                if not detail:
+                    failed += 1
+                    continue
+                _apply_tv_detail(db, video, detail, client)
+            video.metadata_updated_at = datetime.now()
+            assets.download_all_covers(db, video, force=False)
+            generate_nfo(db, video)
+            refreshed += 1
+        except Exception:
+            logger.exception("刷新视频失败: %s", video.file_name)
+            failed += 1
+
+    db.flush()
+    logger.info(
+        "[Refresh] library=%s 刷新 %s / 跳过未绑定 %s / 失败 %s",
+        library_id,
+        refreshed,
+        skipped,
+        failed,
+    )
+    return {"refreshed": refreshed, "skipped": skipped, "failed": failed}
 
 
 def scrape_video_if_needed(db: Session, video: Video) -> None:

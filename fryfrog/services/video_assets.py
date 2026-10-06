@@ -655,6 +655,27 @@ def ensure_series_nfo(
     return path, path is not None
 
 
+def ensure_season_nfo_from_detail(db: Session, video: Video, detail: dict | None) -> str | None:
+    """用已取好的剧详情里的 seasons 写本集所属季的 season.nfo。
+
+    批量刷新时详情只取一次，各集复用，**零额外 TMDB 请求**（对比按季单发请求的
+    做法：一个 30 集的剧会多打 30 次）。详情里找不到该季时至少写入季号，
+    便于播放器识别。
+    """
+    if not detail or not video.is_episode:
+        return None
+    number = season_of(video)
+    info = next(
+        (
+            s
+            for s in (detail.get("seasons") or [])
+            if s.get("season_number") == number
+        ),
+        None,
+    )
+    return generate_season_nfo(db, video, info or {"season_number": number})
+
+
 def _xml_escape(value) -> str:
     """XML 文本转义。
 

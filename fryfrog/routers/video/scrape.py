@@ -44,6 +44,14 @@ def tmdb_search(q: str):
 
 @router.post("/tmdb/rescrape-library/{library_id:int}")
 def rescrape_library(db: DbSession, library_id: int):
+    """批量刷新该库**已绑定**视频的元数据。
+
+    语义已改为「安全刷新」：只处理有 tmdb_id 的记录，用**已有 ID** 拉取，
+    不搜索、不清绑定。原实现是「先 unbind 全部，再按文件名 search_tmdb_best
+    重绑」，会把正确的绑定改坏，也会去搜用户刻意留在未刮削状态的视频
+    （那些在 TMDB 上不存在，强搜只会写入错误内容）。
+    绑错的条目请逐个手动重绑。
+    """
     _require_admin(db)
     lib = db.get(MediaLibrary, library_id)
     if lib is None:
@@ -52,14 +60,21 @@ def rescrape_library(db: DbSession, library_id: int):
     module = f"rescrape:{library_id}"
 
     def work(session):
-        scrape.rescrape_by_library(session, library_id)
+        result = scrape.refresh_bound_by_library(session, library_id)
         for v in session.scalars(select(Video).where(Video.library_id == library_id)).all():
             assets.upgrade_legacy_assets(session, v)
-        progress_svc.update_progress(module, completed=total)
-        logger.info("[Rescrape] Library %s completed", library_id)
+        progress_svc.update_progress(
+            module,
+            completed=result["refreshed"],
+            failed=result["failed"],
+            skipped=result["skipped"],
+        )
+        logger.info("[Rescrape] Library %s 完成: %s", library_id, result)
 
     submit_job(module, "rescrape", total, work)
-    return ApiResponse.ok(f"Rescrape started for library {library_id}")
+    return ApiResponse.ok(
+        f"已开始刷新资源库 {library_id}（跳过未绑定视频；绑错的请逐个手动重绑）"
+    )
 
 
 @router.post("/nfo/regenerate-all")
