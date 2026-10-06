@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
+
+import httpx
 
 from fryfrog.config import get_settings
 from fryfrog.core.http import make_client
@@ -11,9 +14,25 @@ logger = logging.getLogger(__name__)
 TMDB_BASE = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p"
 
+# 网络类瞬时故障：这类失败降级为单行 WARNING，不打完整堆栈——
+# 代理抖动时每个条目都打 traceback 会把日志刷爆（实测两周涨到 203MB）。
+_TRANSIENT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+)
+
 
 class TmdbClient:
     """兼容 TMDB v3 api_key 与 v4 Bearer（JWT）两种凭证。"""
+
+    # 熔断状态是进程级的：所有实例共享，避免每个条目各失败一遍
+    _consecutive_failures = 0
+    _tripped_until = 0.0
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -21,6 +40,42 @@ class TmdbClient:
         self.language = settings.tmdb_language or "zh-CN"
         self.include_adult = settings.tmdb_include_adult
         self.image_size = settings.tmdb_image_size or "original"
+
+    # ── 熔断 ────────────────────────────────────────────────────────────
+    @classmethod
+    def _tripped(cls) -> bool:
+        return time.monotonic() < cls._tripped_until
+
+    @classmethod
+    def _record_success(cls) -> None:
+        cls._consecutive_failures = 0
+
+    @classmethod
+    def _record_failure(cls, where: str) -> None:
+        settings = get_settings()
+        threshold = max(int(settings.tmdb_failure_threshold), 1)
+        cls._consecutive_failures += 1
+        if cls._consecutive_failures >= threshold and not cls._tripped():
+            cooldown = max(int(settings.tmdb_cooldown_seconds), 1)
+            cls._tripped_until = time.monotonic() + cooldown
+            logger.warning(
+                "TMDB 连续失败 %d 次，熔断 %d 秒（期间跳过刮削）: %s",
+                cls._consecutive_failures,
+                cooldown,
+                where,
+            )
+
+    @classmethod
+    def reset_circuit(cls) -> None:
+        cls._consecutive_failures = 0
+        cls._tripped_until = 0.0
+
+    def _failed(self, where: str, exc: Exception) -> None:
+        if isinstance(exc, _TRANSIENT_ERRORS):
+            logger.warning("TMDB 请求失败（网络）: %s: %s", where, type(exc).__name__)
+        else:
+            logger.exception("TMDB 请求失败: %s", where)
+        self._record_failure(where)
 
     @property
     def _is_jwt(self) -> bool:
@@ -45,7 +100,7 @@ class TmdbClient:
         return headers
 
     def search_multi(self, query: str) -> list[dict]:
-        if not self.api_key:
+        if not self.api_key or self._tripped():
             return []
         try:
             with make_client() as client:
@@ -57,10 +112,12 @@ class TmdbClient:
                     headers=self._headers(),
                 )
                 resp.raise_for_status()
-                return resp.json().get("results") or []
-        except Exception:
-            logger.exception("TMDB search failed")
+                result = resp.json().get("results") or []
+        except Exception as exc:
+            self._failed(f"search/multi?query={query[:60]}", exc)
             return []
+        self._record_success()
+        return result
 
     def get_movie(self, tmdb_id: int) -> dict | None:
         return self._get(f"/movie/{tmdb_id}", {"append_to_response": "credits,images"})
@@ -86,7 +143,7 @@ class TmdbClient:
         return f"{IMAGE_BASE}/{size or self.image_size}{path}"
 
     def _get(self, path: str, extra: dict | None = None) -> dict | None:
-        if not self.api_key:
+        if not self.api_key or self._tripped():
             return None
         try:
             with make_client() as client:
@@ -98,7 +155,9 @@ class TmdbClient:
                 if resp.status_code == 404:
                     return None
                 resp.raise_for_status()
-                return resp.json()
-        except Exception:
-            logger.exception("TMDB get failed: %s", path)
+                data = resp.json()
+        except Exception as exc:
+            self._failed(path, exc)
             return None
+        self._record_success()
+        return data

@@ -102,6 +102,11 @@ python -m venv .venv
   `/{id}/pipeline-progress` 的 `stage`/`currentItem`（客户端据此判断完成，不写会一直显示 idle）
 - 同一库并发扫描会被护栏挡掉（热监听 + 周期扫描 + 手动可能同时触发）；占位超过
   `SCAN_STALE_AFTER_SECONDS`（默认 1800s）视为卡死并允许抢占
+- 扫描期间的文件事件被忽略（扫描自己会写封面/NFO），否则会自触发成死循环
+- `app.log` 按大小轮转（`LOG_MAX_BYTES` 默认 10MB × `LOG_BACKUP_COUNT` 5 份），
+  不轮转会长期涨到几百 MB
+- TMDB 连续失败 `TMDB_FAILURE_THRESHOLD` 次后熔断 `TMDB_COOLDOWN_SECONDS`，
+  期间跳过刮削；瞬时网络错误只打一行 WARNING，不打完整堆栈
 - `init_db()` 会按模型元数据为老库幂等补列（`create_all` 只建表不加列）
 
 ## Environment

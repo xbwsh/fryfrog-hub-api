@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,12 +28,18 @@ logger = logging.getLogger("fryfrog")
 
 
 def _setup_logging() -> None:
-    """stdout + app.log（供 /api/v1/logs 导出）。"""
+    """stdout + app.log（供 /api/v1/logs 导出），按大小轮转避免无限增长。"""
     settings = get_settings()
     log_dir = Path(settings.log_home or "logs")
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_dir / "app.log", encoding="utf-8")
+        # 不轮转的话长期运行会涨到几百 MB（旧字符下的 203MB 日志即如此）
+        file_handler: logging.Handler | None = logging.handlers.RotatingFileHandler(
+            log_dir / "app.log",
+            maxBytes=max(settings.log_max_bytes, 0),
+            backupCount=max(settings.log_backup_count, 0),
+            encoding="utf-8",
+        )
     except OSError:
         file_handler = None
 

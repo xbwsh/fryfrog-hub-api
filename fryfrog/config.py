@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     tmdb_language: str = "zh-CN"
     tmdb_image_size: str = "original"
     tmdb_include_adult: bool = True
+    # 元数据服务连续失败这么多次后熔断，冷却期内直接跳过（代理抖动时不要刷爆日志/拖垮扫描）
+    tmdb_failure_threshold: int = 5
+    tmdb_cooldown_seconds: int = 120
 
     # Bangumi
     bangumi_base_url: str = "https://api.bgm.tv"
@@ -75,6 +78,9 @@ class Settings(BaseSettings):
 
     # Logging
     log_home: str = "data/logs"
+    # app.log 按大小轮转，避免长期运行无限增长
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
 
     @property
     def data_dir(self) -> Path:
