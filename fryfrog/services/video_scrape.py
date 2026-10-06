@@ -366,6 +366,9 @@ def scrape_video_if_needed(db: Session, video: Video) -> None:
 
         assets.upgrade_legacy_assets(db, video)
         generate_nfo(db, video)
+        # 先补齐季竖海报再做分集封面：download_all_covers 见到「已有共享竖图」
+        # 就会跳过下载分集竖封面，季目录里没图时就会退化成截帧（特别篇即如此）
+        assets.ensure_season_poster(db, video)
         download_all_covers(db, video, force=False)
     except Exception:
         logger.exception("扫描刮削失败: %s", video.file_name)

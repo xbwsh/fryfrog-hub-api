@@ -469,17 +469,14 @@ def refresh_season_covers(db: DbSession, id: int):
                 continue
             still = ep_info.get("still_path")
             target.backdrop_url = client.image_url(still, "original") if still else None
-        if season.get("poster_path"):
-            ep = next((e for e in episodes if vs.season_of(e) == sn), None)
-            if ep:
-                season_dir = vs.get_season_dir(db, ep)
-                if season_dir:
-                    season_dir.mkdir(parents=True, exist_ok=True)
-                    url = client.image_url(season["poster_path"])
-                    if url and assets.download_image(
-                        url, season_dir / "tvshow-poster.jpg", force=True
-                    ):
-                        season_posters += 1
+        # 季竖海报：TMDB 有则下载；没有则复制剧根总海报，保证季目录自足
+        # （否则 download_all_covers 会以「已有共享竖图」为由跳过分集竖封面，
+        #   而回退链又因路径推算对不上而落空 → 退化成截帧，特别篇即如此）
+        anchor = next((e for e in episodes if vs.season_of(e) == sn), None)
+        if anchor is not None:
+            _, created = assets.ensure_season_poster(db, anchor, series.tmdb_id)
+            if created:
+                season_posters += 1
     detail = client.get_tv(series.tmdb_id)
     cast = ((detail or {}).get("credits") or {}).get("cast") or []
     # 总封面/总横屏落地到剧名根目录（与季文件夹同级）；季横屏复用总横屏，不再逐季写入

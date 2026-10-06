@@ -547,6 +547,63 @@ def _build_nfo(video: Video) -> str:
 
 # -------------------- 封面 / Logo --------------------
 
+def ensure_season_poster(
+    db: Session, video: Video, series_tmdb_id: int | None = None
+) -> tuple[Path | None, bool]:
+    """确保本分集所属「季」的目录里真的有 tvshow-poster.jpg。
+
+    返回 (路径, 是否本次新建)。已存在时返回 (路径, False)，方便调用方计数。
+
+    为什么需要它：竖图整季共用是既定策略，`download_all_covers` 一旦认为
+    「已有共享竖图」就会跳过下载分集竖封面。但 `find_shared_vertical_poster`
+    把**剧根目录**的总海报也算作共享来源——季目录里其实是空的，而 `get_cover`
+    回退剧根时用的又是 `get_metadata_dir` 的**重建路径**（与实际媒体目录可能
+    不一致），于是两者都落空，最后退化成截帧。特别篇（第 0 季）就是这样丢的
+    竖封面，尽管 TMDB 有第 0 季海报。
+
+    做法：季目录缺 tvshow-poster.jpg 时，先尝试 TMDB 的季海报，失败则把
+    剧根总海报复制一份过来，保证季目录自足。
+    """
+    if not video.is_episode:
+        return None, False
+    season_dir = get_season_dir(db, video)
+    if season_dir is None:
+        return None, False
+    target = season_dir / "tvshow-poster.jpg"
+    if target.is_file():
+        return target, False
+    season_dir.mkdir(parents=True, exist_ok=True)
+
+    tmdb_id = series_tmdb_id
+    if tmdb_id is None and video.series is not None:
+        tmdb_id = video.series.tmdb_id
+    if tmdb_id:
+        from fryfrog.services.tmdb import TmdbClient
+
+        try:
+            client = TmdbClient()
+            season = client.get_season(tmdb_id, season_of(video))
+            poster_path = (season or {}).get("poster_path")
+            if poster_path:
+                url = client.image_url(poster_path)
+                if url and download_image(url, target, force=False):
+                    return target, True
+        except Exception:
+            logger.debug("下载季海报失败: %s", video.file_name, exc_info=True)
+
+    # 没有季海报 → 复制剧根总海报（季目录自足，回退链不再依赖路径推算）
+    root = get_series_root_dir(db, [video])
+    if root:
+        source = root / "tvshow-poster.jpg"
+        if source.is_file():
+            try:
+                shutil.copy2(source, target)
+                return target, True
+            except OSError:
+                logger.debug("复制剧总海报到季目录失败: %s", season_dir, exc_info=True)
+    return None, False
+
+
 def find_shared_vertical_poster(db: Session, video: Video) -> Path | None:
     """分集竖屏封面的共享来源：季海报 → 剧根目录总海报。
 
