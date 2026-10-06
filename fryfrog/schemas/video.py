@@ -568,6 +568,18 @@ def _video_logo_url(video) -> str | None:
 
 
 def _series_logo_url(series, episodes=None) -> str | None:
+    """剧 logo 的签名 URL；找不到返回 None。
+
+    顺序：**剧名根目录优先**，再回退「分集目录 → 季目录 → 剧目录」就近查找。
+
+    为什么必须查剧根：logo 与总海报/总横屏同层（`<剧名>/tvshow-logo.png`），
+    而分集文件在 `<剧名>/第 1 季/第 1 集/` —— 只查「分集目录 + 季目录」永远
+    找不到剧根那份（实测 series 94：磁盘有 tvshow-logo.png，logoUrl 却是 None，
+    前端因此不显示 logo）。
+
+    注意：VideoSeries 没有 videos 关系；VideoDTO 里也没有文件路径，所以
+    调用方**必须**把 ORM 分集（或文件路径字符串）传进来，否则无从判断。
+    """
     from pathlib import Path
 
     from fryfrog.core.signer import sign
@@ -575,24 +587,40 @@ def _series_logo_url(series, episodes=None) -> str | None:
 
     if series.logo_local_path and Path(series.logo_local_path).exists():
         return sign(f"/api/v1/video/series/{series.id}/logo")
-    # 手工放在剧/季目录里的 tvshow-logo.png 也要暴露出来，否则前端拿不到
-    # logoUrl，根本不会去请求 /series/{id}/logo（表现为"只有电影有 logo"）。
-    #
-    # 注意：VideoSeries 没有 videos 关系；VideoDTO 里也没有文件路径，所以
-    # 调用方**必须**把 ORM 分集（或文件路径字符串）传进来，否则这里无从判断。
+
+    paths = []
     for item in episodes or ():
         file_path = getattr(item, "filePath", None) or getattr(item, "file_path", None)
         if not file_path and isinstance(item, str):
             file_path = item
-        if not file_path:
-            continue
+        if file_path:
+            paths.append(file_path)
+    if not paths:
+        return None
+
+    candidates: list[Path] = []
+    for file_path in paths:
         try:
-            parent = Path(file_path).parent
+            d = Path(file_path).parent
         except Exception:
             continue
-        for directory in (parent, parent.parent):
-            if _iter_logo_files(directory, SERIES_LOGO_FILENAMES):
-                return sign(f"/api/v1/video/series/{series.id}/logo")
+        # 分集文件在 <剧名>/第 N 季/第 M 集/ 下，向上走三层即剧名根。
+        # 不调 vs.series_root_candidates：它需要 db 查库，而 DTO 层只拿到路径。
+        for _ in range(3):
+            candidates.append(d)
+            parent = d.parent
+            if parent == d:
+                break
+            d = parent
+
+    seen: set[str] = set()
+    for directory in candidates:
+        key = str(directory)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _iter_logo_files(directory, SERIES_LOGO_FILENAMES):
+            return sign(f"/api/v1/video/series/{series.id}/logo")
     return None
 
 

@@ -183,21 +183,19 @@ def find_local_video_logo(video: Video) -> Path | None:
 
 
 def find_local_series_logo(db: Session, episodes: list[Video]) -> Path | None:
-    """tvshow-logo / logo under episode folder or season metadata dir."""
+    """剧 logo：剧名根目录 → 分集目录 → 季目录，就近回退。
+
+    **剧根优先**：logo 与总海报/总横屏同层（`<剧名>/tvshow-logo.png`），而分集
+    在 `<剧名>/第 1 季/第 1 集/` 下。此前只查「分集目录 + 季目录」，剧根那份
+    永远找不到——`_series_logo_url` 因此不暴露 logoUrl（实测 series 94：
+    磁盘有 tvshow-logo.png，前端却不显示 logo）。
+    """
     if not episodes:
         return None
     seen: set[str] = set()
-    for ep in episodes:
-        candidates: list[Path] = []
-        try:
-            parent = Path(ep.file_path).parent
-            candidates.extend(_iter_logo_files(parent, SERIES_LOGO_FILENAMES))
-        except Exception:
-            pass
-        season_dir = get_season_dir(db, ep)
-        if season_dir:
-            candidates.extend(_iter_logo_files(season_dir, SERIES_LOGO_FILENAMES))
-        for p in candidates:
+
+    def take(paths: list[Path]) -> Path | None:
+        for p in paths:
             key = str(p)
             if key in seen:
                 continue
@@ -207,6 +205,31 @@ def find_local_series_logo(db: Session, episodes: list[Video]) -> Path | None:
                     return p
             except Exception:
                 continue
+        return None
+
+    # 1) 剧名根目录（与总海报同层）
+    try:
+        root = get_series_root_dir(db, episodes)
+    except Exception:
+        root = None
+    if root is not None:
+        hit = take(_iter_logo_files(root, SERIES_LOGO_FILENAMES))
+        if hit is not None:
+            return hit
+
+    # 2) 分集目录 → 季目录（保留旧行为）
+    for ep in episodes:
+        try:
+            hit = take(_iter_logo_files(Path(ep.file_path).parent, SERIES_LOGO_FILENAMES))
+        except Exception:
+            hit = None
+        if hit is not None:
+            return hit
+        season_dir = get_season_dir(db, ep)
+        if season_dir:
+            hit = take(_iter_logo_files(season_dir, SERIES_LOGO_FILENAMES))
+            if hit is not None:
+                return hit
     return None
 
 
