@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -12,6 +13,11 @@ from fryfrog.services.tmdb import TmdbClient
 from fryfrog.services.video_assets import download_all_covers, generate_nfo
 
 logger = logging.getLogger(__name__)
+
+
+def _like_escape(value: str) -> str:
+    """转义 SQL LIKE 的通配符，避免路径里的 _ 或 % 误匹配。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def search_queries(file_name: str | None, fallback: str = "") -> list[str]:
@@ -254,16 +260,25 @@ def bind_series(db: Session, video_id: int, tmdb_id: int, media_type: str) -> li
     media_type = (media_type or "").lower()
     bound: list[Video] = []
 
-    # 连带范围：剧集按 series_id 整季全集（分集 title 含 SxxExx 各不相同，
-    # 按 title 匹配只能命中重复文件）；电影/未入剧的退回同标题连带。
+    # 连带范围（务必保守，历史上这里按 title 全库匹配曾把 11 部无关剧的
+    # S01E01 一起改成同一部电影）：
+    # - 剧集：同 series_id 的全部分集；
+    # - 电影/未入剧：仅限**同一目录**（同名分片，如 CD1/CD2）。
     if media_type == "tv" and video.series_id is not None:
         siblings = list(
             db.scalars(select(Video).where(Video.series_id == video.series_id)).all()
         )
     else:
-        siblings = list(
-            db.scalars(select(Video).where(Video.title == video.title)).all()
-        )
+        vid_dir = str(Path(video.file_path).parent)
+        siblings = [
+            v
+            for v in db.scalars(
+                select(Video).where(
+                    Video.file_path.like(f"{_like_escape(vid_dir)}%", escape="\\")
+                )
+            ).all()
+            if str(Path(v.file_path).parent) == vid_dir
+        ]
     if video not in siblings:
         siblings.append(video)
 

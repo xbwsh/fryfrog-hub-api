@@ -117,14 +117,23 @@ def test_bind_tv_expands_to_whole_season(tmp_path, monkeypatch):
 
 
 def test_bind_movie_still_matches_same_title_only(tmp_path, monkeypatch):
-    """电影没有 series 归属，保持按同标题连带（重复文件一起绑）。"""
+    """电影没有 series 归属时，只在**同一目录**内连带（同名分片）。
+
+    历史教训：曾按 `Video.title` 全库匹配，结果把 11 部无关剧的 S01E01
+    （当时标题相同）一起绑成同一部电影。跨目录的同名文件必须不动。
+    """
     db = _setup(tmp_path)
     dup_a = Video(
-        file_path=str(tmp_path / "a" / "同名电影.mkv"),
-        file_name="同名电影.mkv",
+        file_path=str(tmp_path / "a" / "同名电影.CD1.mkv"),
+        file_name="同名电影.CD1.mkv",
         title="同名电影",
     )
     dup_b = Video(
+        file_path=str(tmp_path / "a" / "同名电影.CD2.mkv"),
+        file_name="同名电影.CD2.mkv",
+        title="同名电影",
+    )
+    other_dir_same_title = Video(
         file_path=str(tmp_path / "b" / "同名电影.mkv"),
         file_name="同名电影.mkv",
         title="同名电影",
@@ -134,7 +143,7 @@ def test_bind_movie_still_matches_same_title_only(tmp_path, monkeypatch):
         file_name="别的电影.mkv",
         title="别的电影",
     )
-    db.add_all([dup_a, dup_b, other])
+    db.add_all([dup_a, dup_b, other_dir_same_title, other])
     db.commit()
 
     monkeypatch.setattr(
@@ -143,9 +152,11 @@ def test_bind_movie_still_matches_same_title_only(tmp_path, monkeypatch):
     bound = video_scrape.bind_series(db, dup_a.id, 42, "movie")
     db.commit()
 
-    assert len(bound) == 2
+    assert {v.id for v in bound} == {dup_a.id, dup_b.id}, "同目录分片一起绑"
     assert dup_a.tmdb_id == 42
     assert dup_b.tmdb_id == 42
+    db.refresh(other_dir_same_title)
+    assert other_dir_same_title.tmdb_id is None, "别的目录的同名文件不能被连带"
     assert other.tmdb_id is None
 
 
