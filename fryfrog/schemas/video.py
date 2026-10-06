@@ -506,9 +506,21 @@ def _series_logo_url(series) -> str | None:
     from pathlib import Path
 
     from fryfrog.core.signer import sign
+    from fryfrog.services.video_assets import SERIES_LOGO_FILENAMES, _iter_logo_files
 
     if series.logo_local_path and Path(series.logo_local_path).exists():
         return sign(f"/api/v1/video/series/{series.id}/logo")
+    # 手工放在剧/季目录里的 tvshow-logo.png 也要暴露出来，否则前端拿不到
+    # logoUrl，根本不会去请求 /series/{id}/logo（表现为"只有电影有 logo"）。
+    episodes = list(getattr(series, "videos", None) or [])
+    for ep in episodes:
+        try:
+            parent = Path(ep.file_path).parent
+        except Exception:
+            continue
+        for directory in (parent, parent.parent):
+            if _iter_logo_files(directory, SERIES_LOGO_FILENAMES):
+                return sign(f"/api/v1/video/series/{series.id}/logo")
     return None
 
 

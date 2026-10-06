@@ -89,6 +89,8 @@ def logo_file_url(local_path: str | None, api_path: str) -> str | None:
 
 
 # Common logos users drop next to media (Jellyfin / Kodi / Ember style).
+# 除固定名外还会匹配带序号/副本后缀的变体（如 `tvshow-logo (1).png`），
+# 刮削工具改名或手动多存几份时都常见。
 VIDEO_LOGO_FILENAMES = (
     "movie-logo.png",
     "movie-logo.jpg",
@@ -107,6 +109,48 @@ SERIES_LOGO_FILENAMES = (
     "logo.png",
     "logo.jpg",
 )
+_LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+
+def _iter_logo_files(directory: Path, names: tuple[str, ...]) -> list[Path]:
+    """目录下匹配候选名的 logo 文件（含 `xxx (1).png` 这类副本后缀）。
+
+    固定名优先，保证同一目录有多份时先取标准命名。
+    """
+    found: list[Path] = []
+    try:
+        entries = {p.name.lower(): p for p in directory.iterdir() if p.is_file()}
+    except OSError:
+        return found
+    for name in names:
+        hit = entries.get(name)
+        if hit is not None:
+            found.append(hit)
+    if found:
+        return found
+    # 无标准命名时退到“基名 + 可选空格/括号序号 + 扩展名”
+    bases = {Path(n).stem.lower() for n in names}
+    try:
+        for entry in sorted(directory.iterdir(), key=lambda p: p.name.lower()):
+            if not entry.is_file():
+                continue
+            lower = entry.name.lower()
+            if not lower.endswith(_LOGO_EXTS):
+                continue
+            stem = entry.stem.lower()
+            for base in bases:
+                rest = stem[len(base):] if stem.startswith(base) else None
+                if rest is None:
+                    continue
+                # 允许 " (1)" / "-1" / "_2" / " 副本" 之类的副本后缀
+                if rest.strip(" ()-_0123456789") == "" or rest.strip() == "":
+                    found.append(entry)
+                    break
+            if found:
+                break
+    except OSError:
+        pass
+    return found
 
 
 def find_local_video_logo(video: Video) -> Path | None:
@@ -115,14 +159,8 @@ def find_local_video_logo(video: Video) -> Path | None:
         parent = Path(video.file_path).parent
     except Exception:
         return None
-    for name in VIDEO_LOGO_FILENAMES:
-        p = parent / name
-        try:
-            if p.is_file():
-                return p
-        except Exception:
-            continue
-    return None
+    found = _iter_logo_files(parent, VIDEO_LOGO_FILENAMES)
+    return found[0] if found else None
 
 
 def find_local_series_logo(db: Session, episodes: list[Video]) -> Path | None:
@@ -134,17 +172,12 @@ def find_local_series_logo(db: Session, episodes: list[Video]) -> Path | None:
         candidates: list[Path] = []
         try:
             parent = Path(ep.file_path).parent
-            for name in SERIES_LOGO_FILENAMES:
-                candidates.append(parent / name)
-            # Season folder: …/第 1 季/tvshow-logo.png
-            for name in ("tvshow-logo.png", "tvshow-logo.jpg", "logo.png"):
-                candidates.append(parent / name)
+            candidates.extend(_iter_logo_files(parent, SERIES_LOGO_FILENAMES))
         except Exception:
             pass
         season_dir = get_season_dir(db, ep)
         if season_dir:
-            for name in SERIES_LOGO_FILENAMES:
-                candidates.append(season_dir / name)
+            candidates.extend(_iter_logo_files(season_dir, SERIES_LOGO_FILENAMES))
         for p in candidates:
             key = str(p)
             if key in seen:

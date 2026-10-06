@@ -304,8 +304,14 @@ def generate_nfo_endpoint(db: DbSession, id: int):
     return ApiResponse.ok({"videoId": str(id), "nfoPath": nfo_path or "null"})
 
 
-@router.post("/{id:int}/covers")
+@router.post("/{id:int}/refresh-covers")
 def download_covers(db: DbSession, id: int):
+    """从 TMDB 重新拉取封面。
+
+    路径不能叫 `/covers`：中间件把 `.*/cover` 当静态图片资源提前放行，
+    不会写入当前用户，导致这里的 _require_admin 永远判为匿名 → 403。
+    （旧路径 /covers 因此从未可用，客户端已同步改名。）
+    """
     _require_admin(db)
     video = vs.get_video(db, id)
     _require_visible(db, video.library_id, "Video", id)
