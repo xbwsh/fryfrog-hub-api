@@ -232,13 +232,9 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             video = existing.pop(file_path, None)
             is_new = video is None
             if video is None:
-                # 兼容旧数据：换过库目录、library_id 未回填的同路径记录（仅认领尚未归属本库的行）
-                video = db.scalar(
-                    select(Video).where(
-                        Video.file_path == file_path,
-                        Video.library_id.is_(None),
-                    )
-                )
+                # file_path 全表唯一：该文件可能已被别的库入库（库路径重叠/换过库目录），
+                # 必须先查库再决定是否新建，否则会 INSERT 重复行撞 UNIQUE。
+                video = db.scalar(select(Video).where(Video.file_path == file_path))
                 if video is not None:
                     existing.pop(file_path, None)
                 else:

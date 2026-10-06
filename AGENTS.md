@@ -96,6 +96,12 @@ python -m venv .venv
 - 扫描会清理磁盘上已删除的记录：宽限期 `SCAN_MISSING_GRACE_SECONDS`（默认 1800s）满仍缺失才删行
 - 护栏：本轮实见文件数低于上轮存量的 `SCAN_GUARD_MIN_RATIO`（默认 0.5）时整轮暂缓删除，避免挂载掉线清空库
 - 扫描按 `mtime`+`size` 跳过未变文件的 ffprobe（`videos.media_probed_mtime`）
+- `POST /media-libraries/scan` 与 `/{id}/scan` **立即返回**，扫描跑在后台线程；客户端靠
+  轮询进度判断完成，因此扫描必须写进度表（见下）
+- 扫描进度双键：`scan:{TYPE}:{id}` 供 `/scan/progress` 聚合；`pipeline:{id}` 供
+  `/{id}/pipeline-progress` 的 `stage`/`currentItem`（客户端据此判断完成，不写会一直显示 idle）
+- 同一库并发扫描会被护栏挡掉（热监听 + 周期扫描 + 手动可能同时触发）；占位超过
+  `SCAN_STALE_AFTER_SECONDS`（默认 1800s）视为卡死并允许抢占
 - `init_db()` 会按模型元数据为老库幂等补列（`create_all` 只建表不加列）
 
 ## Environment

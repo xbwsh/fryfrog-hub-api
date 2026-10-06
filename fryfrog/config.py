@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     scan_missing_grace_seconds: int = 1800
     # 本轮文件数低于上轮该比例时视为疑似挂载异常，暂缓删除
     scan_guard_min_ratio: float = 0.5
+    # 单次扫描超过多久视为卡死，允许新的触发抢占（防网络卡死永久占位）
+    scan_stale_after_seconds: int = 1800
 
     # Proxy for scrapers（兼容 Java 的 PROXY_HOST / PROXY_PORT）
     scraper_proxy_host: str = Field(

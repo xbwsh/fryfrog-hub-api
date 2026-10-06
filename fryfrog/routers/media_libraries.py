@@ -113,10 +113,16 @@ def browse(path: str | None = None):
 
 @router.post("/scan")
 def scan_all(db: DbSession, service: MediaLibraryService = Depends(get_media_library_service)):
+    """后台扫描全部启用库，立即返回；进度由 /scan/progress 轮询。
+
+    扫描可能耗时数分钟，必须放后台线程——客户端默认 15 秒超时，
+    同步执行会让它误判失败，而服务端其实还在扫。
+    """
     libs = service.get_enabled_libraries(db)
+    library_ids = [lib.id for lib in libs]
     from fryfrog.services import scan as scan_svc
 
-    scan_svc.scan_all_enabled(db)
+    scan_svc.submit_scan_job(library_ids)
     return ApiResponse.ok({"status": "started", "libraryCount": len(libs)})
 
 
@@ -175,10 +181,11 @@ def toggle_library(library_id: int, db: DbSession, service: MediaLibraryService 
 
 @router.post("/{library_id}/scan")
 def scan_one(library_id: int, db: DbSession, service: MediaLibraryService = Depends(get_media_library_service)):
+    """后台扫描单个库，立即返回；进度由 /{id}/pipeline-progress 轮询。"""
     lib = service.get_library_by_id(db, library_id)
     from fryfrog.services import scan as scan_svc
 
-    scan_svc.scan_library(db, lib)
+    scan_svc.submit_scan_job([lib.id])
     return ApiResponse.ok({"libraryId": lib.id, "libraryName": lib.name, "status": "started"})
 
 
