@@ -49,30 +49,71 @@ def search_queries(file_name: str | None, fallback: str = "") -> list[str]:
 
 
 def search_tmdb_best(
-    queries: list[str], media_pref: str = "", adult_pref: bool | None = None
+    queries: list[str],
+    media_pref: str = "",
+    adult_pref: bool | None = None,
+    localize_pref: bool = False,
 ) -> dict | None:
     """依次尝试候选查询词，返回首个有结果的最佳项。
 
-    [adult_pref] 同名多条时的取舍：
-      - True（成人库里的视频）：**优先成人条目**——这类作品在 TMDB 上常有
-        「普通版 + 成人版」两条同名记录，不指定就只能听天由命看返回顺序；
-      - False（普通库）：反过来优先非成人条目，避免把普通内容错绑到成人条目；
-      - None：不干预，保持 TMDB 原顺序（手动搜索等场景）。
+    同名多条时按**分层优先级**取舍，顺序很重要：
 
-    只影响**同为 mediaType** 的候选项之间的取舍，不会为了成人标记而跨类型选错。
+      1. mediaType 相同（不跨类型选错）；
+      2. 标题已本地化（`title != originalTitle`，即 TMDB 用我们请求的
+         `language=zh-CN` 给出了中文名）；
+      3. adult 偏好（成人库优先成人条目，普通库反之）。
+
+    **本地化必须排在 adult 前面**：实测「アマネェ！～トモダチンチでこんな事に
+    なるなんて！～」同名两条——非成人那条有中文名「甜美姐姐! ~居然在朋友家干了
+    这种事!~」，成人那条**在 TMDB 上没有中文翻译**。若 adult 优先，成人库就会
+    绑到只有日文名的那条，用户看到日文标题（正是用户反馈的现象）。
+    反之，成人番的首选条目通常本来就带中文名（实测 5 部全是），所以先本地化
+    不会把正常的成人刮削挤掉。
+
+    [adult_pref] None 表示不干预；[localize_pref] 默认关闭，手动搜索场景保持
+    TMDB 原顺序。
     """
     for query in queries:
         results = search_tmdb(query)
         if not results:
             continue
-        typed = [r for r in results if r.get("mediaType") == media_pref] if media_pref else []
-        pool = typed or results
-        if adult_pref is not None and len(pool) > 1:
-            want = [r for r in pool if bool(r.get("adult")) is bool(adult_pref)]
-            if want:
-                return want[0]
+        pool = (
+            [r for r in results if r.get("mediaType") == media_pref]
+            if media_pref
+            else list(results)
+        )
+        if not pool:
+            pool = list(results)
+
+        def localized(items: list[dict]) -> list[dict]:
+            return [r for r in items if _is_localized(r)]
+
+        def by_adult(items: list[dict], want: bool) -> list[dict]:
+            return [r for r in items if bool(r.get("adult")) is want]
+
+        # 逐层收窄，每层只在有结果时才切，避免把候选清空
+        if localize_pref:
+            hit = localized(pool)
+            if hit:
+                pool = hit
+        if adult_pref is not None:
+            hit = by_adult(pool, bool(adult_pref))
+            if hit:
+                pool = hit
         return pool[0]
     return None
+
+
+def _is_localized(item: dict) -> bool:
+    """TMDB 是否给出了本地化标题（请求带 `language=zh-CN`）。
+
+    `title` 与 `originalTitle` 相同说明这条没有中文翻译，直接显示会是日文/英文。
+    `originalTitle` 缺失时**算已本地化**：那只是 TMDB 没给原名，不能据此推断
+    "这条没有中文名"；收紧判断会把候选误排除。
+    """
+    title = (item.get("title") or "").strip()
+    original = (item.get("originalTitle") or "").strip()
+    return bool(title) and title != original
 
 
 def search_tmdb(query: str) -> list[dict]:
@@ -433,9 +474,12 @@ def rescrape_video(db: Session, video_id: int) -> list[Video]:
 
     video = get_video(db, video_id)
     queries = search_queries(video.file_name, video.series_name or video.title)
-    # 优先同类型；同名多条时按库级成人标记取舍
+    # 优先同类型 → 标题已本地化 → 按库级成人标记取舍（顺序见 search_tmdb_best）
     pick = search_tmdb_best(
-        queries, (video.media_type or "").lower(), adult_pref=bool(video.is_adult)
+        queries,
+        (video.media_type or "").lower(),
+        adult_pref=bool(video.is_adult),
+        localize_pref=True,
     )
     if not pick:
         return [video]
@@ -578,8 +622,10 @@ def scrape_video_if_needed(db: Session, video: Video) -> None:
         return
     queries = search_queries(video.file_name, video.series_name or video.title)
     media_pref = (video.media_type or "").lower() or ("tv" if video.is_series else "movie")
-    # 同名多条时按库级成人标记取舍（成人库里优先成人条目）
-    pick = search_tmdb_best(queries, media_pref, adult_pref=bool(video.is_adult))
+    # 同名多条时：先要中文标题，再按库级成人标记取舍
+    pick = search_tmdb_best(
+        queries, media_pref, adult_pref=bool(video.is_adult), localize_pref=True
+    )
     if not pick:
         return
     try:
