@@ -6,6 +6,13 @@
 
 关键点：`Path.exists()` **只吞 FileNotFoundError 一类，不吞 ENAMETOOLONG**，
 所以必须在生成目录名时就按字节截断，并且路径探测要兜住 OSError。
+
+**测试数据的坑（本地过、CI 挂）**：一开始我直接按线上那条 284 字节的名字
+`write_bytes()` 造文件——Windows NTFS 容忍超长名所以本地全过，但 CI 是 ext4，
+单层 255 字节是硬限制，`write_bytes` 直接 OSError。
+真实文件系统上这种文件**根本建不出来**，所以正确的造法是：文件名本身合法，
+但**标题（=`_select_show_name` 取的值）比它长**——这才是 `get_metadata_dir`
+会拿到超长目录名的真实途径。
 """
 
 from __future__ import annotations
@@ -25,14 +32,17 @@ from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video
 from fryfrog.services import video_service as vs
 
-# 线上真实触发的那条文件名（110 字符 / 284 字节）
-LONG_NAME = (
+# 线上真实触发的那条文件名（110 字符 / 284 字节）——只用于断言，
+# 不作为文件名落盘（ext4 建不出来）
+REAL_LONG_NAME = (
     "URE-093 累計6万DL越え！！ 究極の逆3Pハーレム同人を全編丸ごと忠実実写化！！ "
     "原作_サークルしまぱん 巨乳が2人いないと勃起しない夫のために友達を連れてきた妻 "
     "おまけの職場コスFUCKエピソードも特別追加！！"
 )
 
-# 单层文件名上限（Linux 文件系统按**字节**算）
+# 能安全落盘的短文件名（ASCII，远低于任何文件系统上限）
+SAFE_FILE_NAME = "URE-093.mp4"
+
 FS_COMPONENT_LIMIT = 255
 
 
@@ -48,13 +58,14 @@ def env(tmp_path):
     db.add(lib)
     db.flush()
 
-    # 磁盘上真实存在的长名文件（tmp_path 在 Windows 下也能建出 284 字节的名字）
-    vf = media / f"{LONG_NAME}.mp4"
+    vf = media / SAFE_FILE_NAME
     vf.write_bytes(b"x" * 32)
     video = Video(
         file_path=str(vf),
-        file_name=vf.name,
-        title=LONG_NAME,  # 单片：标题就是文件名
+        file_name=SAFE_FILE_NAME,
+        # 单片：标题就是"剧名"，而它比文件名长得多 —— `_select_show_name`
+        # 对单片取的就是 title，于是 get_metadata_dir 拿到超长目录名
+        title=REAL_LONG_NAME,
         library_id=lib.id,
         media_type="movie",
     )
@@ -64,9 +75,15 @@ def env(tmp_path):
     db.close()
 
 
-def test_reproduced_the_real_filename_is_actually_too_long():
+def test_reproduced_the_real_title_is_actually_too_long():
     """先证明这条数据确实会超限——否则下面的测试就是在测空气。"""
-    assert len(LONG_NAME.encode("utf-8")) > FS_COMPONENT_LIMIT
+    assert len(REAL_LONG_NAME.encode("utf-8")) > FS_COMPONENT_LIMIT
+
+
+def test_safe_file_name_fits_filesystem():
+    """测试自己用的文件名必须能落盘（这条就是 CI 挂掉的教训）。"""
+    assert len(SAFE_FILE_NAME.encode("utf-8")) <= FS_COMPONENT_LIMIT
+    assert len(SAFE_FILE_NAME.encode("utf-8")) < 100
 
 
 def test_clean_folder_truncates_by_bytes(env):
@@ -86,8 +103,16 @@ def test_metadata_dir_exists_does_not_raise(env):
 
     path = vs.get_metadata_dir(db, video)
     assert len(path.name.encode("utf-8")) <= FS_COMPONENT_LIMIT
-    # 不该抛异常（exists 返回什么都行）
     assert path.exists() in (True, False)
+
+
+def test_metadata_dir_is_under_library_root(env):
+    """截断后仍要落在库根下，别把路径拼飞。"""
+    db, _lib, video, media = env
+    path = vs.get_metadata_dir(db, video)
+
+    assert str(path).startswith(str(media)), path
+    assert path.parent == media
 
 
 def test_asset_flags_survives_long_title(env):
@@ -145,3 +170,21 @@ def test_normal_length_titles_unaffected(env):
 
     show = vs._clean_folder(vs._select_show_name(ep))
     assert show == "普通剧名", show
+
+
+def test_disk_really_rejects_overlong_component(tmp_path):
+    """留个记录：真实文件系统确实建不出 284 字节的单层名（CI 就是在这里挂的）。
+
+    不写成断言失败——不同平台行为不同（Windows 容忍、ext4 拒绝），
+    只验证：**若**系统拒绝，异常是 OSError 而不是别的诡异错误。
+    """
+    media = tmp_path / "probe"
+    media.mkdir()
+    overlong = media / f"{REAL_LONG_NAME}.mp4"
+    if len(REAL_LONG_NAME.encode("utf-8")) <= FS_COMPONENT_LIMIT:
+        pytest.skip("文件名没超限，无需探测")
+    try:
+        overlong.write_bytes(b"x")
+        # Windows/NTFS 容忍：记下来，别当失败
+    except OSError as exc:
+        assert exc.errno is not None, exc
