@@ -48,12 +48,30 @@ def search_queries(file_name: str | None, fallback: str = "") -> list[str]:
     return queries[:4]
 
 
-def search_tmdb_best(queries: list[str], media_pref: str = "") -> dict | None:
-    """依次尝试候选查询词，返回首个有结果的最佳项。"""
+def search_tmdb_best(
+    queries: list[str], media_pref: str = "", adult_pref: bool | None = None
+) -> dict | None:
+    """依次尝试候选查询词，返回首个有结果的最佳项。
+
+    [adult_pref] 同名多条时的取舍：
+      - True（成人库里的视频）：**优先成人条目**——这类作品在 TMDB 上常有
+        「普通版 + 成人版」两条同名记录，不指定就只能听天由命看返回顺序；
+      - False（普通库）：反过来优先非成人条目，避免把普通内容错绑到成人条目；
+      - None：不干预，保持 TMDB 原顺序（手动搜索等场景）。
+
+    只影响**同为 mediaType** 的候选项之间的取舍，不会为了成人标记而跨类型选错。
+    """
     for query in queries:
         results = search_tmdb(query)
-        if results:
-            return next((r for r in results if r.get("mediaType") == media_pref), results[0])
+        if not results:
+            continue
+        typed = [r for r in results if r.get("mediaType") == media_pref] if media_pref else []
+        pool = typed or results
+        if adult_pref is not None and len(pool) > 1:
+            want = [r for r in pool if bool(r.get("adult")) is bool(adult_pref)]
+            if want:
+                return want[0]
+        return pool[0]
     return None
 
 
@@ -415,8 +433,10 @@ def rescrape_video(db: Session, video_id: int) -> list[Video]:
 
     video = get_video(db, video_id)
     queries = search_queries(video.file_name, video.series_name or video.title)
-    # 优先同类型
-    pick = search_tmdb_best(queries, (video.media_type or "").lower())
+    # 优先同类型；同名多条时按库级成人标记取舍
+    pick = search_tmdb_best(
+        queries, (video.media_type or "").lower(), adult_pref=bool(video.is_adult)
+    )
     if not pick:
         return [video]
     return bind_series(db, video_id, pick["id"], pick["mediaType"] or "movie")
@@ -558,7 +578,8 @@ def scrape_video_if_needed(db: Session, video: Video) -> None:
         return
     queries = search_queries(video.file_name, video.series_name or video.title)
     media_pref = (video.media_type or "").lower() or ("tv" if video.is_series else "movie")
-    pick = search_tmdb_best(queries, media_pref)
+    # 同名多条时按库级成人标记取舍（成人库里优先成人条目）
+    pick = search_tmdb_best(queries, media_pref, adult_pref=bool(video.is_adult))
     if not pick:
         return
     try:
