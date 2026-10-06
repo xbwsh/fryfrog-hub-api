@@ -45,6 +45,10 @@ class VideoSeries(TimestampMixin, Base):
     next_episode_date: Mapped[str | None] = mapped_column(String, nullable=True)
     next_episode_number: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_dir: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 本地 NFO 回填过元数据的时间（NULL = 非 NFO 来源）。
+    # 独立于 metadata_source：后者会被后续 TMDB 刮削覆盖成 "tmdb"，
+    # 导致「这份数据原本来自用户自己的 NFO」这一信息丢失。
+    nfo_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Video(TimestampMixin, Base):
@@ -85,6 +89,8 @@ class Video(TimestampMixin, Base):
     subtitle: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scrape_attempted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 本地 NFO 回填过元数据的时间（NULL = 非 NFO 来源）。见 VideoSeries 同名注释。
+    nfo_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     series_id: Mapped[int | None] = mapped_column(
         ForeignKey("video_series.id", name="fk_video_series"), nullable=True, index=True
     )

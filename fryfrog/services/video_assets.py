@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -343,6 +344,13 @@ def parse_nfo(db: Session, video: Video) -> bool:
         video.metadata_source = "nfo"
         changed = True
 
+    # 「NFO 回填」永久标记：独立于 metadata_source，后者会被后续 TMDB 刮削
+    # 覆盖成 "tmdb"，那份「原本来自本地 NFO」的来源信息就丢了。
+    # 只有 NFO 真的提供了 uniqueid（tmdb/imdb）才算。
+    if video.nfo_backfilled_at is None and root.find("uniqueid") is not None:
+        video.nfo_backfilled_at = datetime.now()
+        changed = True
+
     if changed:
         db.flush()
     return bool(video.tmdb_id or changed)
@@ -441,9 +449,16 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
             series.is_adult = True
             changed = True
 
+    # 有 uniqueid（tmdb/imdb）说明这份 NFO 带绑定标识，才算「NFO 回填」；
+    # 只是补个简介不算，否则本程序刮削后自己写的 NFO 也会被误标。
+    if series.nfo_backfilled_at is None and root.find("uniqueid") is not None:
+        series.nfo_backfilled_at = datetime.now()
+        changed = True
+
     if changed:
         db.flush()
     return changed
+
 
 def generate_nfo(db: Session, video: Video) -> str | None:
     try:
