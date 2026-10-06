@@ -387,17 +387,39 @@ def parse_nfo(db: Session, video: Video) -> bool:
     return bool(video.tmdb_id or changed)
 
 
-def find_series_nfo(video: Video) -> Path | None:
-    """从分集目录向上找 tvshow.nfo（分集目录 → 季目录 → 剧目录）。"""
+def find_series_nfo(db: Session, video: Video) -> Path | None:
+    """找该分集对应的剧级 tvshow.nfo。
+
+    顺序：**剧名根目录优先**，没有再回退「分集目录 → 季目录 → 剧目录」就近查找。
+
+    为什么要这个顺序：外部刮削工具常把 tvshow.nfo 放进**季目录**（位置错位）。
+    就近查找会先命中那份，导致剧根的规范文件被忽略；两边内容不同时读到的是错的
+    那一份。回退保留是为了兼容「只有季目录里有」的历史数据。
+    """
+    from fryfrog.services import video_service as vs
+
+    candidates: list[Path] = []
+    try:
+        candidates.extend(p / "tvshow.nfo" for p in vs.series_root_candidates(db, [video]))
+    except Exception:
+        logger.debug("推导剧名根目录失败: %s", video.file_path, exc_info=True)
+
     d = Path(video.file_path).parent
     for _ in range(4):
-        p = d / "tvshow.nfo"
-        if p.is_file():
-            return p
+        candidates.append(d / "tvshow.nfo")
         parent = d.parent
         if parent == d:
             break
         d = parent
+
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            return path
     return None
 
 
@@ -412,7 +434,7 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
     series = video.series
     if series is None:
         return False
-    nfo = find_series_nfo(video)
+    nfo = find_series_nfo(db, video)
     if nfo is None:
         return False
     try:
