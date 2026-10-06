@@ -92,6 +92,24 @@ def test_season_level_writes_to_season_dir(env):
     assert target.is_file()
 
 
+def test_episode_still_writes_to_fanart_not_poster(env):
+    """回归：分集层的剧照（still）是横版图，必须落 fanart.jpg。
+
+    实测 bug：原判断写成 `if kind == "backdrop" else get_poster_path(...)`，
+    而分集层只提供 `still`（见 tmdb_image_options），于是剧照掉进 poster 分支：
+    存成竖版 poster.jpg、DB 也只更新 poster_url —— 结果竖封面仍走季海报、
+    横屏位置没变，用户感觉"设了没生效"。
+    """
+    db, _lib, _series, eps, season_dir, _show, _written = env
+    target = assets.apply_tmdb_image(db, eps[0], eps, "episode", "still", "/still.jpg")
+
+    assert target == season_dir / "fanart.jpg", f"剧照应落 fanart.jpg，实际 {target}"
+    assert not (season_dir / "poster.jpg").exists(), "不该写出竖版 poster.jpg"
+    assert str(eps[0].backdrop_local_path) == str(target), "应更新 backdrop 字段"
+    assert eps[0].backdrop_url == "/still.jpg"
+    assert not eps[0].poster_url, "不该把剧照塞进 poster_url"
+
+
 def test_episode_level_writes_next_to_the_episode(env):
     db, _lib, _series, eps, season_dir, _show, _written = env
     poster = assets.apply_tmdb_image(db, eps[0], eps, "episode", "poster", "/ep.jpg")

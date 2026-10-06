@@ -1081,7 +1081,13 @@ def apply_tmdb_image(
 
     target: Path | None = None
     if level == "episode":
-        target = get_fanart_path(db, video) if kind == "backdrop" else get_poster_path(db, video)
+        # 分集层只有 still（剧照）和 backdrop，两者都是**横版图**，必须落
+        # fanart.jpg。只有 poster 才是竖版。此前写的是
+        # `if kind == "backdrop" else get_poster_path(...)`，于是 still 掉进
+        # poster 分支 → 用户选的剧照被存成竖版 poster.jpg，既没被竖封面用
+        # （竖封面走季海报），横屏位置也没更新，等于"设了没生效"。
+        vertical = kind == "poster"
+        target = get_poster_path(db, video) if vertical else get_fanart_path(db, video)
     elif level == "season":
         season_dir = get_season_dir(db, video)
         if season_dir:
@@ -1099,8 +1105,9 @@ def apply_tmdb_image(
     if not download_image(_full_image_url(file_path), target, force=True):
         return None
 
-    # 回填 DB 字段，让接口立刻返回新图（签名 URL 由 DTO 层生成）
-    if level == "episode" and kind == "backdrop":
+    # 回填 DB 字段，让接口立刻返回新图（签名 URL 由 DTO 层生成）。
+    # 与上面的落盘一致：分集层非 poster 的一律走 backdrop 字段。
+    if level == "episode" and kind != "poster":
         video.backdrop_url = file_path
         video.backdrop_local_path = str(target)
     elif level == "episode":
