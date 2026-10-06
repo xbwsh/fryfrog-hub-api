@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from fryfrog.core.api_response import ApiResponse
 from fryfrog.core.deps import DbSession, get_media_library_service
+from fryfrog.models.video import Video
 from fryfrog.schemas.common import (
     MediaLibraryCreateRequest,
     MediaLibraryDTO,
@@ -197,3 +198,57 @@ def pipeline_progress(library_id: int, db: DbSession, service: MediaLibraryServi
     from fryfrog.services import progress as progress_svc
 
     return ApiResponse.ok(progress_svc.get_pipeline_progress(lib))
+
+
+@router.get("/{library_id}/stale-records")
+def stale_records(library_id: int, db: DbSession, service: MediaLibraryService = Depends(get_media_library_service)):
+    """体检：列出本库中文件已不存在的记录（只报告，不改动）。
+
+    用于确认「手动删过文件但数据库仍有残留」的规模。
+    """
+    lib = service.get_library_by_id(db, library_id)
+    if not service.is_visible_to_current_user(db, library_id):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    from fryfrog.services import video_scan as scan_svc
+
+    ids = scan_svc.stale_video_ids(db, lib)
+    samples = []
+    for vid in ids[:50]:
+        video = db.get(Video, vid)
+        if video is not None:
+            samples.append(
+                {
+                    "id": video.id,
+                    "fileName": video.file_name,
+                    "filePath": video.file_path,
+                    "tmdbId": video.tmdb_id,
+                    "seriesId": video.series_id,
+                }
+            )
+    return ApiResponse.ok(
+        {"libraryId": lib.id, "libraryPath": lib.path, "staleCount": len(ids), "samples": samples}
+    )
+
+
+@router.post("/{library_id}/purge-stale")
+def purge_stale_records(
+    library_id: int,
+    db: DbSession,
+    dryRun: bool = False,
+    force: bool = True,
+    service: MediaLibraryService = Depends(get_media_library_service),
+):
+    """清理残留记录：删除本库中文件已不存在的行（含因此变空的剧组）。
+
+    force 默认 true（用户主动清理时不走宽限期），但磁盘护栏始终生效：
+    现有文件数不足上轮存量的一半时整体拒绝，避免盘掉线时清空库。
+    dryRun=true 只统计不删。
+    """
+    lib = service.get_library_by_id(db, library_id)
+    if not service.is_visible_to_current_user(db, library_id):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    from fryfrog.services import video_scan as scan_svc
+
+    result = scan_svc.purge_missing_videos(db, lib, force=force, dry_run=dryRun)
+    db.commit()
+    return ApiResponse.ok({"libraryId": lib.id, "dryRun": dryRun, **result})

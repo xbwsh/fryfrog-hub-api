@@ -99,11 +99,118 @@ def _resolve_missing(db: Session, library: MediaLibrary, missing_ids: list[int],
         for sid in db.scalars(select(Video.series_id).where(Video.id.in_(missing_ids))).all()
         if sid is not None
     }
-    # videos 有子表外键（watch_progress / video_actors）且连接开了 foreign_keys=ON，
-    # 必须先清子行再删视频，否则 IntegrityError: FOREIGN KEY constraint failed。
-    db.execute(delete(WatchProgress).where(WatchProgress.video_id.in_(missing_ids)))
-    db.execute(delete(VideoActor).where(VideoActor.video_id.in_(missing_ids)))
-    for vid in missing_ids:
+    # 删除顺序（先子行后主行）与空剧组清理统一在 _delete_videos 里，
+    # 避免扫描清理和手动清理两条路径将来走偏。
+    result = _delete_videos(db, missing_ids, library, series_ids=series_ids)
+    logger.info(
+        "视频库清理已删除文件: %s, 删除 %d 条（空剧组 %d 个）",
+        library.name,
+        result["deleted"],
+        result["orphanedSeries"],
+    )
+    return result["deleted"]
+
+
+def stale_video_ids(db: Session, library: MediaLibrary) -> list[int]:
+    """本库中「磁盘上已不存在」的视频行 id（宽限期不计，纯按文件是否存在）。
+
+    与扫描的增量判定不同：这里直接核对 file_path，所以不依赖先跑过一次扫描，
+    手动清理和体检报告都靠它。
+    """
+    root = Path(library.path)
+    if not root.exists():
+        return []
+    stale: list[int] = []
+    for video in db.scalars(select(Video).where(Video.library_id == library.id)).all():
+        try:
+            if not Path(video.file_path).exists():
+                stale.append(video.id)
+        except OSError:
+            stale.append(video.id)
+    return [vid for vid in stale if vid is not None]
+
+
+def purge_missing_videos(
+    db: Session, library: MediaLibrary, *, force: bool = False, dry_run: bool = False
+) -> dict:
+    """手动清理残留记录：删除本库中文件已不存在的行（含空壳剧组）。
+
+    force=True 忽略宽限期（用户明确要求清理时用），但**仍执行磁盘护栏**：
+    文件数不足上轮存量的 scan_guard_min_ratio 时整体拒绝，避免盘掉线时清空库。
+    dry_run=True 只统计不删。
+    """
+    root = Path(library.path)
+    if not root.exists():
+        return {"stale": 0, "deleted": 0, "orphanedSeries": 0, "skipped": "库路径不存在"}
+
+    stale_ids = stale_video_ids(db, library)
+    if not stale_ids:
+        return {"stale": 0, "deleted": 0, "orphanedSeries": 0, "skipped": None}
+
+    current = len(iter_files(root, VIDEO_EXTS))
+    previous = _to_int(_read_scan_setting(db, library.id or 0, "last_count"))
+    guard_ratio = _guard_min_ratio()
+    if guard_ratio > 0 and previous and current < previous * guard_ratio:
+        logger.warning(
+            "残留清理被磁盘护栏拦下（现有 %d 条 / 上轮 %d 条）: %s",
+            current,
+            previous,
+            library.name,
+        )
+        return {
+            "stale": len(stale_ids),
+            "deleted": 0,
+            "orphanedSeries": 0,
+            "skipped": f"磁盘文件数异常（现有 {current} / 上轮 {previous}），已跳过以防误删",
+        }
+
+    if not force:
+        # 未强制时沿用宽限期：刚被移走/拷贝中的文件不立刻删
+        threshold = datetime.now() - timedelta(seconds=_missing_grace())
+        stale_ids = [
+            vid
+            for vid in stale_ids
+            if (missing := db.scalar(select(Video.missing_since).where(Video.id == vid)))
+            is not None
+            and missing < threshold
+        ]
+    if dry_run:
+        return {
+            "stale": len(stale_ids),
+            "deleted": 0,
+            "orphanedSeries": 0,
+            "skipped": None,
+        }
+
+    return _delete_videos(db, stale_ids, library)
+
+
+def _delete_videos(
+    db: Session,
+    video_ids: list[int],
+    library: MediaLibrary,
+    *,
+    series_ids: set[int] | None = None,
+) -> dict:
+    """删除给定视频行及其子行，并清理因此变成空壳的系列。
+
+    videos 有子表外键（watch_progress / video_actors）且连接开了 foreign_keys=ON，
+    必须先清子行再删视频，否则 IntegrityError: FOREIGN KEY constraint failed。
+    """
+    if not video_ids:
+        return {"stale": 0, "deleted": 0, "orphanedSeries": 0, "skipped": None}
+
+    if series_ids is None:
+        series_ids = {
+            sid
+            for sid in db.scalars(
+                select(Video.series_id).where(Video.id.in_(video_ids))
+            ).all()
+            if sid is not None
+        }
+    db.execute(delete(WatchProgress).where(WatchProgress.video_id.in_(video_ids)))
+    db.execute(delete(VideoActor).where(VideoActor.video_id.in_(video_ids)))
+    for vid in video_ids:
         video = db.get(Video, vid)
         if video is not None:
             db.delete(video)
@@ -115,20 +222,26 @@ def _resolve_missing(db: Session, library: MediaLibrary, missing_ids: list[int],
         kept = set(
             db.scalars(select(Video.series_id).where(Video.series_id.in_(series_ids))).all()
         )
-        for sid in series_ids - kept:
-            series = db.get(VideoSeries, sid)
-            if series is not None:
+        for series in db.scalars(
+            select(VideoSeries).where(VideoSeries.id.in_(series_ids))
+        ).all():
+            if series.id not in kept:
                 db.delete(series)
                 orphaned_series += 1
         db.flush()
 
     logger.info(
-        "视频库清理已删除文件: %s, 删除 %d 条（空剧组 %d 个）",
+        "视频库清理残留记录: %s, 删除 %d 条（空剧组 %d 个）",
         library.name,
-        len(missing_ids),
+        len(video_ids),
         orphaned_series,
     )
-    return len(missing_ids)
+    return {
+        "stale": len(video_ids),
+        "deleted": len(video_ids),
+        "orphanedSeries": orphaned_series,
+        "skipped": None,
+    }
 
 
 def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
