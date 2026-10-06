@@ -302,8 +302,82 @@ def bind_series(db: Session, video_id: int, tmdb_id: int, media_type: str) -> li
             credits = (detail.get("credits") or {}).get("cast") or []
             save_actors(db, v, credits)
         bound.append(v)
+    if media_type != "movie":
+        # 目标剧组必须在 _apply_tv_detail 之后取：siblings 是在它之前算出来的，
+        # 那时 video.series_id 还是旧值，推不出绑定后的剧组。
+        target = next((v.series_id for v in siblings if v.series_id is not None), None)
+        if target is not None:
+            _merge_split_series(db, siblings, target)
     db.flush()
     return bound
+
+
+def _merge_split_series(db: Session, siblings: list[Video], target: int) -> int:
+    """把「同一部剧被拆成多个 VideoSeries 行」的情况合并掉。
+
+    为什么会拆：`_apply_tv_detail` 按**剧名**找系列行，剧名一变（例如重新刮削
+    后从 `某某！！` 变成 `某某`）就找不到、于是新建一个剧组，同时把老行改名
+    ——结果同一个目录树下的分集散落在两个剧组里，用户在剧详情里只看到其中一半
+    （实测：特别篇被落在旧剧组，新剧显示 0 集）。
+
+    判据刻意保守：**只合并剧名根目录（`<库>/<剧名>/`）相同的行**。
+    注意不能按剧名匹配——被拆开的两行标题恰好不同（那正是它们被拆的原因）。
+
+    [target] 是本次绑定后这批分集所属的系列行，所有同剧的散落分集都会并到它上面。
+    """
+    from sqlalchemy import update as sa_update
+
+    def show_root(path: str | None):
+        if not path:
+            return None
+        try:
+            return Path(path).parent.parent
+        except Exception:
+            return None
+
+    root = next((show_root(v.file_path) for v in siblings if show_root(v.file_path)), None)
+    if root is None:
+        return 0
+
+    merged = 0
+    for other in db.scalars(
+        select(VideoSeries).where(
+            VideoSeries.id != target, VideoSeries.media_type == "tv"
+        )
+    ).all():
+        episodes = list(db.scalars(select(Video).where(Video.series_id == other.id)).all())
+        # 有分集的：必须全部位于同一剧名根目录才并
+        if episodes:
+            if not all(show_root(e.file_path) == root for e in episodes):
+                continue
+        # 空壳行：没有分集可依据，只能用「剧名与目录名互为前缀」判断，
+        # 否则会误删别的剧的空壳行。
+        elif not _series_looks_like_show(other, root):
+            continue
+        db.execute(
+            sa_update(Video).where(Video.series_id == other.id).values(series_id=target)
+        )
+        db.delete(other)
+        merged += 1
+        logger.info("合并被拆分的剧组: %r → series %s", other.title, target)
+    if merged:
+        db.flush()
+    return merged
+
+
+def _series_looks_like_show(series: VideoSeries, root: Path) -> bool:
+    """空壳剧组是否属于这个剧名根目录：标题与目录名互为前缀即可。
+
+    用于处理「剧名从 `某某！！` 变成 `某某` 后留下空壳」这种情形——两边没有
+    分集可依据，只能靠剧名与目录名的相似度判断，因此要求前缀关系（比包含更严）。
+    """
+    title = (series.title or "").strip()
+    if not title:
+        return False
+    name = root.name.strip()
+    if not name:
+        return False
+    return title.startswith(name) or name.startswith(title)
 
 
 def unbind_by_tmdb_id(db: Session, tmdb_id: int) -> int:
