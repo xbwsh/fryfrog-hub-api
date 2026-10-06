@@ -46,8 +46,13 @@ class Settings(BaseSettings):
     subsonic_encrypt_key: str = ""
 
     # Watcher
+    watcher_enabled: bool = True
     watcher_periodic_scan: bool = True
     periodic_scan_interval: int = 30
+    # 文件消失后保留记录多久（秒）；宽限期满仍缺失才删行
+    scan_missing_grace_seconds: int = 1800
+    # 本轮文件数低于上轮该比例时视为疑似挂载异常，暂缓删除
+    scan_guard_min_ratio: float = 0.5
 
     # Proxy for scrapers（兼容 Java 的 PROXY_HOST / PROXY_PORT）
     scraper_proxy_host: str = Field(

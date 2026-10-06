@@ -10,6 +10,7 @@ __pycache__/
 
 # Local agent / tooling
 .herdr/
+.mimocode/
 
 # Maven
 target/

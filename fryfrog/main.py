@@ -57,11 +57,19 @@ async def lifespan(app: FastAPI):
     _init_libraries()
     _migrate_legacy()
     _start_schedulers()
-    from fryfrog.services.watcher import start_file_watcher, stop_file_watcher
+    stop_watcher = None
+    if get_settings().watcher_enabled:
+        # 热监听只是加速手段：模块缺失或初始化失败都不能拖垮服务启动
+        try:
+            from fryfrog.services.watcher import start_file_watcher, stop_file_watcher
 
-    start_file_watcher()
+            start_file_watcher()
+            stop_watcher = stop_file_watcher
+        except Exception:
+            logger.exception("文件热监听启动失败，退回周期扫描")
     yield
-    stop_file_watcher()
+    if stop_watcher is not None:
+        stop_watcher()
 
 
 def _bootstrap_admin() -> None:
@@ -131,7 +139,8 @@ def _start_schedulers() -> None:
         from fryfrog.config import get_settings
 
         settings = get_settings()
-        interval = max(settings.periodic_scan_interval, 30)
+        interval_minutes = max(settings.periodic_scan_interval, 1)
+        interval = interval_minutes * 60
         while True:
             try:
                 if settings.watcher_periodic_scan:

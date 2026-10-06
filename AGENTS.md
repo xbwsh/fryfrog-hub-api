@@ -92,7 +92,11 @@ python -m venv .venv
 - 媒体 URL 需签名（`sig`+`exp`），`<img>/<video>` 用签名 URL 而非 Bearer
 - Subsonic 走 `/rest`，不经过 Bearer 中间件，使用 `u/p` 或 `t/s`
 - 漫画压缩包支持 zip/cbz/rar/cbr/7z（rar 需系统 `unrar`）与 .pdf（`pypdfium2` 按页渲染）
-- 文件热监听为轮询式（3s 轮询 + 5s debounce），无需 watchdog 依赖
+- 文件热监听优先用 Linux inotify（ctypes 调 libc，无第三方依赖），不可用时退回轮询；5s debounce，`WATCHER_ENABLED=false` 可整体关闭
+- 扫描会清理磁盘上已删除的记录：宽限期 `SCAN_MISSING_GRACE_SECONDS`（默认 1800s）满仍缺失才删行
+- 护栏：本轮实见文件数低于上轮存量的 `SCAN_GUARD_MIN_RATIO`（默认 0.5）时整轮暂缓删除，避免挂载掉线清空库
+- 扫描按 `mtime`+`size` 跳过未变文件的 ffprobe（`videos.media_probed_mtime`）
+- `init_db()` 会按模型元数据为老库幂等补列（`create_all` 只建表不加列）
 
 ## Environment
 
@@ -101,8 +105,12 @@ python -m venv .venv
 
 ## CI/CD
 
-- GitHub Actions：`docker.yml` 在 master 推送时构建 Docker 镜像
-- 镜像推送到 GHCR 与 DockerHub
+- GitHub Actions：`docker.yml` 在 master 推送时构建 Docker 镜像（先跑 `pytest`
+  再构建，测试红则不出镜像），推送 GHCR + DockerHub
+- `smoke.yml`：镜像构建成功后，用 `.github/scripts/make_old_db.py` 造的**旧 schema 库**
+  把新镜像真跑一遍（启动 → 登录 → 列库 → 扫描 → 校验就地补列），覆盖 pytest 够不到的
+  容器启动/迁移/端口/认证；也可 `workflow_dispatch` 手动触发
+- 升级已有部署前先备份 `./db`（SQLite + `media_secret.key`）
 
 ## Docker 部署
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from fryfrog.core.utils import clean_title, primary_title
 from fryfrog.media_core import get_media_probe
-from fryfrog.models.library import MediaLibrary
+from fryfrog.models.library import MediaLibrary, SystemSetting
 from fryfrog.models.video import Video, VideoSeries
 from fryfrog.services.fsutil import VIDEO_EXTS, iter_files, parse_episode
 
@@ -17,6 +18,113 @@ logger = logging.getLogger(__name__)
 
 ASSET_ONLY_SUFFIXES = {".nfo", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx"}
 HIDDEN_ASSET_DIR_PREFIX = ".frames-"
+
+# 扫描簿记存入 SystemSetting（不必为「上次扫描」单独建表）
+SCAN_SETTING_PREFIX = "video_scan"
+
+
+def _scan_setting_key(library_id: int, name: str) -> str:
+    return f"{SCAN_SETTING_PREFIX}.{name}.{library_id}"
+
+
+def _read_scan_setting(db: Session, library_id: int, name: str) -> str | None:
+    return db.scalar(
+        select(SystemSetting.value).where(SystemSetting.key == _scan_setting_key(library_id, name))
+    )
+
+
+def _write_scan_setting(db: Session, library_id: int, name: str, value: str) -> None:
+    key = _scan_setting_key(library_id, name)
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == key))
+    if row is None:
+        db.add(SystemSetting(key=key, value=value, description="视频库扫描簿记"))
+    else:
+        row.value = value
+    db.flush()
+
+
+def _to_int(value: str | None) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def _missing_grace() -> float:
+    from fryfrog.config import get_settings
+
+    return max(float(get_settings().scan_missing_grace_seconds), 0.0)
+
+
+def _guard_min_ratio() -> float:
+    from fryfrog.config import get_settings
+
+    return max(min(float(get_settings().scan_guard_min_ratio), 1.0), 0.0)
+
+
+def _resolve_missing(db: Session, library: MediaLibrary, missing_ids: list[int], seen: int) -> int:
+    """宽限期满仍缺失的行才删；顺带清掉因此变成空壳的系列行。
+
+    两重保护：
+    1. 宽限期（scan_missing_grace_seconds）：拷入中/挂载抖动不会立刻删行；
+    2. 磁盘异常护栏：本轮实见文件数不足上轮存量的 scan_guard_min_ratio 时整轮暂缓，
+       等下一轮复核；磁盘真的变小了，下一轮的基准就是新数量，删除照常放行。
+    """
+    grace = _missing_grace()
+    threshold = datetime.now() - timedelta(seconds=grace)
+    missing_ids = [
+        vid
+        for vid in missing_ids
+        if (missing := db.scalar(select(Video.missing_since).where(Video.id == vid))) is not None
+        and missing < threshold
+    ]
+    if not missing_ids:
+        return 0
+
+    previous = _to_int(_read_scan_setting(db, library.id or 0, "last_count"))
+    guard_ratio = _guard_min_ratio()
+    if seen > 0 and previous and guard_ratio > 0 and seen < previous * guard_ratio:
+        # 目录还在但内容几乎清空的典型场景：挂载掉了/盘没就绪，本轮只记录不删
+        logger.warning(
+            "视频库疑似磁盘异常（本轮 %d 条 / 上轮 %d 条），暂缓删除 %d 条: %s",
+            seen,
+            previous,
+            len(missing_ids),
+            library.name,
+        )
+        return 0
+
+    series_ids = {
+        sid
+        for sid in db.scalars(select(Video.series_id).where(Video.id.in_(missing_ids))).all()
+        if sid is not None
+    }
+    for vid in missing_ids:
+        video = db.get(Video, vid)
+        if video is not None:
+            db.delete(video)
+    db.flush()
+
+    # 分集删空的系列行一并清掉，避免库里留下没有分集的空剧
+    orphaned_series = 0
+    if series_ids:
+        kept = set(
+            db.scalars(select(Video.series_id).where(Video.series_id.in_(series_ids))).all()
+        )
+        for sid in series_ids - kept:
+            series = db.get(VideoSeries, sid)
+            if series is not None:
+                db.delete(series)
+                orphaned_series += 1
+        db.flush()
+
+    logger.info(
+        "视频库清理已删除文件: %s, 删除 %d 条（空剧组 %d 个）",
+        library.name,
+        len(missing_ids),
+        orphaned_series,
+    )
+    return len(missing_ids)
 
 
 def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
@@ -102,15 +210,41 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
 
     count = 0
     frames_removed = 0
+    scanned_at = datetime.now()
     probe = get_media_probe()
+
+    # 按库取一次现有记录：file_path 是绝对路径，同库内文件名互不重复。（rel → Video）
+    existing: dict[str, Video] = {}
+    for video in db.scalars(select(Video).where(Video.library_id == library.id)).all():
+        try:
+            existing[str(Path(video.file_path).resolve())] = video
+        except OSError:
+            continue
+
     for path in iter_files(root, VIDEO_EXTS):
         try:
             file_path = str(path.resolve())
-            video = db.scalar(select(Video).where(Video.file_path == file_path))
+            try:
+                file_stat = path.stat()
+            except OSError:
+                file_stat = None
+
+            video = existing.pop(file_path, None)
             is_new = video is None
             if video is None:
-                video = Video(file_path=file_path)
-                db.add(video)
+                # 兼容旧数据：换过库目录、library_id 未回填的同路径记录（仅认领尚未归属本库的行）
+                video = db.scalar(
+                    select(Video).where(
+                        Video.file_path == file_path,
+                        Video.library_id.is_(None),
+                    )
+                )
+                if video is not None:
+                    existing.pop(file_path, None)
+                else:
+                    video = Video(file_path=file_path)
+                    db.add(video)
+                    is_new = True
 
             video.file_name = path.name
             if is_new or not video.original_file_name:
@@ -118,6 +252,9 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             video.library_id = library.id
             video.is_adult = bool(library.is_adult)
             video.format = path.suffix.lstrip(".").upper() or None
+            video.last_seen_at = scanned_at
+            # 文件回来了：清掉缺失标记（宽限期内删行不会发生）
+            video.missing_since = None
 
             title, season, episode = parse_episode(path.stem)
             # 主标题：中文名.英文名.2025 → 中文名。剧名与 TMDB 名一致，
@@ -142,20 +279,27 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                 if not video.title or is_new:
                     video.title = display
 
-            try:
-                video.file_size = path.stat().st_size
-            except OSError:
-                pass
+            if file_stat is not None:
+                video.file_size = file_stat.st_size
 
-            if not video.duration_seconds:
-                duration = probe.probe_video_duration(file_path)
-                if duration:
-                    video.duration_seconds = duration
-                    video.duration_minutes = int(duration // 60) or 1
-            if not video.resolution:
-                wh = probe.probe_video_resolution(file_path)
-                if wh and wh[0] and wh[1]:
-                    video.resolution = f"{wh[0]}x{wh[1]}"
+            # mtime + size 都没变 → 跳过重复 ffprobe（扫描高频触发时的主要 CPU 开销）
+            unchanged = (
+                file_stat is not None
+                and video.media_probed_mtime == file_stat.st_mtime
+                and video.file_size == file_stat.st_size
+            )
+            if not unchanged:
+                if not video.duration_seconds:
+                    duration = probe.probe_video_duration(file_path)
+                    if duration:
+                        video.duration_seconds = duration
+                        video.duration_minutes = int(duration // 60) or 1
+                if not video.resolution:
+                    wh = probe.probe_video_resolution(file_path)
+                    if wh and wh[0] and wh[1]:
+                        video.resolution = f"{wh[0]}x{wh[1]}"
+                if file_stat is not None:
+                    video.media_probed_mtime = file_stat.st_mtime
 
             # 本地封面路径探测（含无前缀 poster.jpg/fanart.jpg/thumb.jpg 等手工刮削命名）
             from fryfrog.services import video_service as vs
@@ -171,20 +315,22 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                         video.backdrop_local_path = str(fanart)
                         break
 
-            # 从已有 NFO 恢复元数据（含 tmdbId）
-            from fryfrog.services.video_assets import (
-                parse_nfo,
-                parse_series_nfo,
-                prune_private_vertical_cover,
-            )
+            # 文件没变过就没有新素材/NFO 可读，跳过磁盘解析与渲染清理
+            if is_new or not unchanged:
+                # 从已有 NFO 恢复元数据（含 tmdbId）
+                from fryfrog.services.video_assets import (
+                    parse_nfo,
+                    parse_series_nfo,
+                    prune_private_vertical_cover,
+                )
 
-            parse_nfo(db, video)
-            sync_series_from_episode(db, video)
-            parse_series_nfo(db, video)
-            # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
-            prune_private_vertical_cover(db, video)
+                parse_nfo(db, video)
+                sync_series_from_episode(db, video)
+                parse_series_nfo(db, video)
+                # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
+                prune_private_vertical_cover(db, video)
 
-            frames_removed += cleanup_redundant_frames(db, video)
+                frames_removed += cleanup_redundant_frames(db, video)
 
             db.flush()
             count += 1
@@ -197,12 +343,23 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             logger.exception("扫描视频失败: %s", path)
             db.rollback()
     db.flush()
+    # 本轮没见到的记录：超过宽限期才删；文件回来会在上面清掉 missing_since
+    missing_ids = [video.id for video in existing.values() if video.id is not None]
+    for video in existing.values():
+        if video.id is not None and video.missing_since is None:
+            video.missing_since = scanned_at
+    db.flush()
+    removed_rows = _resolve_missing(db, library, missing_ids, count)
+    _write_scan_setting(db, library.id or 0, "last_count", str(count))
+    _write_scan_setting(db, library.id or 0, "last_scan_at", scanned_at.isoformat())
     if frames_removed:
         logger.info("视频库扫描清理帧截图 %d 个: %s", frames_removed, library.name)
     removed_dirs = cleanup_orphan_asset_dirs(db, root)
     if removed_dirs:
         logger.info("视频库扫描清理空壳素材目录 %d 个: %s", removed_dirs, library.name)
-    logger.info("视频库扫描完成: %s, 新增/更新 %d 条", library.name, count)
+    logger.info(
+        "视频库扫描完成: %s, 新增/更新 %d 条, 清理已删除 %d 条", library.name, count, removed_rows
+    )
     return count
 
 

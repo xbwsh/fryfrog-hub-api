@@ -94,6 +94,13 @@ class Video(TimestampMixin, Base):
     series_name: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str | None] = mapped_column(String, nullable=True)
     library_id: Mapped[int | None] = mapped_column("library_id", Integer, nullable=True, index=True)
+    # ── 扫描簿记 ──────────────────────────────────────────────
+    # 最近一次在磁盘上看到该文件的时间（清单快照，用于「缺失」判定与诊断）
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 首次发现文件消失的时间；宽限期满仍缺失才真正删行
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # ffprobe 时的文件 mtime：mtime+size 不变则跳过重复探测
+    media_probed_mtime: Mapped[float | None] = mapped_column(Double, nullable=True)
 
     series: Mapped[VideoSeries | None] = relationship(lazy="joined")
 
