@@ -12,7 +12,7 @@ os.environ.setdefault("SCAN_MISSING_GRACE_SECONDS", "4")
 
 from pathlib import Path
 
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from fryfrog.db import Base, _ensure_columns
@@ -33,6 +33,20 @@ class _FakeProbe:
         return (1920, 1080)
 
 
+def _engine_with_fk():
+    """与生产一致：连接开启 foreign_keys（否则删视频时的 FK 冲突测不出来）。"""
+    engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def _fk_on(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
+    Base.metadata.create_all(engine)
+    return engine
+
+
 def _setup(tmp_path, monkeypatch, count: int = 1):
     probe = _FakeProbe()
     monkeypatch.setattr(video_scan, "get_media_probe", lambda: probe)
@@ -41,8 +55,7 @@ def _setup(tmp_path, monkeypatch, count: int = 1):
         folder.mkdir()
         (folder / f"show-{i}.mp4").write_bytes(b"fake-video")
 
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
+    engine = _engine_with_fk()
     db = sessionmaker(bind=engine)()
     lib = MediaLibrary(name="剧集", path=str(tmp_path), type="VIDEO", enable_scraping=False)
     db.add(lib)
@@ -131,6 +144,41 @@ def test_delete_resumes_when_library_still_has_content(tmp_path, monkeypatch):
     video_scan._resolve_missing(db, lib, [victim.id], seen=2)
     db.commit()
     assert _count(db) == 2, "2/3 实见，不该被护栏拦下"
+
+
+def test_delete_video_with_children_satisfies_foreign_keys(tmp_path, monkeypatch):
+    """删视频前必须先清子行：watch_progress/video_actors 有外键，生产开了 foreign_keys=ON。
+
+    实测故障：`sqlite3.IntegrityError: FOREIGN KEY constraint failed`，
+    导致整个库的扫描直接失败（Scan failed for library N）。
+    """
+    from fryfrog.models.video import VideoActor, WatchProgress
+
+    db, lib, _ = _setup(tmp_path, monkeypatch, count=2)
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+
+    video = db.scalar(select(Video).where(Video.file_path.contains("show-0")))
+    db.add(WatchProgress(user_id=1, video_id=video.id, position_seconds=12.0))
+    db.add(VideoActor(video_id=video.id, name="测试演员"))
+    db.commit()
+
+    (tmp_path / "show-0" / "show-0.mp4").unlink()
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+    assert _count(db) == 2
+
+    victim = db.scalar(select(Video).where(Video.file_path.contains("show-0")))
+    victim.missing_since = victim.missing_since.replace(year=victim.missing_since.year - 1)
+    db.flush()
+
+    removed = video_scan._resolve_missing(db, lib, [victim.id], seen=1)
+    db.commit()
+
+    assert removed == 1
+    assert _count(db) == 1
+    assert db.scalar(select(func.count(WatchProgress.id))) == 0, "子行必须一并清掉"
+    assert db.scalar(select(func.count(VideoActor.id))) == 0
 
 
 def test_unchanged_file_skips_reprobe(tmp_path, monkeypatch):

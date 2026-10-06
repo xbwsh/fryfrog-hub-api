@@ -5,13 +5,13 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from fryfrog.core.utils import clean_title, primary_title
 from fryfrog.media_core import get_media_probe
 from fryfrog.models.library import MediaLibrary, SystemSetting
-from fryfrog.models.video import Video, VideoSeries
+from fryfrog.models.video import Video, VideoActor, VideoSeries, WatchProgress
 from fryfrog.services.fsutil import VIDEO_EXTS, iter_files, parse_episode
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,10 @@ def _resolve_missing(db: Session, library: MediaLibrary, missing_ids: list[int],
         for sid in db.scalars(select(Video.series_id).where(Video.id.in_(missing_ids))).all()
         if sid is not None
     }
+    # videos 有子表外键（watch_progress / video_actors）且连接开了 foreign_keys=ON，
+    # 必须先清子行再删视频，否则 IntegrityError: FOREIGN KEY constraint failed。
+    db.execute(delete(WatchProgress).where(WatchProgress.video_id.in_(missing_ids)))
+    db.execute(delete(VideoActor).where(VideoActor.video_id.in_(missing_ids)))
     for vid in missing_ids:
         video = db.get(Video, vid)
         if video is not None:
