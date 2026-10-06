@@ -62,6 +62,89 @@ def rescrape_library(db: DbSession, library_id: int):
     return ApiResponse.ok(f"Rescrape started for library {library_id}")
 
 
+@router.post("/nfo/regenerate-all")
+def regenerate_all_nfo(db: DbSession, libraryId: int | None = None):
+    """批量（重新）生成所有剧的 tvshow.nfo 与各季 season.nfo。
+
+    为什么需要这个：`scrape_video_if_needed` 开头就是 `if video.tmdb_id: return`，
+    已绑定的剧不会再走刮削流程，所以**重新刮削刷不到 NFO**。存量剧的剧根 NFO
+    （以及本程序此前从不生成的季级 NFO）只能靠这个入口一次性补齐/统一格式。
+
+    默认覆盖已有文件——这是"统一成新格式"的入口；分集 NFO 不在这里处理
+    （由扫描/刮削按集生成）。
+    """
+    _require_admin(db)
+    series_rows = list(
+        db.execute(
+            select(VideoSeries.id, VideoSeries.tmdb_id, VideoSeries.title).order_by(
+                VideoSeries.id
+            )
+        ).all()
+    )
+    if libraryId is not None:
+        allowed = {
+            row[0]
+            for row in db.execute(
+                select(Video.series_id)
+                .where(Video.library_id == libraryId, Video.series_id.is_not(None))
+                .distinct()
+            ).all()
+        }
+        series_rows = [r for r in series_rows if r[0] in allowed]
+
+    total = len(series_rows)
+    module = f"nfo:{libraryId or 'all'}"
+
+    def work(session):
+        client = TmdbClient()
+        completed = failed = 0
+        for series_id, tmdb_id, title in series_rows:
+            try:
+                series = vs.get_series(session, series_id)
+                episodes = vs.series_videos(session, series_id) if series else None
+                if series is None or not episodes:
+                    failed += 1
+                else:
+                    detail = client.get_tv(tmdb_id) if tmdb_id else None
+                    series_path = assets.generate_series_nfo(
+                        session, series, episodes, detail
+                    )
+                    if series_path:
+                        completed += 1
+                    else:
+                        failed += 1
+                    # 季级 NFO：用剧详情里已带的 seasons（零额外请求）
+                    seasons_info = {
+                        s.get("season_number"): s
+                        for s in ((detail or {}).get("seasons") or [])
+                        if s.get("season_number") is not None
+                    }
+                    seen: set[int] = set()
+                    for ep in episodes:
+                        number = vs.season_of(ep)
+                        if number in seen:
+                            continue
+                        seen.add(number)
+                        info = seasons_info.get(number) or {"season_number": number}
+                        assets.generate_season_nfo(session, ep, info)
+            except Exception:
+                logger.exception("[NFO] 生成失败: series=%s %s", series_id, title)
+                failed += 1
+            progress_svc.update_progress(
+                module, total=total, completed=completed, failed=failed
+            )
+            # 周期性提交，避免长事务卡住 SQLite 写锁（扫描期间尤其明显）
+            if (completed + failed) % 20 == 0:
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
+        logger.info("[NFO] 批量生成完成: %s 成功 / %s 失败 / 共 %s", completed, failed, total)
+
+    submit_job(module, "nfo", total, work)
+    return ApiResponse.ok(f"NFO 批量生成已启动，共 {total} 部剧")
+
+
 @router.post("/refresh-all-actors")
 def refresh_all_actors(db: DbSession):
     _require_admin(db)
