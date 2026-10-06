@@ -143,7 +143,8 @@ async def auth_middleware(request: Request, call_next):
         request.state.db = db
         request.state.user_id = user_id
         response = await call_next(request)
-        db.commit()
+        # 后台扫描持写锁时这里可能撞锁，重试而不是直接 500
+        commit_with_retry(db)
         return response
     except Exception:
         db.rollback()
@@ -167,6 +168,27 @@ def _reject(status: int, message: str):
         status_code=status,
         content={"success": False, "message": message},
     )
+
+
+def commit_with_retry(db, *, attempts: int = 3) -> None:
+    """提交，遇 SQLite 写锁争用则短暂退避重试。
+
+    SQLite 单写者：后台扫描持锁期间，这里（每个请求都会走到）的 commit 会抛
+    `database is locked`，导致正常 API 变成 500。重试几轮即可让过。
+    """
+    import time
+
+    from sqlalchemy.exc import OperationalError
+
+    for attempt in range(attempts):
+        try:
+            db.commit()
+            return
+        except OperationalError:
+            db.rollback()
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
 
 
 def get_auth_manager() -> AuthManager:

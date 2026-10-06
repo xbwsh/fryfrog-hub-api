@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from fryfrog.core.utils import clean_title, primary_title
@@ -457,6 +458,17 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
         except Exception:
             logger.exception("扫描视频失败: %s", path)
             db.rollback()
+
+        # 周期性提交，让出 SQLite 写锁：整库只在末尾提交一次的话，扫描期间
+        # API 请求（认证中间件每个请求都会 commit）会撞上长事务报
+        # `sqlite3.OperationalError: database is locked` → 500（实测 16 次）。
+        # 扫描是幂等的，中断后下次扫描会重新推导，分批提交不会丢状态。
+        if count % 50 == 0:
+            try:
+                db.commit()
+            except OperationalError:
+                logger.debug("扫描中途提交失败（锁争用），继续", exc_info=True)
+                db.rollback()
     db.flush()
     # 本轮没见到的记录：超过宽限期才删；文件回来会在上面清掉 missing_since
     missing_ids = [video.id for video in existing.values() if video.id is not None]
