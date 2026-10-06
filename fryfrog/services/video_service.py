@@ -45,11 +45,48 @@ def _select_show_name(video: Video) -> str:
     return next((name for name in names if name), "Unknown")
 
 
+# 单层文件名的字节上限（ext4/大部分 Linux 文件系统都是 255 **字节**，不是字符）。
+# 中文/日文一个字 3 字节，所以 85 个汉字就到顶了——实测有条 JAV 文件名 284 字节，
+# `get_metadata_dir` 拿它当目录名后 `.exists()` 直接抛
+# `OSError: [Errno 36] File name too long`，详情页 500（见 _safe_exists）。
+FOLDER_NAME_MAX_BYTES = 200
+
+
+def truncate_bytes(text: str, limit: int = FOLDER_NAME_MAX_BYTES) -> str:
+    """按 UTF-8 **字节**截断，且不切断多字节字符。
+
+    留余量（200 而非 255）：调用方还会在后面拼 `第 N 季` / `第 M 集` 等，
+    另外不同文件系统的上限略有差异，留点空间更稳。
+    """
+    raw = text.encode("utf-8")
+    if len(raw) <= limit:
+        return text
+    # errors="ignore" 会丢掉被切断的那个不完整字符，正好实现「不切字符」
+    return raw[:limit].decode("utf-8", errors="ignore").rstrip()
+
+
 def _clean_folder(title: str) -> str:
     # 目录名里不该再出现 SxxExx：季集已由「第 N 季/第 M 集」表达
     text = re.sub(r"(?i)S\d{1,2}\s*E\d{1,3}", " ", clean_title(title))
     cleaned = re.sub(r'[<>:"/\\|?*]', "_", re.sub(r"\s+", " ", text)).strip()
-    return cleaned or "Unknown"
+    cleaned = cleaned or "Unknown"
+    # 必须按字节截断：名字过长时 pathlib 的 exists()/stat() 会抛 OSError，
+    # 而不是返回 False，调用方一个没接住就是 500。
+    return truncate_bytes(cleaned) or "Unknown"
+
+
+def _safe_exists(path: Path) -> bool:
+    """`path.exists()` 的安全版：路径异常时当作"不存在"而不是抛出去。
+
+    `Path.exists()` 只吞 FileNotFoundError 一类，**不吞** OSError(ENAMETOOLONG:
+    File name too long)、权限错误、坏符号链接等。这些在媒体库里都是"正常脏数据"，
+    不该让整个详情页 500。
+    """
+    try:
+        return path.exists()
+    except OSError:
+        logger.debug("路径不可访问，按不存在处理: %s", path, exc_info=True)
+        return False
 
 
 def season_of(video: Video) -> int:
@@ -243,11 +280,14 @@ def local_fanart_candidates(db: Session, video: Video) -> list[Path]:
 def asset_flags(db: Session, video: Video) -> dict:
     video_dir = Path(video.file_path).parent
     base = get_base_name(video.file_name)
+    # 一律走 _safe_exists：媒体库里脏数据很常见（超长名、权限、坏链接），
+    # 一个 OSError 冒出去就是详情页 500。实测 URE-093 那条 284 字节的名字
+    # 让 `get_metadata_dir(...).exists()` 抛 File name too long。
     return {
-        "has_nfo": (video_dir / f"{base}.nfo").exists(),
-        "has_poster": any(p.exists() for p in local_poster_candidates(db, video)),
-        "has_fanart": any(p.exists() for p in local_fanart_candidates(db, video)),
-        "has_metadata_dir": get_metadata_dir(db, video).exists(),
+        "has_nfo": _safe_exists(video_dir / f"{base}.nfo"),
+        "has_poster": any(_safe_exists(p) for p in local_poster_candidates(db, video)),
+        "has_fanart": any(_safe_exists(p) for p in local_fanart_candidates(db, video)),
+        "has_metadata_dir": _safe_exists(get_metadata_dir(db, video)),
     }
 
 
