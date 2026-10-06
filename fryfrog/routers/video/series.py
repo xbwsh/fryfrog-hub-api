@@ -541,6 +541,62 @@ def refresh_series_logo(db: DbSession, id: int):
     )
 
 
+@series_router.post("/{id:int}/nfo")
+def regenerate_series_nfo(db: DbSession, id: int):
+    """手动（重新）生成剧级与季级 NFO。
+
+    写 `<剧根>/tvshow.nfo`（`<tvshow>`）与各 `<季目录>/season.nfo`（`<season>`）。
+    分集 NFO 由扫描/刮削按集生成，不在这里处理。
+    已存在也会覆盖——这是"手动刷新"入口，用于把旧的/错位的 NFO 统一成当前格式。
+    """
+    series = vs.get_series(db, id)
+    if series is None:
+        return ApiResponse.error(f"系列不存在: {id}")
+    episodes = vs.series_videos(db, id)
+    if not episodes:
+        return ApiResponse.error("该剧没有分集，无法定位剧名根目录")
+
+    detail = None
+    if series.tmdb_id:
+        try:
+            from fryfrog.services.tmdb import TmdbClient
+
+            detail = TmdbClient().get_tv(series.tmdb_id)
+        except Exception:
+            logger.debug("取剧详情失败，退回本地字段: %s", id, exc_info=True)
+
+    series_path = assets.generate_series_nfo(db, series, episodes, detail)
+
+    season_paths: list[str] = []
+    seasons_by_number: dict[int, Video] = {}
+    for ep in episodes:
+        seasons_by_number.setdefault(vs.season_of(ep), ep)
+    for season_number, ep in sorted(seasons_by_number.items()):
+        season_info = None
+        if series.tmdb_id:
+            try:
+                from fryfrog.services.tmdb import TmdbClient
+
+                season_info = TmdbClient().get_season(series.tmdb_id, season_number)
+            except Exception:
+                logger.debug("取季信息失败: %s/%s", id, season_number, exc_info=True)
+        if not season_info:
+            # 拿不到 TMDB 季信息也要写：至少留下季号，便于播放器识别
+            season_info = {"season_number": season_number}
+        path = assets.generate_season_nfo(db, ep, season_info)
+        if path:
+            season_paths.append(path)
+
+    db.commit()
+    return ApiResponse.ok(
+        {
+            "seriesId": id,
+            "seriesNfo": series_path,
+            "seasonNfos": season_paths,
+        }
+    )
+
+
 @series_router.get("/{id:int}/logo-options")
 def get_series_logo_options(db: DbSession, id: int):
     series = vs.get_series(db, id)

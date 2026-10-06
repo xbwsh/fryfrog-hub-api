@@ -466,8 +466,16 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                     from fryfrog.services import video_assets as assets
 
                     assets.ensure_season_poster(db, video)
+                    # 剧级 NFO 也在这里确保：存量剧没有 tvshow.nfo，靠扫描补齐
+                    # （已有则跳过，不写盘、不发请求）。
+                    # 季级 season.nfo 不在这里补——季名只能从 TMDB 季接口拿，
+                    # 每集都发一次请求太浪费；改由刮削时用已取好的 detail 生成，
+                    # 或走 POST /video/series/{id}/nfo 手动刷新。
+                    if video.series is not None:
+                        episodes = vs.series_videos(db, video.series_id)
+                        assets.ensure_series_nfo(db, video.series, episodes or [video])
                 except Exception:
-                    logger.debug("确保季海报失败: %s", path, exc_info=True)
+                    logger.debug("确保剧/季素材失败: %s", path, exc_info=True)
         except Exception:
             logger.exception("扫描视频失败: %s", path)
             db.rollback()

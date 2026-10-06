@@ -503,10 +503,154 @@ def generate_nfo(db: Session, video: Video) -> str | None:
         return None
 
 
+# -------------------- 剧级 / 季级 NFO --------------------
+#
+# NFO 分三层，各层根元素不同，播放器按「固定文件名 + 固定根标签」解析，
+# 因此**不能**用一个文件装下所有季集：
+#   <剧根>/tvshow.nfo      <tvshow>         剧级（Emby 靠它识别剧）
+#   <季目录>/season.nfo    <season>         季级（季名/季简介，可选但能存住季名）
+#   <分集目录>/<片名>.nfo  <episodedetails> 分集级（_build_nfo 已生成）
+
+def build_series_nfo(series, detail: dict | None = None, sample: Video | None = None) -> str:
+    """剧根 tvshow.nfo 内容。
+
+    数据来源优先级：TMDB 详情（最全）→ 系列行 → 抽样分集。
+    注意 `actors` / `genre` / `vote_count` **只存在于 Video（分集行），
+    VideoSeries 没有这几列**，所以要用 sample 兜底而不是读 series。
+    """
+    d = detail or {}
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',
+        "<tvshow>\n",
+        _tag("title", d.get("name") or series.title),
+        _tag("originaltitle", d.get("original_name") or series.original_title),
+        _tag("plot", d.get("overview") or series.overview),
+        _tag("year", series.year or (d.get("first_air_date") or "")[:4]),
+        _tag("premiered", d.get("first_air_date") or series.release_date),
+        _tag("rating", d.get("vote_average") or series.rating),
+        _tag("votes", d.get("vote_count") or getattr(sample, "vote_count", None)),
+        _tag("status", d.get("status") or series.status),
+        _tag("mpaa", "NC-17" if series.is_adult else "PG"),
+    ]
+    genres = [g.get("name") for g in (d.get("genres") or []) if g.get("name")]
+    if not genres:
+        raw = getattr(sample, "genre", None) or ""
+        genres = [g.strip() for g in str(raw).split(",") if g.strip()]
+    for name in genres:
+        parts.append(_tag("genre", name))
+    studios = [c.get("name") for c in (d.get("production_companies") or []) if c.get("name")]
+    for name in studios[:3]:
+        parts.append(_tag("studio", name))
+    tmdb_id = d.get("id") or series.tmdb_id
+    if tmdb_id:
+        parts.append(f'  <uniqueid type="tmdb" default="true">{tmdb_id}</uniqueid>\n')
+    imdb = (d.get("external_ids") or {}).get("imdb_id") or series.imdb_id
+    if imdb:
+        parts.append(f'  <uniqueid type="imdb">{_xml_escape(imdb)}</uniqueid>\n')
+    actors = getattr(sample, "actors", None) or ""
+    for actor_name in [a.strip() for a in actors.split(",") if a.strip()]:
+        parts.append(f"  <actor>\n    <name>{_xml_escape(actor_name)}</name>\n  </actor>\n")
+    parts.append("</tvshow>\n")
+    return "".join(parts)
+
+
+def build_season_nfo(season: dict) -> str:
+    """季目录 season.nfo 内容。
+
+    唯一价值是存住**季名**（TMDB 的 `夏日的结束` 这类副标题，库里没有字段可放）
+    与季简介；季号/季海报本来就能从目录名与 tvshow-poster.jpg 得到。
+    """
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',
+        "<season>\n",
+        _tag("seasonnumber", season.get("season_number")),
+        _tag("title", season.get("name")),
+        _tag("plot", season.get("overview")),
+        _tag("premiered", season.get("air_date")),
+    ]
+    if season.get("poster_path"):
+        parts.append(_tag("poster", "tvshow-poster.jpg"))
+    parts.append("</season>\n")
+    return "".join(parts)
+
+
+def generate_series_nfo(
+    db: Session, series, episodes: list[Video], detail: dict | None = None
+) -> str | None:
+    """写剧根 tvshow.nfo。没有分集（拿不到剧名根目录）时不写。"""
+    if series is None or not episodes:
+        return None
+    from fryfrog.services import video_service as vs
+
+    roots = vs.series_root_candidates(db, episodes)
+    if not roots:
+        return None
+    target = roots[0] / "tvshow.nfo"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            build_series_nfo(series, detail, sample=episodes[0]), encoding="utf-8"
+        )
+        return str(target)
+    except Exception:
+        logger.debug("生成剧级 NFO 失败: %s", target, exc_info=True)
+        return None
+
+
+def generate_season_nfo(db: Session, video: Video, season: dict) -> str | None:
+    """写季目录 season.nfo。"""
+    season_dir = get_season_dir(db, video)
+    if season_dir is None:
+        return None
+    target = season_dir / "season.nfo"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(build_season_nfo(season), encoding="utf-8")
+        return str(target)
+    except Exception:
+        logger.debug("生成季级 NFO 失败: %s", target, exc_info=True)
+        return None
+
+
+def ensure_series_nfo(
+    db: Session, series, episodes: list[Video], detail: dict | None = None
+) -> tuple[str | None, bool]:
+    """确保剧根有 tvshow.nfo（缺则补）。返回 (路径, 是否新建)。
+
+    存量剧没有这个文件，靠扫描时调用补齐；已有则跳过，不做无谓的写盘。
+    """
+    if series is None or not episodes:
+        return None, False
+    from fryfrog.services import video_service as vs
+
+    roots = vs.series_root_candidates(db, episodes)
+    if not roots:
+        return None, False
+    target = roots[0] / "tvshow.nfo"
+    if target.is_file():
+        return str(target), False
+    path = generate_series_nfo(db, series, episodes, detail)
+    return path, path is not None
+
+
+def _xml_escape(value) -> str:
+    """XML 文本转义。
+
+    简介/标题里出现 `&`、`<`、`>` 时未转义会让整个 NFO 变成非法 XML，
+    播放器直接解析失败——这类字符在番剧简介（`&`、`〜`、`<3`）里并不罕见。
+    """
+    text = str(value)
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def _tag(name: str, value) -> str:
     if value is None or value == "":
         return ""
-    return f"  <{name}>{value}</{name}>\n"
+    return f"  <{name}>{_xml_escape(value)}</{name}>\n"
 
 
 def _build_nfo(video: Video) -> str:
@@ -683,7 +827,7 @@ def download_series_root_art(
     """
     from fryfrog.services.tmdb import TmdbClient
 
-    result = {"poster": False, "fanart": False}
+    result = {"poster": False, "fanart": False, "nfo": False, "seasons": 0}
     root = get_series_root_dir(db, episodes)
     if root is None or not series.tmdb_id:
         return result
@@ -706,6 +850,30 @@ def download_series_root_art(
         target = root / "tvshow-fanart.jpg"
         if download_image(_full_image_url(backdrop_url), target, force=True):
             result["fanart"] = True
+
+    # 剧级 NFO 与总海报/总横屏同层：剧根 tvshow.nfo。
+    # 存量剧没有这个文件，重装/换库后剧级绑定与简介就恢复不了（只存在数据库里）。
+    if generate_series_nfo(db, series, episodes, detail) is not None:
+        result["nfo"] = True
+
+    # 季级 NFO：直接复用 detail 里已带的 seasons（含季名/季简介），零额外请求。
+    # 季名（TMDB 的 `夏日的结束` 这类副标题）库里没有字段可放，只有这里能存住。
+    seasons_info = {
+        s.get("season_number"): s
+        for s in (detail.get("seasons") or [])
+        if s.get("season_number") is not None
+    }
+    written_seasons: set[int] = set()
+    for ep in episodes:
+        number = season_of(ep)
+        if number in written_seasons:
+            continue
+        info = seasons_info.get(number)
+        if info is None:
+            continue
+        if generate_season_nfo(db, ep, info) is not None:
+            written_seasons.add(number)
+    result["seasons"] = len(written_seasons)
 
     db.flush()
     return result
