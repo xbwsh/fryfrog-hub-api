@@ -77,6 +77,53 @@ def test_inotify_mode_skips_full_tree_walk(tmp_path, monkeypatch):
     assert worker._inventory == {}, "也不该维护轮询清单"
 
 
+def test_self_writes_during_scan_do_not_retrigger(tmp_path, monkeypatch):
+    """扫描自己写的封面/NFO 不能反过来触发下一轮扫描（自触发死循环）。
+
+    实测故障：扫描写素材 → inotify 事件 → 去抖后再扫，每 ~54 秒跑一轮全库。
+    """
+    db, lib, fired = _setup(tmp_path, monkeypatch)
+    (tmp_path / "a.mp4").write_bytes(b"x")
+
+    worker = watcher.FileWatcher()
+    worker._event = None  # 不需要真 inotify，直接喂事件
+    worker._event_roots = {lib.path}
+    worker._watch_paths[7] = lib.path
+    monkeypatch.setattr(watcher.time, "time", lambda: 1000.0)
+
+    # 非扫描期：事件应进入去抖队列
+    worker._handle_event(7, watcher.IN_CREATE, "a-poster.jpg")
+    assert lib.path in worker._pending, "正常事件必须排进去抖"
+    worker._pending.clear()
+
+    # 扫描期间：同样的事件必须被丢弃
+    worker.begin_scan()
+    worker._handle_event(7, watcher.IN_CREATE, "a-poster.jpg")
+    worker._handle_event(7, watcher.IN_CLOSE_WRITE, "a.nfo")
+    worker._handle_event(7, watcher.IN_DELETE, "old.jpg")
+    assert worker._pending == {}, "扫描期间的写入是扫描自己造成的，不能触发重扫"
+    assert worker._pending_delete == {}
+    worker.end_scan()
+
+    # 扫描结束后：新事件重新生效
+    worker._handle_event(7, watcher.IN_CREATE, "b.mp4")
+    assert lib.path in worker._pending, "扫描结束后的新事件要正常处理"
+    assert fired == []
+
+
+def test_scanning_counter_balanced(tmp_path, monkeypatch):
+    """begin/end 必须配平，否则事件会被永久忽略。"""
+    worker = watcher.FileWatcher()
+    worker.begin_scan()
+    worker.begin_scan()
+    worker.end_scan()
+    assert worker._scanning == 1
+    worker.end_scan()
+    assert worker._scanning == 0
+    worker.end_scan()
+    assert worker._scanning == 0, "多余的 end 不能把计数压成负数"
+
+
 def test_polling_mode_detects_added_and_removed(tmp_path, monkeypatch):
     """inotify 不可用（网络盘/Windows）：退回轮询，仍能发现新增与删除。"""
     db, lib, fired = _setup(tmp_path, monkeypatch)

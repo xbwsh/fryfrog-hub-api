@@ -397,6 +397,8 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
 def generate_nfo(db: Session, video: Video) -> str | None:
     try:
         nfo_path = get_nfo_path(db, video)
+        # 目录可能已被清理（空壳素材目录回收、视频被搬移），写前先补建
+        nfo_path.parent.mkdir(parents=True, exist_ok=True)
         nfo_path.write_text(_build_nfo(video), encoding="utf-8")
         return str(nfo_path)
     except Exception:
@@ -931,6 +933,9 @@ def upgrade_legacy_assets(db: Session, video: Video) -> None:
 
 def _migrate_legacy_files(legacy: Path, video_dir: Path, base: str) -> None:
     """老位置素材按固定命名规则搬到视频目录；目标已存在时删除旧副本。"""
+    if not video_dir.is_dir():
+        # 视频被归置到新目录后可能还没建出来，先补建再搬
+        video_dir.mkdir(parents=True, exist_ok=True)
     for src_name, dst_name in (
         (f"{base}.nfo", f"{base}.nfo"),
         (f"{base}-poster.jpg", "poster.jpg"),

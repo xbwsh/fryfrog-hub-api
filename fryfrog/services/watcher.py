@@ -91,6 +91,8 @@ class FileWatcher:
         self._watch_paths: dict[int, str] = {}
         self._event_roots: set[str] = set()
         self._next_poll = 0.0
+        # 正在执行的扫描数：>0 期间的文件事件视为扫描自身写入，忽略
+        self._scanning = 0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -126,6 +128,36 @@ class FileWatcher:
             except Exception:
                 logger.exception("file watcher failed")
                 self._stop.wait(EVENT_WAIT_SECONDS)
+
+    def begin_scan(self) -> None:
+        """扫描开始：这期间产生的文件事件多半是扫描自己写封面/NFO 造成的。
+
+        不做这个隔离会形成自触发死循环——扫描写素材 → inotify 事件 → 去抖后
+        再扫，实测每 ~54 秒就跑一轮全库（105 轮/2 小时、4500+ 次 TMDB 请求）。
+        """
+        self._scanning += 1
+
+    def end_scan(self) -> None:
+        """扫描结束：丢弃扫描期间的事件积压，只对之后的新事件做去抖。"""
+        self._scanning = max(0, self._scanning - 1)
+        if self._scanning == 0 and self._event is not None:
+            self._drain_events()
+
+    def _drain_events(self) -> None:
+        if self._event is None:
+            return
+        fd, _ = self._event
+        dropped = 0
+        while True:
+            try:
+                data = os.read(fd, _EVENT_BUFFER_SIZE)
+            except (BlockingIOError, OSError):
+                break
+            if not data:
+                break
+            dropped += len(data)
+        if dropped:
+            logger.info("丢弃扫描自身产生的事件 %d 字节", dropped)
 
     def _wait_for_events(self, timeout: float) -> None:
         if self._event is None:
@@ -274,6 +306,9 @@ class FileWatcher:
 
     def _handle_event(self, wd: int, mask: int, name: str) -> None:
         now = time.time()
+        if self._scanning:
+            # 扫描期间的写入是扫描自己造成的，直接忽略（否则自触发死循环）
+            return
         if mask & IN_Q_OVERFLOW:
             for root in self._event_roots:
                 self._pending[root] = now + DEBOUNCE_SECONDS
@@ -313,10 +348,13 @@ class FileWatcher:
         if lib is None:
             return
         logger.info("[FileWatcher] 触发扫描: %s (%s)", lib.name, lib.type)
+        self.begin_scan()
         try:
             scan_library(session, lib)
         except Exception:
             logger.exception("热监听扫描失败: %s", root)
+        finally:
+            self.end_scan()
 
 
 _watcher: FileWatcher | None = None
