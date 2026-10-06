@@ -923,22 +923,11 @@ def tmdb_image_options(
     return {}
 
 
-def _series_local_roots(episodes: list[Video], library_path: str | None) -> list[Path]:
-    """剧名级目录候选（真实媒体布局优先，其次按库根重建）。
+def _series_local_roots(db: Session, episodes: list[Video]) -> list[Path]:
+    """剧名级目录候选，走既有约定（get_metadata_dir 重建路径 + 同名媒体旁根）。"""
+    from fryfrog.services import video_service as vs
 
-    实际目录是 `<lib>/<剧名>/第 N 季/…`，而 get_metadata_dir 重建的是
-    `<lib>/<剧名>/第 N 季/第 M 集/`——两者层级不同，所以这里从文件路径推。
-    """
-    roots: list[Path] = []
-    if episodes:
-        try:
-            roots.append(Path(episodes[0].file_path).parent.parent)
-        except Exception:
-            pass
-    if library_path:
-        roots.append(Path(library_path))
-    seen: set[str] = set()
-    return [r for r in roots if not (str(r) in seen or seen.add(str(r)))]
+    return vs.series_root_candidates(db, episodes)
 
 
 def apply_tmdb_image(
@@ -951,20 +940,19 @@ def apply_tmdb_image(
 ) -> Path | None:
     """把选定的 TMDB 图落到对应层级的本地位置，返回落地路径。
 
-    落盘命名沿用既有约定（见 find_shared_vertical_poster / download_series_root_art）：
+    落盘命名与目录沿用既有约定（见 find_shared_vertical_poster /
+    download_series_root_art / series_root_candidates）：
       总览 → `<剧名根>/tvshow-poster.jpg` · `tvshow-fanart.jpg`
       季   → `<季目录>/tvshow-poster.jpg`
       单集 → `<分集目录>/poster.jpg` · `fanart.jpg`
+    首个候选不存在时退回下一个候选目录（例如剧名与目录名不一致的情况）。
     """
     if not file_path or level not in IMAGE_LEVELS or kind not in IMAGE_KINDS:
         return None
 
-    from fryfrog.models.library import MediaLibrary
-
-    library_path = None
-    if video.library_id is not None:
-        lib = db.get(MediaLibrary, video.library_id)
-        library_path = lib.path if lib else None
+    name_for = lambda k: (  # noqa: E731
+        "tvshow-fanart.jpg" if k == "backdrop" else "tvshow-poster.jpg"
+    )
 
     target: Path | None = None
     if level == "episode":
@@ -972,18 +960,13 @@ def apply_tmdb_image(
     elif level == "season":
         season_dir = get_season_dir(db, video)
         if season_dir:
-            target = season_dir / (
-                "tvshow-fanart.jpg" if kind == "backdrop" else "tvshow-poster.jpg"
-            )
+            target = season_dir / name_for(kind)
     else:  # series
-        roots = _series_local_roots(episodes or [video], library_path)
+        roots = _series_local_roots(db, episodes or [video])
         if roots:
-            name = "tvshow-fanart.jpg" if kind == "backdrop" else "tvshow-poster.jpg"
-            target = roots[0] / name
-            for root in roots:
-                if (root / name).is_file():
-                    target = root / name
-                    break
+            name = name_for(kind)
+            # 优先已存在的那一份（可能在上次写的目录里），否则用首个候选
+            target = next((r / name for r in roots if (r / name).is_file()), roots[0] / name)
 
     if target is None:
         return None

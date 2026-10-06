@@ -158,7 +158,11 @@ def get_series_root_dir(db: Session, episodes: list[Video]) -> Path | None:
 
 
 def series_root_candidates(db: Session, episodes: list[Video]) -> list[Path]:
-    """剧名根目录候选（与季文件夹同级）：重建 metadata 根 + 同名的媒体旁根。"""
+    """剧名根目录候选（与季文件夹同级）：重建 metadata 根 + 同名的媒体旁根。
+
+    只在两边**目录名一致**时追加媒体旁根：整理后结构（剧名/第 1 季/第 1 集/）
+    的父级是季目录而非剧根，名称比对能挡住它被误当剧根。
+    """
     if not episodes:
         return []
     show_root = get_metadata_dir(db, episodes[0]).parent.parent
