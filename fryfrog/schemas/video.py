@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -176,6 +177,8 @@ class VideoDTO(BaseModel):
     # 与 metadataSource 的区别：metadataSource 会被后续 TMDB 刮削改成 "tmdb"，
     # 这个字段一旦写入就保留，前端据此显示「NFO 回填」标识。
     nfoBackfilledAt: datetime | None = None
+    # 文件已不在磁盘上（等宽限期清理的残留行）
+    fileMissing: bool | None = None
     isSeries: bool | None = None
     libraryId: int | None = None
     seriesId: int | None = None
@@ -238,6 +241,7 @@ class VideoDTO(BaseModel):
             hasFanart=has_fanart,
             scraped=video.tmdb_id is not None,
             nfoBackfilledAt=video.nfo_backfilled_at,
+            fileMissing=not Path(video.file_path).exists(),
             isSeries=video.is_series,
             isAdult=video.is_adult,
             libraryId=video.library_id,
@@ -331,8 +335,12 @@ class SeriesDTO(BaseModel):
             favorite=favorite,
             episodeCount=len(episodes),
             nfoBackfilledAt=getattr(series, "nfo_backfilled_at", None)
-            or next(                (getattr(e, "nfoBackfilledAt", None) for e in episodes
-                 if getattr(e, "nfoBackfilledAt", None)),
+            or next(
+                (
+                    getattr(e, "nfoBackfilledAt", None)
+                    for e in episodes
+                    if getattr(e, "nfoBackfilledAt", None)
+                ),
                 None,
             ),
             seasons=seasons,
@@ -390,6 +398,9 @@ class SeriesListDTO(BaseModel):
     hasAdultEpisodes: bool | None = None
     # 本地 NFO 回填过绑定的时间（NULL = 非 NFO 来源）；见 VideoDTO 同名注释
     nfoBackfilledAt: datetime | None = None
+    # 文件已不在磁盘上（等宽限期清理的残留行）。前端据此置灰并提示，
+    # 避免改完名后新旧条目并存时误点开旧的那条。
+    fileMissing: bool | None = None
     resolutions: list[str] = []
 
     @classmethod
@@ -398,6 +409,9 @@ class SeriesListDTO(BaseModel):
 
         sid = series.id
         labels = [resolution_label(getattr(v, "resolution", None)) for v in episodes]
+        # 全部（有分集时）文件都缺失才算这张剧卡失效
+        missing_flags = [not Path(v.file_path).exists() for v in episodes]
+        file_missing = bool(missing_flags) and all(missing_flags)
         # 剧级标记：剧行没有时，看任一「分集自身」是 NFO 回填的（分集 NFO 也会回填）
         series_nfo = getattr(series, "nfo_backfilled_at", None) or next(
             (getattr(v, "nfo_backfilled_at", None) for v in episodes
@@ -423,6 +437,7 @@ class SeriesListDTO(BaseModel):
             favorite=favorite,
             hasAdultEpisodes=any(bool(getattr(v, "is_adult", False)) for v in episodes),
             nfoBackfilledAt=series_nfo,
+            fileMissing=file_missing,
             resolutions=collect_resolutions(labels),
         )
 
@@ -450,6 +465,7 @@ class SeriesListDTO(BaseModel):
             favorite=favorite,
             hasAdultEpisodes=bool(video.is_adult),
             nfoBackfilledAt=video.nfo_backfilled_at,
+            fileMissing=not Path(video.file_path).exists(),
             resolutions=[label] if label else [],
         )
 

@@ -208,7 +208,13 @@ def _apply_tv_detail(db: Session, video: Video, detail: dict, client: TmdbClient
 
 def _apply_episode_detail(db: Session, video: Video, show_detail: dict, client: TmdbClient) -> None:
     """有季/集号时拉分集元数据，覆盖集标题/简介/时长，不覆盖剧集整体字段。"""
-    if not video.season_number or not video.episode_number or not show_detail.get("id"):
+    # 不能用 `not video.season_number`：第 0 季（特别篇）是 0，falsy 会被直接
+    # 跳过，特别篇的集标题/简介/时长/剧照就永远刮不到。
+    if (
+        video.season_number is None
+        or video.episode_number is None
+        or not show_detail.get("id")
+    ):
         return
     ep = client.get_episode(show_detail["id"], video.season_number, video.episode_number)
     if not ep:
