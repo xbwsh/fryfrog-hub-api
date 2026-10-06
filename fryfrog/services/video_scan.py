@@ -364,7 +364,12 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             if is_new or not video.original_file_name:
                 video.original_file_name = path.name
             video.library_id = library.id
-            video.is_adult = bool(library.is_adult)
+            # 只升不降：库级 is_adult 是用户自己声明的，应能自愈已有记录
+            # （历史数据里同库的剧级 true、分集 false，就是这里"每次赋值"和
+            # 刮削里 `= bool(detail.adult)` 一起造成的）。也不能降级，否则会
+            # 抹掉 NFO 里 `<adult>true</adult>` 带来的标记。
+            if library.is_adult:
+                video.is_adult = True
             video.format = path.suffix.lstrip(".").upper() or None
             video.last_seen_at = scanned_at
             # 文件回来了：清掉缺失标记（宽限期内删行不会发生）

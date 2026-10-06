@@ -533,6 +533,16 @@ def generate_nfo(db: Session, video: Video) -> str | None:
 #   <季目录>/season.nfo    <season>         季级（季名/季简介，可选但能存住季名）
 #   <分集目录>/<片名>.nfo  <episodedetails> 分集级（_build_nfo 已生成）
 
+def _adult_tag(is_adult) -> str:
+    """只在**是**成人内容时输出 `<adult>true</adult>`。
+
+    刻意不写 `<adult>false</adult>`：解析端（parse_nfo / parse_series_nfo）是
+    「只升不降」，显式 false 不改变行为却会引入"这份 NFO 声明它不是成人"的
+    语义——而我们的数据来源（库级设置）本来就只做升级，不做出降级判断。
+    """
+    return _tag("adult", "true") if is_adult else ""
+
+
 def build_series_nfo(series, detail: dict | None = None, sample: Video | None = None) -> str:
     """剧根 tvshow.nfo 内容。
 
@@ -553,6 +563,7 @@ def build_series_nfo(series, detail: dict | None = None, sample: Video | None = 
         _tag("votes", d.get("vote_count") or getattr(sample, "vote_count", None)),
         _tag("status", d.get("status") or series.status),
         _tag("mpaa", "NC-17" if series.is_adult else "PG"),
+        _adult_tag(series.is_adult or getattr(sample, "is_adult", False)),
     ]
     genres = [g.get("name") for g in (d.get("genres") or []) if g.get("name")]
     if not genres:
@@ -732,6 +743,7 @@ def _build_nfo(video: Video) -> str:
         _tag("premiered", video.release_date),
         _tag("runtime", video.duration_minutes),
         _tag("mpaa", "NC-17" if video.is_adult else "PG"),
+        _adult_tag(video.is_adult),
         _tag("studio", video.studio),
     ]
     if video.tmdb_id:

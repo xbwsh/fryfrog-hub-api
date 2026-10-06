@@ -122,7 +122,11 @@ def _apply_movie_detail(video: Video, detail: dict, client: TmdbClient) -> None:
     video.poster_url = client.image_url(detail.get("poster_path"))
     video.backdrop_url = client.image_url(detail.get("backdrop_path"))
     video.imdb_id = detail.get("imdb_id")
-    video.is_adult = bool(detail.get("adult"))
+    # 只升不降：库级 is_adult 是用户自己声明的（扫描时写入），比 TMDB 的
+    # `adult` 标记权威。JAV/成人番在 TMDB 上通常 adult=false，直接赋值会把
+    # 库级设置改回 false（实测 series 94 剧级 true、其分集 false）。
+    if detail.get("adult"):
+        video.is_adult = True
     video.metadata_source = "tmdb"
     video.metadata_updated_at = datetime.now()
     video.status = detail.get("status")
@@ -159,7 +163,9 @@ def _apply_tv_detail(db: Session, video: Video, detail: dict, client: TmdbClient
     video.poster_url = client.image_url(detail.get("poster_path"))
     video.backdrop_url = client.image_url(detail.get("backdrop_path"))
     video.imdb_id = (detail.get("external_ids") or {}).get("imdb_id")
-    video.is_adult = bool(detail.get("adult"))
+    # 同 _apply_movie_detail：只升不降，库级声明优先于 TMDB 的 adult 标记
+    if detail.get("adult"):
+        video.is_adult = True
     video.metadata_source = "tmdb"
     video.metadata_updated_at = datetime.now()
     video.status = detail.get("status")
@@ -191,7 +197,8 @@ def _apply_tv_detail(db: Session, video: Video, detail: dict, client: TmdbClient
     series.poster_url = video.poster_url
     series.backdrop_url = video.backdrop_url
     series.status = detail.get("status")
-    series.is_adult = video.is_adult
+    # 只升不降：整剧只要有一集属于成人库，剧级就该是成人
+    series.is_adult = bool(series.is_adult) or bool(video.is_adult)
     series.metadata_source = "tmdb"
     series.number_of_seasons = detail.get("number_of_seasons")
     series.total_episodes = detail.get("number_of_episodes")
