@@ -70,7 +70,8 @@ def _load_series_detail(db: Session, series: VideoSeries, favorite: bool) -> dic
     for e in episodes:
         raw = _to_video_dto_with(db, e, prog_map.get(e.id), fav_map.get(e.id, False))
         dtos.append(VideoDTO(**raw))
-    return SeriesDTO.from_entity(series, dtos, favorite).model_dump()
+    # 传 ORM 分集（带完整 file_path）以便识别本地 tvshow-logo
+    return SeriesDTO.from_entity(series, dtos, favorite, file_source=episodes).model_dump()
 
 
 # ==================== 系列 ====================

@@ -265,7 +265,13 @@ class SeriesDTO(BaseModel):
     resolutions: list[str] = []
 
     @classmethod
-    def from_entity(cls, series, episodes: list[VideoDTO], favorite: bool) -> "SeriesDTO":
+    def from_entity(
+        cls,
+        series,
+        episodes: list[VideoDTO],
+        favorite: bool,
+        file_source=None,
+    ) -> "SeriesDTO":
         from fryfrog.core.signer import sign
 
         sid = series.id
@@ -281,7 +287,7 @@ class SeriesDTO(BaseModel):
             title=series.title,
             coverUrl=sign(f"/api/v1/video/series/{sid}/cover"),
             fanartUrl=sign(f"/api/v1/video/series/{sid}/fanart"),
-            logoUrl=_series_logo_url(series),
+            logoUrl=_series_logo_url(series, file_source or episodes),
             originalTitle=series.original_title,
             overview=series.overview,
             mediaType=series.media_type,
@@ -363,7 +369,7 @@ class SeriesListDTO(BaseModel):
             title=series.title,
             coverUrl=sign(f"/api/v1/video/series/{sid}/cover"),
             fanartUrl=sign(f"/api/v1/video/series/{sid}/fanart"),
-            logoUrl=_series_logo_url(series),
+            logoUrl=_series_logo_url(series, episodes),
             originalTitle=series.original_title,
             mediaType=series.media_type,
             rating=series.rating,
@@ -502,7 +508,7 @@ def _video_logo_url(video) -> str | None:
     return None
 
 
-def _series_logo_url(series) -> str | None:
+def _series_logo_url(series, episodes=None) -> str | None:
     from pathlib import Path
 
     from fryfrog.core.signer import sign
@@ -512,10 +518,17 @@ def _series_logo_url(series) -> str | None:
         return sign(f"/api/v1/video/series/{series.id}/logo")
     # 手工放在剧/季目录里的 tvshow-logo.png 也要暴露出来，否则前端拿不到
     # logoUrl，根本不会去请求 /series/{id}/logo（表现为"只有电影有 logo"）。
-    episodes = list(getattr(series, "videos", None) or [])
-    for ep in episodes:
+    #
+    # 注意：VideoSeries 没有 videos 关系；VideoDTO 里也没有文件路径，所以
+    # 调用方**必须**把 ORM 分集（或文件路径字符串）传进来，否则这里无从判断。
+    for item in episodes or ():
+        file_path = getattr(item, "filePath", None) or getattr(item, "file_path", None)
+        if not file_path and isinstance(item, str):
+            file_path = item
+        if not file_path:
+            continue
         try:
-            parent = Path(ep.file_path).parent
+            parent = Path(file_path).parent
         except Exception:
             continue
         for directory in (parent, parent.parent):
