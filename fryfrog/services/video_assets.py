@@ -1320,31 +1320,25 @@ def _series_local_roots(db: Session, episodes: list[Video]) -> list[Path]:
     return vs.series_root_candidates(db, episodes)
 
 
-def apply_tmdb_image(
-    db: Session,
-    video: Video,
-    episodes: list[Video],
-    level: str,
-    kind: str,
-    file_path: str,
+def resolve_image_target(
+    db: Session, video: Video, episodes: list[Video], level: str, kind: str
 ) -> Path | None:
-    """把选定的 TMDB 图落到对应层级的本地位置，返回落地路径。
+    """某一层级 + 类型应落盘的路径（不写盘）。
 
     落盘命名与目录沿用既有约定（见 find_shared_vertical_poster /
     download_series_root_art / series_root_candidates）：
       总览 → `<剧名根>/tvshow-poster.jpg` · `tvshow-fanart.jpg`
-      季   → `<季目录>/tvshow-poster.jpg`
-      单集 → `<分集目录>/poster.jpg` · `fanart.jpg`
-    首个候选不存在时退回下一个候选目录（例如剧名与目录名不一致的情况）。
+      季   → `<季目录>/tvshow-poster.jpg`（横图同名 fanart）
+      单集 → `<分集目录>/poster.jpg`（竖）· `fanart.jpg`（横）
+    抽出来给「应用 TMDB 图」和「保存上传图」共用，避免两处各写一份而漂移。
     """
-    if not file_path or level not in IMAGE_LEVELS or kind not in IMAGE_KINDS:
+    if level not in IMAGE_LEVELS or kind not in IMAGE_KINDS:
         return None
 
     name_for = lambda k: (  # noqa: E731
         "tvshow-fanart.jpg" if k == "backdrop" else "tvshow-poster.jpg"
     )
 
-    target: Path | None = None
     if level == "episode":
         # 分集层只有 still（剧照）和 backdrop，两者都是**横版图**，必须落
         # fanart.jpg。只有 poster 才是竖版。此前写的是
@@ -1352,36 +1346,46 @@ def apply_tmdb_image(
         # poster 分支 → 用户选的剧照被存成竖版 poster.jpg，既没被竖封面用
         # （竖封面走季海报），横屏位置也没更新，等于"设了没生效"。
         vertical = kind == "poster"
-        target = get_poster_path(db, video) if vertical else get_fanart_path(db, video)
-    elif level == "season":
+        return get_poster_path(db, video) if vertical else get_fanart_path(db, video)
+
+    if level == "season":
         season_dir = get_season_dir(db, video)
-        if season_dir:
-            target = season_dir / name_for(kind)
-    else:  # series
-        roots = _series_local_roots(db, episodes or [video])
-        if roots:
-            name = name_for(kind)
-            # 优先已存在的那一份（可能在上次写的目录里），否则用首个候选
-            target = next((r / name for r in roots if (r / name).is_file()), roots[0] / name)
+        return (season_dir / name_for(kind)) if season_dir else None
 
-    if target is None:
+    # series
+    roots = _series_local_roots(db, episodes or [video])
+    if not roots:
         return None
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if not download_image(_full_image_url(file_path), target, force=True):
-        return None
+    name = name_for(kind)
+    # 优先已存在的那一份（可能在上次写的目录里），否则用首个候选
+    return next((r / name for r in roots if (r / name).is_file()), roots[0] / name)
 
-    # 回填 DB 字段，让接口立刻返回新图（签名 URL 由 DTO 层生成）。
-    # 与上面的落盘一致：分集层非 poster 的一律走 backdrop 字段。
+
+def backfill_image_fields(
+    db: Session,
+    video: Video,
+    episodes: list[Video],
+    level: str,
+    kind: str,
+    target: Path,
+    source: str,
+) -> None:
+    """落盘后回填 DB 字段，让接口立刻返回新图（签名 URL 由 DTO 层生成）。
+
+    [source] 写进 `poster_url` / `backdrop_url`：TMDB 图是 `/xxx.jpg` 这种路径，
+    上传图没有远程地址，传空串表示"本地已就位"。
+    与落盘位置保持一致：分集层非 poster 的一律走 backdrop 字段。
+    """
     if level == "episode" and kind != "poster":
-        video.backdrop_url = file_path
+        video.backdrop_url = source or None
         video.backdrop_local_path = str(target)
     elif level == "episode":
-        video.poster_url = file_path
+        video.poster_url = source or None
         video.cover_art_path = str(target)
     elif level == "season":
         # 季海报全季共用：分集竖图指向它，避免各集留私有副本
         for ep in episodes or [video]:
-            ep.poster_url = file_path
+            ep.poster_url = source or None
     else:
         series = db.get(VideoSeries, video.series_id) if video.series_id else None
         if series is not None:
@@ -1391,7 +1395,103 @@ def apply_tmdb_image(
                 series.poster_local_path = str(target)
         for ep in episodes or [video]:
             if kind == "backdrop":
-                ep.backdrop_url = ep.backdrop_url or file_path
+                ep.backdrop_url = ep.backdrop_url or (source or None)
+
+
+def apply_tmdb_image(
+    db: Session,
+    video: Video,
+    episodes: list[Video],
+    level: str,
+    kind: str,
+    file_path: str,
+) -> Path | None:
+    """把选定的 TMDB 图落到对应层级的本地位置，返回落地路径。"""
+    if not file_path:
+        return None
+    target = resolve_image_target(db, video, episodes, level, kind)
+    if target is None:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not download_image(_full_image_url(file_path), target, force=True):
+        return None
+    backfill_image_fields(db, video, episodes, level, kind, target, file_path)
+    db.flush()
+    return target
+
+
+# -------------------- 用户上传封面 --------------------
+
+# 上传限制：只收常见位图；上限取得比较宽松（手机随手拍的原图可能十几 MB），
+# 但必须挡住把视频/压缩包当图片传上来。
+UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+UPLOAD_IMAGE_FORMATS = ("JPEG", "PNG", "WEBP", "BMP", "GIF")
+# 统一转 JPEG 落盘：站点约定这些位置就是 .jpg（playback/Emby 读取端按扩展名走）
+UPLOAD_JPEG_QUALITY = 92
+
+
+class UploadError(Exception):
+    """上传内容不合法（前端可直接把 message 显示给用户）。"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def save_uploaded_cover(
+    db: Session,
+    video: Video,
+    episodes: list[Video],
+    level: str,
+    kind: str,
+    data: bytes,
+) -> Path:
+    """保存用户上传的封面/背景图，返回落盘路径。
+
+    校验：大小、是否为可解析的位图（**按内容判断，不信 content-type**）。
+    规范化：统一转成 JPEG 落盘（目标位置按约定就是 .jpg），同时限制最长边，
+    避免把 8000px 的原图直接写进媒体目录（读取端还要解码）。
+
+    目标位置与「应用 TMDB 图」完全一致，复用 `resolve_image_target` /
+    `backfill_image_fields`，避免两套落盘逻辑漂移。
+    上传图没有远程地址，`source` 传空串。
+    """
+    import io
+
+    from PIL import Image
+
+    if level not in IMAGE_LEVELS:
+        raise UploadError(f"level 必须是 {IMAGE_LEVELS} 之一")
+    if kind not in IMAGE_KINDS:
+        raise UploadError(f"kind 必须是 {IMAGE_KINDS} 之一")
+    if not data:
+        raise UploadError("上传内容为空")
+    if len(data) > UPLOAD_MAX_BYTES:
+        raise UploadError(
+            f"图片过大（{len(data) // 1024 // 1024}MB），上限 {UPLOAD_MAX_BYTES // 1024 // 1024}MB"
+        )
+
+    target = resolve_image_target(db, video, episodes, level, kind)
+    if target is None:
+        raise UploadError("找不到该层级对应的落盘目录")
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if (im.format or "").upper() not in UPLOAD_IMAGE_FORMATS:
+                raise UploadError(f"不支持的图片格式：{im.format or '未知'}")
+            im = im.convert("RGB")  # 去 alpha / 调色板，JPEG 不支持
+            if max(im.size) > 4096:
+                im.thumbnail((4096, 4096), Image.LANCZOS)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            im.save(target, format="JPEG", quality=UPLOAD_JPEG_QUALITY, optimize=True)
+    except UploadError:
+        raise
+    except Exception as exc:
+        # Pillow 对非图片抛 UnidentifiedImageError 等；统一转成可展示的提示
+        logger.debug("上传图片解析失败: %s", video.file_name, exc_info=True)
+        raise UploadError("无法识别为图片，请换一张") from exc
+
+    backfill_image_fields(db, video, episodes, level, kind, target, "")
     db.flush()
     return target
 

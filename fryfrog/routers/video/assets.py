@@ -5,7 +5,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from fryfrog.core.api_response import ApiResponse
@@ -431,6 +431,44 @@ def apply_video_tmdb_image(db: DbSession, id: int, body: TmdbImageSelectRequest)
             "kind": body.kind,
             "applied": body.filePath,
             "path": str(target),
+            "success": True,
+        }
+    )
+
+
+@router.post("/{id:int}/cover-upload")
+async def upload_video_cover(
+    db: DbSession,
+    id: int,
+    file: UploadFile = File(...),
+    level: str = Form("episode"),
+    kind: str = Form("poster"),
+):
+    """上传本地图片作为封面/背景（multipart）。
+
+    level=series（总览）| season（季）| episode（单集）
+    kind=poster（竖版）| backdrop|still（横版）
+
+    落盘位置与「应用 TMDB 图」完全一致；统一规范化为 JPEG。
+    校验失败返回 success=false + 可直接展示的中文提示，前端不必自己翻译。
+    """
+    _require_admin(db)
+    video = vs.get_video(db, id)
+    _require_visible(db, video.library_id, "Video", id)
+    data = await file.read()
+    episodes = vs.series_videos(db, video.series_id) if video.series_id else [video]
+    try:
+        target = assets.save_uploaded_cover(db, video, episodes, level, kind, data)
+    except assets.UploadError as exc:
+        return ApiResponse.error(exc.message)
+    db.commit()
+    return ApiResponse.ok(
+        {
+            "videoId": video.id,
+            "level": level,
+            "kind": kind,
+            "path": str(target),
+            "bytes": len(data),
             "success": True,
         }
     )
