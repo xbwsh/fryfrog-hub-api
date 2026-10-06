@@ -856,9 +856,18 @@ _PREVIEW_SIZE = {"poster": "w342", "backdrop": "w780", "still": "w780"}
 
 
 def _image_options(client, payload: dict | None, kind: str) -> list[dict]:
-    """把 TMDB images 响应里的某类图整理成候选列表（按票数降序）。"""
+    """把 TMDB 图片响应里的某类图整理成候选列表（按票数降序）。
+
+    TMDB 有两种形状，都要兼容：
+    - `/tv/{id}/images` → 顶层直接是 `{posters: [...], backdrops: [...]}`
+    - `...?append_to_response=images` → 包在 `{images: {stills: [...]}}` 里
+    """
     key = {"poster": "posters", "backdrop": "backdrops", "still": "stills"}[kind]
-    raw = [x for x in ((payload or {}).get("images") or {}).get(key) or [] if x.get("file_path")]
+    source = payload or {}
+    nested = source.get("images")
+    if isinstance(nested, dict):
+        source = nested
+    raw = [x for x in (source.get(key) or []) if x.get("file_path")]
     raw.sort(key=lambda x: x.get("vote_count") or 0, reverse=True)
     out = []
     for item in raw:
@@ -917,8 +926,45 @@ def tmdb_image_options(
     if level == "episode":
         if season is None or episode is None:
             return {}
-        payload = client.get_episode_images(series_tmdb_id, season, episode)
-        return {"still": _image_options(client, payload, "still")}
+        payload = client.get_episode_images(tv_id=series_tmdb_id, season=season, episode=episode)
+        stills = _image_options(client, payload, "still")
+        if not stills:
+            # `append_to_response=images` 对单集恒返回 `{"stills": []}`
+            # （TMDB 侧的已知问题，`/episode/{e}/images` 同样为空）。
+            # 但单集详情自带的 still_path 就是网页上那张本集图，直接补上。
+            still_path = (payload or {}).get("still_path")
+            if still_path:
+                stills = [
+                    {
+                        "filePath": still_path,
+                        "url": _proxy_image_url(still_path, size=_PREVIEW_SIZE["still"]),
+                        "width": None,
+                        "height": None,
+                        "voteCount": (payload or {}).get("vote_count"),
+                        "iso6391": None,
+                        "kind": "still",
+                    }
+                ]
+        # TMDB 的单集接口只暴露 stills，没有 backdrops。但单集层的图最终落成
+        # 本集横屏（fanart.jpg），所以把剧集的主背景图也补进来：先给用户一个
+        # 能用的横图备选，而不是只有一张本集剧照。
+        tv_images = client.get_tv_images(series_tmdb_id) or {}
+        primary = [x for x in (tv_images.get("backdrops") or []) if x.get("file_path")]
+        if primary:
+            primary.sort(key=lambda x: x.get("vote_count") or 0, reverse=True)
+            top = primary[0]
+            stills.append(
+                {
+                    "filePath": top["file_path"],
+                    "url": _proxy_image_url(top["file_path"], size=_PREVIEW_SIZE["still"]),
+                    "width": top.get("width"),
+                    "height": top.get("height"),
+                    "voteCount": top.get("vote_count"),
+                    "iso6391": top.get("iso639_1"),
+                    "kind": "still",
+                }
+            )
+        return {"still": stills}
 
     return {}
 

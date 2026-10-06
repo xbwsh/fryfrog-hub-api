@@ -124,16 +124,14 @@ def test_image_options_normalizes_and_sorts(monkeypatch):
     class _FakeClient:
         def get_tv_images(self, tmdb_id):
             return {
-                "images": {
-                    "posters": [
-                        {"file_path": "/low.jpg", "vote_count": 1, "width": 500, "height": 750},
-                        {"file_path": "/high.jpg", "vote_count": 9, "width": 1000, "height": 1500},
-                        {"file_path": None, "vote_count": 99},
-                    ],
-                    "backdrops": [
-                        {"file_path": "/bd.jpg", "vote_count": 3, "width": 1920, "height": 1080},
-                    ],
-                }
+                "posters": [
+                    {"file_path": "/low.jpg", "vote_count": 1, "width": 500, "height": 750},
+                    {"file_path": "/high.jpg", "vote_count": 9, "width": 1000, "height": 1500},
+                    {"file_path": None, "vote_count": 99},
+                ],
+                "backdrops": [
+                    {"file_path": "/bd.jpg", "vote_count": 3, "width": 1920, "height": 1080},
+                ],
             }
 
     monkeypatch.setattr(
@@ -152,3 +150,60 @@ def test_season_and_episode_levels_need_numbers(monkeypatch):
     monkeypatch.setattr("fryfrog.services.tmdb.TmdbClient", lambda: object())
     assert assets.tmdb_image_options(555, "season") == {}
     assert assets.tmdb_image_options(555, "episode", season=1) == {}
+
+
+def test_episode_stills_fall_back_to_episode_still_path(monkeypatch):
+    """单集剧照：TMDB 的 images 附加数据恒为空，必须回退用单集自带 still_path。
+
+    实测（tv=73281 S01E02、tv=1399 S01E01）：
+      `append_to_response=images` → images.stills 为 0
+      `/tv/{id}/season/{s}/episode/{e}/images` → stills 同样为 0
+    但单集详情的 still_path 就是网页上那张本集图，所以只能靠它。
+    """
+
+    class _FakeClient:
+        def get_episode_images(self, tv_id, season, episode):
+            return {
+                "still_path": "/real-still.jpg",
+                "vote_count": 3,
+                "images": {"stills": []},  # 关键：TMDB 这里就是空的
+            }
+
+        def get_tv_images(self, tmdb_id):
+            return {"backdrops": [{"file_path": "/tv-backdrop.jpg", "vote_count": 5}]}
+
+    monkeypatch.setattr("fryfrog.services.tmdb.TmdbClient", lambda: _FakeClient())
+    out = assets.tmdb_image_options(555, "episode", season=1, episode=2)
+    paths = [o["filePath"] for o in out["still"]]
+    assert "/real-still.jpg" in paths, f"没回退到单集 still_path: {paths}"
+    assert out["still"][0]["filePath"] == "/real-still.jpg", "本集剧照应排在最前"
+    assert out["still"][0]["kind"] == "still"
+    assert "size=w780" in out["still"][0]["url"]
+    # 剧集级横图作为备选排在后面（单集层最终也落 fanart.jpg）
+    assert "/tv-backdrop.jpg" in paths
+    assert paths.index("/tv-backdrop.jpg") > paths.index("/real-still.jpg")
+
+
+def test_episode_uses_real_stills_when_tmdb_returns_them(monkeypatch):
+    """若 TMDB 某天恢复了 images.stills，就不要再塞 still_path 兜底。"""
+
+    class _FakeClient:
+        def get_episode_images(self, tv_id, season, episode):
+            return {
+                "still_path": "/fallback.jpg",
+                "images": {
+                    "stills": [
+                        {"file_path": "/a.jpg", "vote_count": 1, "width": 1920, "height": 1080},
+                        {"file_path": "/b.jpg", "vote_count": 9, "width": 1920, "height": 1080},
+                    ]
+                },
+            }
+
+        def get_tv_images(self, tmdb_id):
+            return {}
+
+    monkeypatch.setattr("fryfrog.services.tmdb.TmdbClient", lambda: _FakeClient())
+    out = assets.tmdb_image_options(555, "episode", season=1, episode=2)
+    paths = [o["filePath"] for o in out["still"]]
+    assert paths[:2] == ["/b.jpg", "/a.jpg"], paths  # 按票数降序
+    assert "/fallback.jpg" not in paths, "有真实剧照时不该再兜底"
