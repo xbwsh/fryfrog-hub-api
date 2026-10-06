@@ -15,9 +15,13 @@ services:
       - PROXY_HOST=${PROXY_HOST:-}
       - PROXY_PORT=${PROXY_PORT:-}
       - SUBSONIC_ENCRYPT_KEY=${SUBSONIC_ENCRYPT_KEY:-}
+      # 可选：媒体 URL 签名密钥（64 位 hex）。留空则自动生成到 /data/media_secret.key
+      # 并随下面的 ./db 卷持久化；多副本部署时给同一把。
+      - MEDIA_SECRET_KEY=${MEDIA_SECRET_KEY:-}
       - LOG_HOME=/data/logs
     volumes:
-      # 持久化：SQLite 库 + 日志 + data/media_secret.key（签名密钥，务必备份）
+      # 持久化：SQLite 库 + 日志 + media_secret.key（签名密钥，务必备份——
+      # 丢了会让已签发的图片/封面/流 URL 全部 401）
       - ./db:/data
       # 媒体库：左侧改成你 NAS 上的真实路径；右侧是容器内路径，建库时填它
       - /volume1/media/video:/data/media/video
