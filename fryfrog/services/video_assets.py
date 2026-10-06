@@ -88,6 +88,24 @@ def logo_file_url(local_path: str | None, api_path: str) -> str | None:
     return None
 
 
+# -------------------- 季集号 --------------------
+
+def season_of(video: Video) -> int:
+    """季号，保留第 0 季（特别篇/OVA）。
+
+    不能用 `video.season_number or 1`：`S00E01` → 0，而 `0 or 1` 得 1，
+    会把特别篇错并进第 1 季。TMDB 约定特别篇就是 **Season 0**。
+    """
+    value = video.season_number
+    return 1 if value is None else int(value)
+
+
+def episode_of(video: Video) -> int:
+    """集号，0 也保留（部分素材用 E00 表示整季/特典）。"""
+    value = video.episode_number
+    return 0 if value is None else int(value)
+
+
 # Common logos users drop next to media (Jellyfin / Kodi / Ember style).
 # 除固定名外还会匹配带序号/副本后缀的变体（如 `tvshow-logo (1).png`），
 # 刮削工具改名或手动多存几份时都常见。
@@ -469,8 +487,8 @@ def _build_nfo(video: Video) -> str:
     if video.imdb_id:
         parts.append(f'  <uniqueid type="imdb">{video.imdb_id}</uniqueid>\n')
     if is_tv:
-        season = video.season_number or 1
-        episode = video.episode_number or 1
+        season = season_of(video)
+        episode = episode_of(video)
         parts.append(_tag("season", season))
         parts.append(_tag("episode", episode))
         if video.series_name or (video.series and video.series.title):
@@ -779,8 +797,8 @@ def episode_still_options(
 
         series = db.get(VideoSeries, video.series_id) if video.series_id else None
         tmdb_id = series.tmdb_id if series else None
-    season = video.season_number or 1
-    episode = video.episode_number or 1
+    season = season_of(video)
+    episode = episode_of(video)
     if not tmdb_id:
         return []
 
@@ -919,7 +937,7 @@ def organize_videos(db: Session, videos: list[Video]) -> dict:
     old_parents: set[Path] = set()
     for video in sorted(
         videos,
-        key=lambda v: (v.season_number or 1, v.episode_number or 1),
+        key=lambda v: (season_of(v), episode_of(v)),
     ):
         try:
             target_dir = get_metadata_dir(db, video)

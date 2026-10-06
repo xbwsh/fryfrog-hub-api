@@ -123,7 +123,7 @@ def get_playlist(db: DbSession, id: int, request: Request):
         siblings = vs.series_videos(db, video.series_id)
     elif video.tmdb_id:
         siblings = list(db.scalars(select(Video).where(Video.tmdb_id == video.tmdb_id)).all())
-        siblings.sort(key=lambda v: (v.season_number or 1, v.episode_number or 1))
+        siblings.sort(key=lambda v: (vs.season_of(v), vs.episode_of(v)))
     else:
         siblings = [video]
 

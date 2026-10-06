@@ -456,8 +456,8 @@ def refresh_season_covers(db: DbSession, id: int):
     episodes = vs.series_videos(db, id)
     season_posters = episode_covers = cleaned_posters = actors = 0
     client = TmdbClient()
-    seasons = {e.season_number or 1 for e in episodes}
-    by_ep = {(e.season_number or 1, e.episode_number): e for e in episodes}
+    seasons = {vs.season_of(e) for e in episodes}
+    by_ep = {(vs.season_of(e), e.episode_number): e for e in episodes}
     for sn in seasons:
         season = client.get_season(series.tmdb_id, sn)
         if not season:
@@ -470,7 +470,7 @@ def refresh_season_covers(db: DbSession, id: int):
             still = ep_info.get("still_path")
             target.backdrop_url = client.image_url(still, "original") if still else None
         if season.get("poster_path"):
-            ep = next((e for e in episodes if (e.season_number or 1) == sn), None)
+            ep = next((e for e in episodes if vs.season_of(e) == sn), None)
             if ep:
                 season_dir = vs.get_season_dir(db, ep)
                 if season_dir:

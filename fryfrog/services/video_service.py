@@ -52,9 +52,23 @@ def _clean_folder(title: str) -> str:
     return cleaned or "Unknown"
 
 
+def season_of(video: Video) -> int:
+    """季号，保留第 0 季（特别篇/OVA）。实现见 video_assets。"""
+    from fryfrog.services.video_assets import season_of as _season_of
+
+    return _season_of(video)
+
+
+def episode_of(video: Video) -> int:
+    """集号，0 也保留。实现见 video_assets。"""
+    from fryfrog.services.video_assets import episode_of as _episode_of
+
+    return _episode_of(video)
+
+
 def get_metadata_dir(db: Session, video: Video) -> Path:
-    season = video.season_number or 1
-    episode = video.episode_number or 1
+    season = season_of(video)
+    episode = episode_of(video)
     show = _clean_folder(_select_show_name(video))
     is_tv = video.is_episode
     base: Path | None = None

@@ -262,7 +262,9 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             display = primary_title(path.name) or clean_title(title) or path.stem
             if season is not None or episode is not None:
                 video.is_series = True
-                video.season_number = season or 1
+                # 保留第 0 季：S00Exx 是特别篇/OVA（TMDB 约定 Season 0）。
+                # 写成 `season or 1` 会把 0 吞成 1，特别篇被并进第 1 季。
+                video.season_number = 1 if season is None else season
                 video.episode_number = episode
                 series_name = display
                 video.series_name = series_name
