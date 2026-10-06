@@ -69,3 +69,32 @@ def test_non_lock_error_propagates_immediately():
     with pytest.raises(ValueError):
         commit_with_retry(db, attempts=3)
     assert db.commits == 1, "非锁异常应立刻抛出，不做重试"
+
+
+def test_default_budget_survives_background_burst(monkeypatch):
+    """回归：默认重试预算要够大。
+
+    实测刷新大库时**登录直接 500**：刷新任务持锁，认证中间件 commit 撞锁，
+    原本只重试 3 次（0.2+0.4=0.6 秒）完全不够，刷新跑几分钟就几分钟登不进去。
+    """
+    monkeypatch.setattr("time.sleep", lambda s: None)  # 别真睡，用例要快
+    db = _FakeDB(failures=4)
+    commit_with_retry(db)  # 用默认参数
+    assert db.commits == 5, "默认应能扛住 4 次连续锁失败"
+
+
+def test_backoff_is_bounded(monkeypatch):
+    """退避必须封顶，否则重试预算会拖到几分钟（请求挂死）。"""
+    slept: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+
+    db = _FakeDB(failures=99)
+    with pytest.raises(OperationalError):
+        commit_with_retry(db)
+
+    assert slept, "应有退避"
+    assert max(slept) <= 3.2, f"单次退避应封顶 3.2s，实际 {max(slept)}"
+    total = sum(slept)
+    assert total <= 8, f"总退避应控制在数秒内，实际 {total}"
+    # 指数退避：先小后大
+    assert slept[0] < slept[-1]

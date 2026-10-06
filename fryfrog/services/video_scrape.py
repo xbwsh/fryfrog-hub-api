@@ -503,8 +503,12 @@ def refresh_bound_by_library(
                 failed += 1
         report()
         try:
-            db.commit()
+            # 走重试版提交：裸 commit 撞上别的写者会直接抛错中断整批刷新
+            from fryfrog.core.deps import commit_with_retry
+
+            commit_with_retry(db)
         except Exception:
+            logger.warning("刷新中途提交失败，继续", exc_info=True)
             db.rollback()
 
     for video in solo:

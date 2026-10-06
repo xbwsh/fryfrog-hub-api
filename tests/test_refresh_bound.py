@@ -214,3 +214,57 @@ def test_progress_callback_failure_does_not_break_refresh(env):
     result = scrape.refresh_bound_by_library(db, lib.id, boom)
 
     assert result["refreshed"] == 2, "刷新本身应照常完成"
+
+
+def test_commits_per_unit_not_once_for_whole_batch(env, monkeypatch):
+    """每处理一部剧提交一次——这是「锁占用时间」的关键。
+
+    整批只在末尾提交一次的话，SQLite 写锁被占几分钟，期间认证中间件的 commit
+    撞锁 → 登录 500（实测）。分批提交把单次持锁压到几百毫秒。
+    提交还要走 `commit_with_retry`：裸 commit 撞锁会直接抛错中断整批。
+
+    注：提交次数按「剧」计，不是按集。本用例再加一部剧，才能证明是逐剧而非整批。
+    """
+    from sqlalchemy.orm import Session
+
+    from fryfrog.models.video import VideoSeries
+
+    db, lib, _series, _bound, _unbound, show, _calls = env
+
+    # 再造一部已绑定的剧（单剧场景下"逐剧提交"与"整批提交"都是 1 次，区分不出来）
+    other = VideoSeries(title="第二部剧", tmdb_id=106882, media_type="tv")
+    db.add(other)
+    db.flush()
+    d = show / "第 1 季" / "第 3 集"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "第二部剧 - S01E01.mp4"
+    p.write_bytes(b"x" * 32)
+    db.add(
+        Video(
+            file_path=str(p),
+            file_name=p.name,
+            title="第二部剧 S01E01",
+            library_id=lib.id,
+            series_id=other.id,
+            tmdb_id=106882,
+            media_type="tv",
+            is_series=True,
+            season_number=1,
+            episode_number=1,
+        )
+    )
+    db.commit()
+
+    real_commit = Session.commit
+    commits = {"n": 0}
+
+    def counting_commit(self):
+        commits["n"] += 1
+        return real_commit(self)
+
+    monkeypatch.setattr(Session, "commit", counting_commit)
+
+    result = scrape.refresh_bound_by_library(db, lib.id)
+
+    assert result["refreshed"] == 3, f"应刷新 3 集（原 2 + 新 1），实际 {result}"
+    assert commits["n"] >= 2, f"应逐剧提交，实际只提交 {commits['n']} 次"

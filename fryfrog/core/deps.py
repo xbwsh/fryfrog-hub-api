@@ -170,11 +170,17 @@ def _reject(status: int, message: str):
     )
 
 
-def commit_with_retry(db, *, attempts: int = 3) -> None:
-    """提交，遇 SQLite 写锁争用则短暂退避重试。
+def commit_with_retry(db, *, attempts: int = 5, max_sleep: float = 3.2) -> None:
+    """提交，遇 SQLite 写锁争用则退避重试。
 
-    SQLite 单写者：后台扫描持锁期间，这里（每个请求都会走到）的 commit 会抛
-    `database is locked`，导致正常 API 变成 500。重试几轮即可让过。
+    SQLite 单写者：后台扫描/刷新持锁期间，这里（每个请求都会走到）的 commit 会抛
+    `database is locked`，导致正常 API 变成 500——实测刷新大库时**登录直接 500**，
+    刷新跑几分钟就几分钟登不进去。
+
+    重试预算刻意给足：单次 `db.commit()` 内部已有 SQLite 的 busy 等待
+    （连接 `timeout=30`，即最多等 30 秒），所以每多一次重试就多一个 30 秒窗口。
+    5 次 + 最深 3.2 秒退避，足以熬过「后台每处理一部剧提交一次」造成的短时争用，
+    把硬失败换成就绪前的短暂等待。
     """
     import time
 
@@ -188,7 +194,7 @@ def commit_with_retry(db, *, attempts: int = 3) -> None:
             db.rollback()
             if attempt == attempts - 1:
                 raise
-            time.sleep(0.2 * (attempt + 1))
+            time.sleep(min(0.4 * (2**attempt), max_sleep))
 
 
 def get_auth_manager() -> AuthManager:

@@ -491,7 +491,9 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
         # 扫描是幂等的，中断后下次扫描会重新推导，分批提交不会丢状态。
         if count % 50 == 0:
             try:
-                db.commit()
+                from fryfrog.core.deps import commit_with_retry
+
+                commit_with_retry(db)
             except OperationalError:
                 logger.debug("扫描中途提交失败（锁争用），继续", exc_info=True)
                 db.rollback()
