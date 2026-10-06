@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 TMDB_BASE = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p"
 
+# 图片接口的语言过滤白名单。**`null` 不能省**：绝大多数剧照/横图的
+# iso_639_1 为 null，而 TMDB 在未指定 include_image_language 时会把它们
+# 全部过滤掉（实测单集剧照从 32 张变成 0 张）。
+IMAGE_LANGS = "zh-CN,zh,en,null,ja"
+
 # 网络类瞬时故障：这类失败降级为单行 WARNING，不打完整堆栈——
 # 代理抖动时每个条目都打 traceback 会把日志刷爆（实测两周涨到 203MB）。
 _TRANSIENT_ERRORS = (
@@ -125,31 +130,41 @@ class TmdbClient:
     def get_tv(self, tmdb_id: int) -> dict | None:
         return self._get(f"/tv/{tmdb_id}", {"append_to_response": "credits,images"})
 
-    def get_season(self, tmdb_id: int, season: int) -> dict | None:
-        return self._get(f"/tv/{tmdb_id}/season/{season}")
+    def get_season(self, tv_id: int, season: int) -> dict | None:
+        return self._get(f"/tv/{tv_id}/season/{season}")
 
     def get_episode(self, tv_id: int, season: int, episode: int) -> dict | None:
         return self._get(f"/tv/{tv_id}/season/{season}/episode/{episode}")
 
     def get_episode_images(self, tv_id: int, season: int, episode: int) -> dict | None:
-        """单集详情并附带 images.stills（本集剧照候选），一次请求。"""
+        """单集剧照候选。
+
+        **必须带 include_image_language 且包含 `null`**：TMDB 在未指定语言时会把
+        剧照全部过滤掉（实测 `/tv/73281/season/1/episode/1/images` 无参数返回
+        `{"stills": []}`，带本参数返回 32 张）。绝大多数 still 的 iso_639_1 为
+        null，所以语言列表里必须显式写 `null` 才拿得到。
+        """
         return self._get(
-            f"/tv/{tv_id}/season/{season}/episode/{episode}",
-            {"append_to_response": "images"},
+            f"/tv/{tv_id}/season/{season}/episode/{episode}/images",
+            {"include_image_language": IMAGE_LANGS},
         )
 
     def get_person(self, person_id: int) -> dict | None:
         return self._get(f"/person/{person_id}", {"append_to_response": "combined_credits"})
 
     def get_tv_images(self, tmdb_id: int) -> dict | None:
-        return self._get(f"/tv/{tmdb_id}/images")
+        return self._get(f"/tv/{tmdb_id}/images", {"include_image_language": IMAGE_LANGS})
 
     def get_season_images(self, tv_id: int, season: int) -> dict | None:
         """季图片：posters（季海报）。按 TMDB 文档季支持 posters。"""
-        return self._get(f"/tv/{tv_id}/season/{season}/images")
+        return self._get(
+            f"/tv/{tv_id}/season/{season}/images", {"include_image_language": IMAGE_LANGS}
+        )
 
     def get_movie_images(self, tmdb_id: int) -> dict | None:
-        return self._get(f"/movie/{tmdb_id}/images")
+        return self._get(
+            f"/movie/{tmdb_id}/images", {"include_image_language": IMAGE_LANGS}
+        )
 
     def image_url(self, path: str | None, size: str | None = None) -> str | None:
         if not path:

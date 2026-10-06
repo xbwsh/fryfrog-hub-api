@@ -153,21 +153,14 @@ def test_season_and_episode_levels_need_numbers(monkeypatch):
 
 
 def test_episode_stills_fall_back_to_episode_still_path(monkeypatch):
-    """单集剧照：TMDB 的 images 附加数据恒为空，必须回退用单集自带 still_path。
-
-    实测（tv=73281 S01E02、tv=1399 S01E01）：
-      `append_to_response=images` → images.stills 为 0
-      `/tv/{id}/season/{s}/episode/{e}/images` → stills 同样为 0
-    但单集详情的 still_path 就是网页上那张本集图，所以只能靠它。
-    """
+    """`/images` 返回空时，回退用单集详情自带的 still_path。"""
 
     class _FakeClient:
         def get_episode_images(self, tv_id, season, episode):
-            return {
-                "still_path": "/real-still.jpg",
-                "vote_count": 3,
-                "images": {"stills": []},  # 关键：TMDB 这里就是空的
-            }
+            return {"id": 1, "stills": []}  # 空
+
+        def get_episode(self, tv_id, season, episode):
+            return {"still_path": "/real-still.jpg", "vote_count": 3}
 
         def get_tv_images(self, tmdb_id):
             return {"backdrops": [{"file_path": "/tv-backdrop.jpg", "vote_count": 5}]}
@@ -175,29 +168,31 @@ def test_episode_stills_fall_back_to_episode_still_path(monkeypatch):
     monkeypatch.setattr("fryfrog.services.tmdb.TmdbClient", lambda: _FakeClient())
     out = assets.tmdb_image_options(555, "episode", season=1, episode=2)
     paths = [o["filePath"] for o in out["still"]]
-    assert "/real-still.jpg" in paths, f"没回退到单集 still_path: {paths}"
-    assert out["still"][0]["filePath"] == "/real-still.jpg", "本集剧照应排在最前"
+    assert paths[0] == "/real-still.jpg", f"没回退到单集 still_path: {paths}"
     assert out["still"][0]["kind"] == "still"
     assert "size=w780" in out["still"][0]["url"]
-    # 剧集级横图作为备选排在后面（单集层最终也落 fanart.jpg）
+    # 剧集主横图作为备选排在后面（单集层最终也落 fanart.jpg）
     assert "/tv-backdrop.jpg" in paths
-    assert paths.index("/tv-backdrop.jpg") > paths.index("/real-still.jpg")
+    assert paths.index("/tv-backdrop.jpg") > 0
 
 
-def test_episode_uses_real_stills_when_tmdb_returns_them(monkeypatch):
-    """若 TMDB 某天恢复了 images.stills，就不要再塞 still_path 兜底。"""
+def test_episode_uses_all_real_stills_and_sorts_by_votes(monkeypatch):
+    """`/images` 有剧照时全部用上、按票数降序，且不再塞 still_path 兜底。"""
 
     class _FakeClient:
         def get_episode_images(self, tv_id, season, episode):
+            # `/images` 顶层直接是 stills（实测形状）
             return {
-                "still_path": "/fallback.jpg",
-                "images": {
-                    "stills": [
-                        {"file_path": "/a.jpg", "vote_count": 1, "width": 1920, "height": 1080},
-                        {"file_path": "/b.jpg", "vote_count": 9, "width": 1920, "height": 1080},
-                    ]
-                },
+                "id": 1,
+                "stills": [
+                    {"file_path": "/a.jpg", "vote_count": 1, "width": 1280, "height": 720},
+                    {"file_path": "/b.jpg", "vote_count": 9, "width": 1920, "height": 1080},
+                    {"file_path": "/c.jpg", "vote_count": 4, "width": 1024, "height": 576},
+                ],
             }
+
+        def get_episode(self, tv_id, season, episode):
+            raise AssertionError("有剧照时不该再去取单集详情兜底")
 
         def get_tv_images(self, tmdb_id):
             return {}
@@ -205,5 +200,29 @@ def test_episode_uses_real_stills_when_tmdb_returns_them(monkeypatch):
     monkeypatch.setattr("fryfrog.services.tmdb.TmdbClient", lambda: _FakeClient())
     out = assets.tmdb_image_options(555, "episode", season=1, episode=2)
     paths = [o["filePath"] for o in out["still"]]
-    assert paths[:2] == ["/b.jpg", "/a.jpg"], paths  # 按票数降序
-    assert "/fallback.jpg" not in paths, "有真实剧照时不该再兜底"
+    assert paths == ["/b.jpg", "/c.jpg", "/a.jpg"], paths  # 票数降序
+    assert out["still"][0]["width"] == 1920
+
+
+def test_episode_images_request_carries_language_filter():
+    """回归：不传 include_image_language 时 TMDB 会把剧照全部过滤掉。
+
+    实测 `/tv/73281/season/1/episode/1/images` 无参数返回 `{"stills": []}`，
+    带 `zh-CN,zh,en,null,ja` 返回 32 张。绝大多数 still 的 iso_639_1 为 null，
+    所以语言列表里必须显式含 `null`。
+    """
+    import inspect
+
+    from fryfrog.services import tmdb as tmdb_mod
+
+    src = inspect.getsource(tmdb_mod.TmdbClient.get_episode_images)
+    assert "/images" in src, "单集剧照要用 /images 端点"
+    assert "IMAGE_LANGS" in src, "必须带语言过滤参数"
+    assert "null" in tmdb_mod.IMAGE_LANGS, "语言列表必须包含 null"
+    for name in (
+        "get_tv_images",
+        "get_season_images",
+        "get_movie_images",
+    ):
+        body = inspect.getsource(getattr(tmdb_mod.TmdbClient, name))
+        assert "IMAGE_LANGS" in body, f"{name} 漏了语言过滤参数"

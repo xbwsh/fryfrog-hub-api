@@ -786,47 +786,21 @@ def episode_still_options(
 
     分集横屏在本项目里就是「本集 still」（见 video_scrape._apply_episode_detail），
     但那是自动取一张。这里把 TMDB 的候选列出来让用户挑。
-    `/tv/{id}/season/{s}/episode/{e}?append_to_response=images` 会带 images.stills，
-    一次请求即可；没有候选时退回单集自带的 still_path。
+    实现复用 `tmdb_image_options(level="episode")`，避免两处各写一份取图逻辑
+    （曾经因为漏传 include_image_language 而恒返回空）。
     """
-    from fryfrog.services.tmdb import TmdbClient
-
     tmdb_id = series_tmdb_id
     if tmdb_id is None:
-        from fryfrog.models.video import VideoSeries
-
         series = db.get(VideoSeries, video.series_id) if video.series_id else None
         tmdb_id = series.tmdb_id if series else None
-    season = season_of(video)
-    episode = episode_of(video)
     if not tmdb_id:
         return []
-
-    client = TmdbClient()
-    detail = client.get_episode_images(tmdb_id, season, episode) or {}
-    stills = [
-        s
-        for s in ((detail.get("images") or {}).get("stills") or [])
-        if s.get("file_path")
-    ]
-    if not stills and detail.get("still_path"):
-        stills = [{"file_path": detail["still_path"]}]
-
-    result: list[dict] = []
-    for still in stills:
-        path = still.get("file_path")
-        result.append(
-            {
-                "filePath": path,
-                # 预览用 w780：still 是 16:9，w500 在高分屏上偏糊
-                "url": _proxy_image_url(path, size="w780"),
-                "width": still.get("width"),
-                "height": still.get("height"),
-                "voteCount": still.get("vote_count"),
-                "iso6391": still.get("iso_639_1"),
-            }
-        )
-    return result
+    return tmdb_image_options(
+        tmdb_id,
+        "episode",
+        season=season_of(video),
+        episode=episode_of(video),
+    ).get("still", [])
 
 
 def apply_video_backdrop(db: Session, video: Video, file_path: str) -> bool:
@@ -926,13 +900,15 @@ def tmdb_image_options(
     if level == "episode":
         if season is None or episode is None:
             return {}
+        # 注意：`/images` 必须带 include_image_language（含 null），见 TmdbClient。
         payload = client.get_episode_images(tv_id=series_tmdb_id, season=season, episode=episode)
         stills = _image_options(client, payload, "still")
         if not stills:
-            # `append_to_response=images` 对单集恒返回 `{"stills": []}`
-            # （TMDB 侧的已知问题，`/episode/{e}/images` 同样为空）。
-            # 但单集详情自带的 still_path 就是网页上那张本集图，直接补上。
-            still_path = (payload or {}).get("still_path")
+            # 兜底：拿单集详情自带的 still_path（网页上那张本集图）。
+            # 正常情况下上面的 `/images` 已经能给出全部候选，这里只防 TMDB 抽风。
+            still_path = (client.get_episode(series_tmdb_id, season, episode) or {}).get(
+                "still_path"
+            )
             if still_path:
                 stills = [
                     {
@@ -940,7 +916,7 @@ def tmdb_image_options(
                         "url": _proxy_image_url(still_path, size=_PREVIEW_SIZE["still"]),
                         "width": None,
                         "height": None,
-                        "voteCount": (payload or {}).get("vote_count"),
+                        "voteCount": None,
                         "iso6391": None,
                         "kind": "still",
                     }
