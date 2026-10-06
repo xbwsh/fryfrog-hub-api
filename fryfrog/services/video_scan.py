@@ -455,6 +455,19 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                 from fryfrog.services.video_scrape import scrape_video_if_needed
 
                 scrape_video_if_needed(db, video)
+
+            # 季级素材（竖封面）必须每集都确保，不能只在刮削分支里做：
+            # 改名/换季后的新记录往往已经有 tmdb_id（从旧记录或 NFO 继承），
+            # 自动刮削会被跳过，于是新季目录永远拿不到 tvshow-poster.jpg
+            # （实测 `第 2 季` 就是空的，而 `第 1 季` 有）。
+            # 已有文件时只是一次 is_file() 检查，开销可忽略。
+            if video.is_episode:
+                try:
+                    from fryfrog.services import video_assets as assets
+
+                    assets.ensure_season_poster(db, video)
+                except Exception:
+                    logger.debug("确保季海报失败: %s", path, exc_info=True)
         except Exception:
             logger.exception("扫描视频失败: %s", path)
             db.rollback()

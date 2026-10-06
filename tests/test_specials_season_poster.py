@@ -156,3 +156,63 @@ def test_specials_get_shared_poster_after_ensure(env, monkeypatch):
 
     found = assets.find_shared_vertical_poster(db, ep)
     assert found == season_dir / "tvshow-poster.jpg", f"应命中季海报，实际 {found}"
+
+
+def test_scan_ensures_season_poster_even_when_scrape_skipped(tmp_path, monkeypatch):
+    """关键回归：记录已有 tmdb_id 时自动刮削会被跳过，季海报仍必须补齐。
+
+    实测：`直到夏日结束之前` 的第 2 季在改名/换季后重新扫描，第 2 季目录里
+    没有 tvshow-poster.jpg（第 1 季有）。原因是 ensure_season_poster 当时只写在
+    「enable_scraping and not video.tmdb_id」分支里，而改名后的新记录已带
+    tmdb_id，整段被跳过 → 季素材永远没机会创建。
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from fryfrog.db import Base
+    from fryfrog.models.library import MediaLibrary
+    from fryfrog.models.video import Video, VideoSeries
+    from fryfrog.services.video_scan import scan_video_library
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    lib_root = tmp_path / "media"
+    show = lib_root / "某剧"
+    ep_dir = show / "第 2 季" / "第 1 集"
+    ep_dir.mkdir(parents=True)
+    (ep_dir / "某剧 - S02E01.mp4").write_bytes(b"x" * 64)
+    # 剧根总海报存在（没有季海报时会复制它）
+    (show / "tvshow-poster.jpg").write_bytes(b"ROOT")
+
+    lib = MediaLibrary(
+        name="L",
+        path=str(lib_root),
+        type="VIDEO",
+        enabled=True,
+        # 关掉刮削：否则扫描会去 TMDB 搜片名，无网时 ConnectTimeout 40s。
+        # 这不影响本用例——ensure_season_poster 正是被特意放在刮削分支之外的。
+        enable_scraping=False,
+    )
+    db.add(lib)
+    db.commit()
+
+    # 让 TMDB 相关调用全部失败，确保走不到刮削（也不会联网）
+    monkeypatch.setattr(
+        "fryfrog.services.tmdb.TmdbClient.get_season", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "fryfrog.services.tmdb.TmdbClient.get_tv", lambda *a, **k: None
+    )
+
+    scan_video_library(db, lib)
+    db.commit()
+
+    season_poster = show / "第 2 季" / "tvshow-poster.jpg"
+    assert season_poster.is_file(), "扫描后第 2 季目录应有季海报（复制剧根总海报）"
+    assert season_poster.read_bytes() == b"ROOT"
+
+    rows = db.scalars(select(Video)).all()
+    assert rows and rows[0].season_number == 2, "分集应落在第 2 季"
+    assert db.scalars(select(VideoSeries)).all(), "应建立剧组"
