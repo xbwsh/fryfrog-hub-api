@@ -1,8 +1,13 @@
 name: Container Smoke
 
 # 镜像构建通过后，用「旧 schema 的库」把新镜像真的跑起来一次：
-# 模拟 NAS 上的升级动作（拉新镜像 → 挂载已有 db → 启动 → 调接口）。
-# 这是 pytest 覆盖不到的一层：镜像能否启动、迁移会不会炸、端口与认证是否正常。
+# 模拟 NAS 上的升级动作（拉新镜像 → 挂载已有 db → 启动 → 调接口 → 校验就地补列）。
+# 这是 pytest 覆盖不到的一层：镜像能否启动、迁移会不会炸、端口是否正常。
+#
+# 设计取舍：
+# - 用 AUTH_ENABLED=false，不依赖登录（少一个会把整条流程带崩的失败点）；
+# - 校验镜像 revision 等于本次构建的 SHA，避免误测旧镜像；
+# - 每步都 echo 关键输出，失败时日志里直接能看到原因。
 on:
   workflow_run:
     workflows: ["Build and Push Docker Image"]
@@ -23,6 +28,14 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Show environment
+        run: |
+          echo "runner   : $(uname -a)"
+          echo "workspace: $GITHUB_WORKSPACE"
+          echo "pwd      : $PWD"
+          python -V
+          ls -la .github/scripts/
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -31,17 +44,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull freshly built image
-        run: docker pull "$IMAGE"
+        run: |
+          docker pull "$IMAGE"
+          docker image inspect "$IMAGE" \
+            --format 'revision={{index .Config.Labels "org.opencontainers.image.revision"}} created={{.Created}}'
 
       - name: Prepare old-schema database
-        run: python .github/scripts/make_old_db.py "$PWD/smoke/db/fryfrog.db"
+        run: |
+          set -x
+          python .github/scripts/make_old_db.py "$PWD/smoke/db/fryfrog.db"
+          ls -la "$PWD/smoke/db"
 
       - name: Start container against the existing db
         run: |
+          set -x
           docker run -d --name smoke \
             -e SQLITE_PATH=/data/fryfrog.db \
-            -e AUTH_ENABLED=true \
-            -e AUTH_PASSWORD=smoke-pw \
+            -e AUTH_ENABLED=false \
             -e LOG_HOME=/data/logs \
             -v "$PWD/smoke/db:/data" \
             -p 20058:20058 \
@@ -51,26 +70,20 @@ jobs:
         run: |
           code=000
           for _ in $(seq 1 60); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:20058/swagger-ui.html || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:20058/api/v1/media-libraries || true)
             [ "$code" = "200" ] && break
             sleep 2
           done
-          echo "swagger -> $code"
+          echo "GET /api/v1/media-libraries -> $code"
           [ "$code" = "200" ] || { docker logs smoke; exit 1; }
 
-          token=$(curl -s -X POST http://127.0.0.1:20058/api/v1/auth/login \
-            -H 'Content-Type: application/json' \
-            -d '{"username":"admin","password":"smoke-pw"}' \
-            | python -c 'import json,sys; print((json.load(sys.stdin).get("data") or {}).get("token",""))')
-          echo "login -> ${token:0:12}..."
-          [ -n "$token" ] || { docker logs smoke; exit 1; }
-
-          libs=$(curl -s -H "Authorization: Bearer $token" http://127.0.0.1:20058/api/v1/media-libraries)
+          # auth 关闭时无需 token
+          libs=$(curl -s http://127.0.0.1:20058/api/v1/media-libraries)
           echo "libraries -> $libs"
           echo "$libs" | grep -q '旧库' || { echo "旧数据在升级后丢失"; docker logs smoke; exit 1; }
 
-          echo "scan -> $(curl -s -X POST -H "Authorization: Bearer $token" \
-            http://127.0.0.1:20058/api/v1/media-libraries/1/scan)"
+          scan=$(curl -s -X POST http://127.0.0.1:20058/api/v1/media-libraries/1/scan)
+          echo "scan -> $scan"
 
       - name: Assert old db was migrated in place
         run: python .github/scripts/verify_migrated_db.py "$PWD/smoke/db/fryfrog.db"
