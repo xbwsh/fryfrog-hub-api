@@ -54,6 +54,84 @@ def test_parse_episode_reads_s00():
     assert parse_episode("剧 - S01E01") == ("剧", 1, 1)
 
 
+def test_series_detail_groups_specials_into_own_season():
+    """详情接口必须把特别篇分到「第 0 季」，不能并进第 1 季。
+
+    实测故障：分集自身的 seasonNumber=0 是对的，但 SeriesDTO.from_entity 分桶时
+    用了 `ep.seasonNumber or 1`（camelCase，DTO 字段名），0 被吞成 1 →
+    接口返回「第 1 季（4 集）」，特别篇混在第 1 季里且剧里根本没有「特别篇」季。
+    """
+    from fryfrog.schemas.video import SeriesDTO, VideoDTO
+
+    class _Series:
+        id = 1
+        title = "某剧"
+        original_title = None
+        cover_url = None
+        backdrop_url = None
+        logo_url = None
+        logo_local_path = None
+        poster_local_path = None
+        backdrop_local_path = None
+        overview = None
+        media_type = "tv"
+        tmdb_id = 555
+        rating = None
+        year = 2024
+        release_date = None
+        season_number = 1
+        number_of_seasons = 2
+        total_episodes = 4
+        status = None
+        is_adult = False
+
+    eps = [
+        VideoDTO(id=10, title="特别篇", fileName="S00E01.mp4", seasonNumber=0, episodeNumber=1),
+        VideoDTO(id=11, title="E1", fileName="S01E01.mp4", seasonNumber=1, episodeNumber=1),
+        VideoDTO(id=12, title="E2", fileName="S01E02.mp4", seasonNumber=1, episodeNumber=2),
+    ]
+    detail = SeriesDTO.from_entity(_Series(), eps, False)
+    by_num = {s.seasonNumber: [e.id for e in s.episodes] for s in detail.seasons}
+
+    assert 0 in by_num, f"没有第 0 季（特别篇）: {sorted(by_num)}"
+    assert by_num[0] == [10], f"第 0 季内容不对: {by_num[0]}"
+    assert by_num[1] == [11, 12], f"第 1 季不该混入特别篇: {by_num[1]}"
+
+
+def test_series_detail_defaults_missing_season_to_1():
+    """seasonNumber 缺失（None）才回退第 1 季。"""
+    from fryfrog.schemas.video import SeriesDTO, VideoDTO
+
+    class _Series:
+        id = 1
+        title = "某剧"
+        original_title = None
+        cover_url = None
+        backdrop_url = None
+        logo_url = None
+        logo_local_path = None
+        poster_local_path = None
+        backdrop_local_path = None
+        overview = None
+        media_type = "tv"
+        tmdb_id = 555
+        rating = None
+        year = 2024
+        release_date = None
+        season_number = None
+        number_of_seasons = None
+        total_episodes = None
+        status = None
+        is_adult = False
+
+    detail = SeriesDTO.from_entity(
+        _Series(),
+        [VideoDTO(id=20, title="x", fileName="x.mp4", seasonNumber=None, episodeNumber=1)],
+        False,
+    )
+    assert [s.seasonNumber for s in detail.seasons] == [1]
+
+
 def test_scan_keeps_specials_in_season_zero(tmp_path, monkeypatch):
     """扫描后 S00Exx 必须落在第 0 季，而不是第 1 季。"""
     # 关掉刮削：否则扫描会去连 TMDB，在无网环境每次连接超时 40s（实测本用例 2 分钟）

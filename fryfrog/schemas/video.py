@@ -295,7 +295,10 @@ class SeriesDTO(BaseModel):
         sid = series.id
         by_season: dict[int, list[VideoDTO]] = {}
         for ep in episodes:
-            by_season.setdefault(ep.seasonNumber or 1, []).append(ep)
+            # 不能用 `ep.seasonNumber or 1`：第 0 季（特别篇）会被吞成第 1 季，
+            # 结果整部剧只剩「第 1 季」且特别篇混在其中。
+            key = 1 if ep.seasonNumber is None else ep.seasonNumber
+            by_season.setdefault(key, []).append(ep)
         seasons = [
             SeasonDTO.of(sid, num, by_season[num]) for num in sorted(by_season.keys())
         ]
