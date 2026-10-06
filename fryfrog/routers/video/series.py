@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -156,10 +157,21 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
     # 一次载入系列与「系列→库」归属，替代每库循环里全量查系列 + 逐系列查分集
     all_series = list(db.scalars(select(VideoSeries)).all())
     libs_of_series: dict[int, set[int]] = {}
-    for sid, lib_id in db.execute(
-        select(Video.series_id, Video.library_id).where(Video.series_id.is_not(None))
+    # 系列最新入库时间：取该剧所有分集 created_at 的最大值（扫描首次入库时写入，
+    # 不再变化），用于「最新入库优先」排序。
+    newest_of_series: dict[int, object] = {}
+    for sid, lib_id, created in db.execute(
+        select(Video.series_id, Video.library_id, Video.created_at).where(
+            Video.series_id.is_not(None)
+        )
     ).all():
         libs_of_series.setdefault(sid, set()).add(lib_id)
+        if created is not None and (sid not in newest_of_series or created > newest_of_series[sid]):
+            newest_of_series[sid] = created
+
+    def _newest_key(series: VideoSeries):
+        # 最新入库优先；同刻或缺失时回落到 id（越大越新），保证稳定顺序
+        return (newest_of_series.get(series.id) or datetime.min, series.id or 0)
 
     result: list[dict] = []
     for lib in libraries:
@@ -172,7 +184,7 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
             if lib.id in libs_of_series.get(s.id, ())
             and (not lib.enable_scraping or s.tmdb_id is not None)
         ]
-        lib_series.sort(key=lambda s: (s.title or "").lower())
+        lib_series.sort(key=_newest_key, reverse=True)
         paged_series = lib_series[page * size : (page + 1) * size]
         # 单集段：SQL count + offset/limit，不全量载入后内存切片。
         # 仅对「本应用刮削」的库做视图分离：未绑定（tmdb_id 空）的单片
@@ -194,7 +206,8 @@ def grouped_by_library(db: DbSession, page: int = 0, size: int = 50):
             db.scalars(
                 select(Video)
                 .where(*standalone_where)
-                .order_by(Video.title.asc())
+                # 单片同样「最新入库优先」（created_at 为扫描入库时间）
+                .order_by(Video.created_at.desc(), Video.id.desc())
                 .offset(page * size)
                 .limit(size)
             ).all()
