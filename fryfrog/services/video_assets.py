@@ -675,6 +675,26 @@ def _tag(name: str, value) -> str:
     return f"  <{name}>{_xml_escape(value)}</{name}>\n"
 
 
+def _rating_tags(rating, vote_count) -> list[str]:
+    """评分/票数标签；**为 0 时省略**，不写「0 分」。
+
+    TMDB 上大量分集没有评分（vote_average=0.0 / vote_count=0，实测
+    `直到夏日结束之前` 的 S01E01 与 S02E02 都是）。照原样写 `<rating>0.0</rating>`
+    会被播放器显示成 0 分（像差评），比"无评分"更糟。这里只在真有评分时输出。
+    """
+    try:
+        value = float(rating) if rating is not None else 0.0
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        return []
+    out = [_tag("rating", rating)]
+    votes = vote_count or 0
+    if votes:
+        out.append(_tag("votes", votes))
+    return out
+
+
 def _build_nfo(video: Video) -> str:
     is_tv = video.is_episode
     root = "episodedetails" if is_tv else "movie"
@@ -687,8 +707,7 @@ def _build_nfo(video: Video) -> str:
         _tag("director", video.director),
         _tag("genre", video.genre),
         _tag("year", video.year),
-        _tag("rating", video.rating),
-        _tag("votes", video.vote_count),
+        *_rating_tags(video.rating, video.vote_count),
         _tag("premiered", video.release_date),
         _tag("runtime", video.duration_minutes),
         _tag("mpaa", "NC-17" if video.is_adult else "PG"),
