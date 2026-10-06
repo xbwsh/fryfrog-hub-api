@@ -155,3 +155,76 @@ def test_dto_is_null_for_tmdb_scraped(env):
 
     assert VideoDTO.from_entity(video).nfoBackfilledAt is None
     assert SeriesListDTO.from_entity(series, [video], False).nfoBackfilledAt is None
+
+
+# ── 第三方刮削器（JavDB 类）生成的 NFO：无 uniqueid、用 outline/maker ──
+
+JAVDB_NFO = """<?xml version="1.0" encoding="UTF-8" ?>
+<movie>
+  <title><![CDATA[KATU-128 大屁股×巨乳×荡妇，捡到一个调皮的大屁股超短裙辣妹]]></title>
+  <originaltitle><![CDATA[KATU-128 でか尻×でか乳×痴女]]></originaltitle>
+  <outline><![CDATA[超ミニスカでパンティラインと肉尻丸見え…]]></outline>
+  <maker>かつお物産/妄想族</maker>
+  <year>2024</year>
+  <runtime>168</runtime>
+  <num>KATU-128</num>
+  <premiered>2024-06-24</premiered>
+  <actor><name>九井珠奈绪</name><type>Actor</type></actor>
+  <genre>巨乳</genre>
+  <ratings>
+    <rating name="javdb" max="5" default="true"><value>4.48</value><votes>4420</votes></rating>
+  </ratings>
+</movie>
+"""
+
+
+def test_third_party_nfo_title_replaces_filename_title(env):
+    """实测缺口：扫描先把标题填成文件名（KATU-128），旧逻辑「字段为空才写」
+    导致 NFO 里的完整标题永远进不来，库里一直显示编号。"""
+    db, media, make = env
+    video, _ = make(JAVDB_NFO, name="KATU-128")
+    # 模拟扫描：标题先被填成文件名
+    video.title = "KATU-128"
+    db.flush()
+
+    parse_nfo(db, video)
+
+    assert video.title.startswith("KATU-128 大屁股"), f"标题没被 NFO 覆盖: {video.title!r}"
+
+
+def test_third_party_nfo_outline_and_maker(env):
+    db, media, make = env
+    video, _ = make(JAVDB_NFO, name="KATU-128")
+    parse_nfo(db, video)
+
+    assert video.overview and "超ミニスカ" in video.overview, "outline 应作为 plot 的回退"
+    assert video.studio == "かつお物産/妄想族", f"maker 应作 studio: {video.studio!r}"
+    assert video.year == 2024
+    assert video.duration_minutes == 168
+
+
+def test_third_party_nfo_marks_source_but_not_binding(env):
+    """无 uniqueid → 不算「绑定回填」（nfoBackfilledAt 保持空），
+    但确实贡献了元数据 → metadata_source 应为 nfo（旧逻辑这里是空，判不出来源）。"""
+    db, media, make = env
+    video, _ = make(JAVDB_NFO, name="KATU-128")
+    video.title = "KATU-128"
+    db.flush()
+
+    parse_nfo(db, video)
+
+    assert video.metadata_source == "nfo", "本地 NFO 贡献了元数据就该标 nfo"
+    assert video.nfo_backfilled_at is None, "没有唯一标识就不算绑定回填"
+    assert video.tmdb_id is None, "NFO 没给绑定标识，仍应留在未刮削"
+
+
+def test_meaningful_title_is_not_overwritten(env):
+    """已经刮削出正式标题时，NFO 不该覆盖它。"""
+    db, media, make = env
+    video, _ = make(JAVDB_NFO, name="KATU-128")
+    video.title = "正式刮削标题"
+    db.flush()
+
+    parse_nfo(db, video)
+
+    assert video.title == "正式刮削标题", "已有正式标题不该被 NFO 覆盖"

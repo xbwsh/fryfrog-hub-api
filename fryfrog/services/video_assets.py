@@ -246,8 +246,9 @@ def parse_nfo(db: Session, video: Video) -> bool:
 
     changed = False
     for tag, attr in (
-        ("title", "title"),
+        # title 特殊处理：见下方 _apply_nfo_title
         ("originaltitle", "original_title"),
+        # plot 为主，第三方刮削器（JavDB 类）常用 outline
         ("plot", "overview"),
         ("director", "director"),
         ("studio", "studio"),
@@ -256,9 +257,30 @@ def parse_nfo(db: Session, video: Video) -> bool:
         if attr is None:
             continue
         val = text(tag)
+        if not val and tag == "plot":
+            val = text("outline")
         if val and not getattr(video, attr):
             setattr(video, attr, val)
             changed = True
+
+    # 标题：只要 NFO 里的标题比当前「更有信息量」就采用。
+    # 扫描时标题被填成文件名（如 KATU-128），而 NFO 里是完整名称，
+    # 旧逻辑「字段为空才写」导致 NFO 标题永远进不来。
+    nfo_title = text("title")
+    if nfo_title and nfo_title != video.title:
+        base = (Path(video.file_name).stem if video.file_name else "") or ""
+        if not video.title or video.title.strip() in (base.strip(), base.strip().upper()):
+            video.title = nfo_title
+            changed = True
+
+    # 片商：第三方 NFO 用 maker/publisher/label，标准 NFO 用 studio
+    if not video.studio:
+        for tag in ("studio", "maker", "publisher", "label"):
+            val = text(tag)
+            if val:
+                video.studio = val
+                changed = True
+                break
 
     if not video.genre:
         genres = [g.text.strip() for g in root.findall("genre") if g.text and g.text.strip()]
@@ -344,9 +366,18 @@ def parse_nfo(db: Session, video: Video) -> bool:
         video.metadata_source = "nfo"
         changed = True
 
+    # 来源标识：只要本地 NFO 确实贡献了元数据（不只是标题），就记 nfo。
+    # 旧逻辑只在「NFO 提供了 tmdb_id」时才写，导致纯本地元数据（第三方刮削器
+    # 生成的 NFO 常没有 uniqueid）来源判不出来。
+    if not video.metadata_source and (
+        video.overview or video.original_title or video.rating or video.year
+    ):
+        video.metadata_source = "nfo"
+        changed = True
+
     # 「NFO 回填」永久标记：独立于 metadata_source，后者会被后续 TMDB 刮削
     # 覆盖成 "tmdb"，那份「原本来自本地 NFO」的来源信息就丢了。
-    # 只有 NFO 真的提供了 uniqueid（tmdb/imdb）才算。
+    # 只有 NFO 真的提供了 uniqueid（tmdb/imdb）才算「带回绑定标识」。
     if video.nfo_backfilled_at is None and root.find("uniqueid") is not None:
         video.nfo_backfilled_at = datetime.now()
         changed = True
