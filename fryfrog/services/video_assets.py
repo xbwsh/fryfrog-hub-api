@@ -842,6 +842,180 @@ def apply_video_backdrop(db: Session, video: Video, file_path: str) -> bool:
     return ok
 
 
+# -------------------- TMDB 分层图片（总览 / 季 / 单集 × 海报 / 背景图 / 剧照） --------------------
+
+# TMDB 的图片分类与本站资产的对应关系：
+#   posters   → 竖版海报（总览=剧集海报，季=季海报）
+#   backdrops → 横版背景图（总览/季）
+#   stills    → 单集剧照（本集的横版图，即本站「分集横屏」）
+IMAGE_LEVELS = ("series", "season", "episode")
+IMAGE_KINDS = ("poster", "backdrop", "still")
+
+# 预览尺寸：竖图用 w342、横图用 w780（比例不同，同一个尺寸名观感差很多）
+_PREVIEW_SIZE = {"poster": "w342", "backdrop": "w780", "still": "w780"}
+
+
+def _image_options(client, payload: dict | None, kind: str) -> list[dict]:
+    """把 TMDB images 响应里的某类图整理成候选列表（按票数降序）。"""
+    key = {"poster": "posters", "backdrop": "backdrops", "still": "stills"}[kind]
+    raw = [x for x in ((payload or {}).get("images") or {}).get(key) or [] if x.get("file_path")]
+    raw.sort(key=lambda x: x.get("vote_count") or 0, reverse=True)
+    out = []
+    for item in raw:
+        path = item["file_path"]
+        out.append(
+            {
+                "filePath": path,
+                "url": _proxy_image_url(path, size=_PREVIEW_SIZE[kind]),
+                "width": item.get("width"),
+                "height": item.get("height"),
+                "voteCount": item.get("vote_count"),
+                "iso6391": item.get("iso_639_1"),
+                "kind": kind,
+            }
+        )
+    return out
+
+
+def tmdb_image_options(
+    series_tmdb_id: int,
+    level: str,
+    season: int | None = None,
+    episode: int | None = None,
+    media_type: str | None = None,
+) -> dict:
+    """某一层级的 TMDB 图片候选，返回 {poster: [...], backdrop: [...]}。
+
+    - series：`/tv/{id}/images`（电影走 `/movie/{id}/images`）→ posters + backdrops
+    - season：`/tv/{id}/season/{s}/images` → posters
+    - episode：单集详情 append images → stills（单集的横版图就是剧照）
+    一次请求同时给出该层级所有可用类型，避免客户端多次往返。
+    """
+    from fryfrog.services.tmdb import TmdbClient
+
+    if level not in IMAGE_LEVELS or not series_tmdb_id:
+        return {}
+    client = TmdbClient()
+    is_movie = (media_type or "").lower() == "movie"
+
+    if level == "series":
+        if is_movie:
+            payload = client.get_movie_images(series_tmdb_id)
+        else:
+            payload = client.get_tv_images(series_tmdb_id)
+        return {
+            "poster": _image_options(client, payload, "poster"),
+            "backdrop": _image_options(client, payload, "backdrop"),
+        }
+
+    if level == "season":
+        if season is None:
+            return {}
+        payload = client.get_season_images(series_tmdb_id, season)
+        return {"poster": _image_options(client, payload, "poster")}
+
+    if level == "episode":
+        if season is None or episode is None:
+            return {}
+        payload = client.get_episode_images(series_tmdb_id, season, episode)
+        return {"still": _image_options(client, payload, "still")}
+
+    return {}
+
+
+def _series_local_roots(episodes: list[Video], library_path: str | None) -> list[Path]:
+    """剧名级目录候选（真实媒体布局优先，其次按库根重建）。
+
+    实际目录是 `<lib>/<剧名>/第 N 季/…`，而 get_metadata_dir 重建的是
+    `<lib>/<剧名>/第 N 季/第 M 集/`——两者层级不同，所以这里从文件路径推。
+    """
+    roots: list[Path] = []
+    if episodes:
+        try:
+            roots.append(Path(episodes[0].file_path).parent.parent)
+        except Exception:
+            pass
+    if library_path:
+        roots.append(Path(library_path))
+    seen: set[str] = set()
+    return [r for r in roots if not (str(r) in seen or seen.add(str(r)))]
+
+
+def apply_tmdb_image(
+    db: Session,
+    video: Video,
+    episodes: list[Video],
+    level: str,
+    kind: str,
+    file_path: str,
+) -> Path | None:
+    """把选定的 TMDB 图落到对应层级的本地位置，返回落地路径。
+
+    落盘命名沿用既有约定（见 find_shared_vertical_poster / download_series_root_art）：
+      总览 → `<剧名根>/tvshow-poster.jpg` · `tvshow-fanart.jpg`
+      季   → `<季目录>/tvshow-poster.jpg`
+      单集 → `<分集目录>/poster.jpg` · `fanart.jpg`
+    """
+    if not file_path or level not in IMAGE_LEVELS or kind not in IMAGE_KINDS:
+        return None
+
+    from fryfrog.models.library import MediaLibrary
+
+    library_path = None
+    if video.library_id is not None:
+        lib = db.get(MediaLibrary, video.library_id)
+        library_path = lib.path if lib else None
+
+    target: Path | None = None
+    if level == "episode":
+        target = get_fanart_path(db, video) if kind == "backdrop" else get_poster_path(db, video)
+    elif level == "season":
+        season_dir = get_season_dir(db, video)
+        if season_dir:
+            target = season_dir / (
+                "tvshow-fanart.jpg" if kind == "backdrop" else "tvshow-poster.jpg"
+            )
+    else:  # series
+        roots = _series_local_roots(episodes or [video], library_path)
+        if roots:
+            name = "tvshow-fanart.jpg" if kind == "backdrop" else "tvshow-poster.jpg"
+            target = roots[0] / name
+            for root in roots:
+                if (root / name).is_file():
+                    target = root / name
+                    break
+
+    if target is None:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not download_image(_full_image_url(file_path), target, force=True):
+        return None
+
+    # 回填 DB 字段，让接口立刻返回新图（签名 URL 由 DTO 层生成）
+    if level == "episode" and kind == "backdrop":
+        video.backdrop_url = file_path
+        video.backdrop_local_path = str(target)
+    elif level == "episode":
+        video.poster_url = file_path
+        video.cover_art_path = str(target)
+    elif level == "season":
+        # 季海报全季共用：分集竖图指向它，避免各集留私有副本
+        for ep in episodes or [video]:
+            ep.poster_url = file_path
+    else:
+        series = db.get(VideoSeries, video.series_id) if video.series_id else None
+        if series is not None:
+            if kind == "backdrop":
+                series.backdrop_local_path = str(target)
+            else:
+                series.poster_local_path = str(target)
+        for ep in episodes or [video]:
+            if kind == "backdrop":
+                ep.backdrop_url = ep.backdrop_url or file_path
+    db.flush()
+    return target
+
+
 # -------------------- 截帧 --------------------
 
 def frames_cache_dir(video: Video) -> Path:

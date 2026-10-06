@@ -144,6 +144,13 @@ class TmdbClient:
     def get_tv_images(self, tmdb_id: int) -> dict | None:
         return self._get(f"/tv/{tmdb_id}/images")
 
+    def get_season_images(self, tv_id: int, season: int) -> dict | None:
+        """季图片：posters（季海报）。按 TMDB 文档季支持 posters。"""
+        return self._get(f"/tv/{tv_id}/season/{season}/images")
+
+    def get_movie_images(self, tmdb_id: int) -> dict | None:
+        return self._get(f"/movie/{tmdb_id}/images")
+
     def image_url(self, path: str | None, size: str | None = None) -> str | None:
         if not path:
             return None

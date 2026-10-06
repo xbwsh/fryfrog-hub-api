@@ -13,7 +13,13 @@ from fryfrog.core.deps import DbSession
 from fryfrog.core.exceptions import ResourceNotFoundException
 from fryfrog.core.utils import placeholder_jpeg
 from fryfrog.media_core import get_media_probe
-from fryfrog.schemas.video import CoverSelectRequest, FrameSelectRequest, LogoSelectRequest
+from fryfrog.models.video import VideoSeries
+from fryfrog.schemas.video import (
+    CoverSelectRequest,
+    FrameSelectRequest,
+    LogoSelectRequest,
+    TmdbImageSelectRequest,
+)
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_service as vs
 
@@ -354,6 +360,79 @@ def set_video_cover(db: DbSession, id: int, body: CoverSelectRequest):
         return ApiResponse.error("图片下载失败，请确认代理或网络")
     return ApiResponse.ok(
         {"videoId": video.id, "applied": body.filePath, "success": True}
+    )
+
+
+# -------------------- TMDB 分层图片（总览 / 季 / 单集 × 海报 / 背景图 / 剧照） --------------------
+
+
+def _image_context(db, video) -> dict:
+    """该视频对应的层级上下文：季号、集号、剧集 TMDB id、媒体类型。"""
+    series = db.get(VideoSeries, video.series_id) if video.series_id else None
+    return {
+        "level_season": assets.season_of(video),
+        "level_episode": video.episode_number,
+        "series_tmdb_id": series.tmdb_id if series else video.tmdb_id,
+        "media_type": (series.media_type if series else video.media_type),
+    }
+
+
+@router.get("/{id:int}/tmdb-images")
+def video_tmdb_images(db: DbSession, id: int, level: str = "episode"):
+    """某层级的 TMDB 图片候选。
+
+    level=series（总览/剧集总海报、总背景图）| season（季海报）| episode（单集剧照）。
+    返回该层级所有可用类型的候选，前端一次拿全。
+    """
+    _require_admin(db)
+    video = vs.get_video(db, id)
+    _require_visible(db, video.library_id, "Video", id)
+    if level not in assets.IMAGE_LEVELS:
+        return ApiResponse.error(f"level 必须是 {assets.IMAGE_LEVELS} 之一")
+    ctx = _image_context(db, video)
+    options = assets.tmdb_image_options(
+        ctx["series_tmdb_id"],
+        level,
+        season=ctx["level_season"],
+        episode=ctx["level_episode"],
+        media_type=ctx["media_type"],
+    )
+    return ApiResponse.ok(
+        {
+            "videoId": video.id,
+            "level": level,
+            "seasonNumber": ctx["level_season"],
+            "episodeNumber": ctx["level_episode"],
+            "options": options,
+        }
+    )
+
+
+@router.post("/{id:int}/tmdb-image")
+def apply_video_tmdb_image(db: DbSession, id: int, body: TmdbImageSelectRequest):
+    """把选定的 TMDB 图落到对应层级（总览 → 剧名根目录；季 → 季目录；单集 → 分集目录）。"""
+    _require_admin(db)
+    video = vs.get_video(db, id)
+    _require_visible(db, video.library_id, "Video", id)
+    if not body.filePath:
+        return ApiResponse.error("filePath 不能为空")
+    episodes = (
+        vs.series_videos(db, video.series_id) if video.series_id else [video]
+    )
+    target = assets.apply_tmdb_image(
+        db, video, episodes, body.level, body.kind, body.filePath
+    )
+    if target is None:
+        return ApiResponse.error("图片下载失败或层级不支持，请确认代理或网络")
+    return ApiResponse.ok(
+        {
+            "videoId": video.id,
+            "level": body.level,
+            "kind": body.kind,
+            "applied": body.filePath,
+            "path": str(target),
+            "success": True,
+        }
     )
 
 

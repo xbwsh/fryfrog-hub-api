@@ -88,6 +88,18 @@ class CoverSelectRequest(BaseModel):
     filePath: str | None = None
 
 
+class TmdbImageSelectRequest(BaseModel):
+    """选定某个 TMDB 图落到指定层级。
+
+    level: series（总览）| season（季）| episode（单集）
+    kind:  poster（海报）| backdrop（背景图）| still（剧照，单集用）
+    """
+
+    filePath: str | None = None
+    level: str = "episode"
+    kind: str = "backdrop"
+
+
 class FrameSelectRequest(BaseModel):
     index: int = 0
     type: str | None = None
