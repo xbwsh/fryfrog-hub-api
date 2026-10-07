@@ -417,9 +417,14 @@ def select_series_fanart(db: DbSession, id: int, body: SeriesFrameSelectRequest)
     frame_path = assets.frames_cache_dir(video) / f"frame-{body.index}.jpg"
     if not frame_path.exists():
         return ApiResponse.error("候选帧不存在，请先调用单集生成接口")
-    video_dir = Path(video.file_path).parent
-    base = vs.get_base_name(video.file_name)
-    output_path = video_dir / f"{base}-series-fanart.jpg"
+    # 统一落盘：剧名根目录 tvshow-fanart.jpg（与上传/应用 TMDB 图一致），
+    # 不再写分集目录下的 {base}-series-fanart.jpg 自造名。
+    episodes = vs.series_videos(db, id)
+    roots = vs.series_root_candidates(db, episodes)
+    if not roots:
+        return ApiResponse.error("找不到剧名根目录，无法设置系列背景图")
+    output_path = roots[0] / "tvshow-fanart.jpg"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     duration = get_media_probe().probe_video_duration(video.file_path) or 0
     ratios = assets.FRAME_RATIOS
     pos = duration * ratios[body.index] if duration > 0 else 30 + body.index * 30

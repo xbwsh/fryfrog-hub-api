@@ -259,15 +259,23 @@ def select_frame(db: DbSession, id: int, body: FrameSelectRequest):
     if is_series_fanart and series is None:
         return ApiResponse.error("该视频不属于任何系列，无法设置为系列背景图")
 
-    video_dir = Path(video.file_path).parent
-    base = vs.get_base_name(video.file_name)
+    # 统一落盘命名：与「上传 / 应用 TMDB 图」完全一致——
+    #   分集竖屏 → <分集目录>/poster.jpg
+    #   分集横屏 → <分集目录>/fanart.jpg
+    #   系列横屏 → <剧名根>/tvshow-fanart.jpg
+    # 不再生成 -frame-v3 / -series-fanart 这类历史截帧命名，避免
+    # 同一张封面多个名字（-frame-v3 留给「自动兜底截帧」专用）。
     if is_poster:
-        output_name = f"{base}-frame-v3.jpg"
+        output_path = vs.get_poster_path(db, video)
     elif is_series_fanart:
-        output_name = f"{base}-series-fanart.jpg"
+        episodes = vs.series_videos(db, series.id)
+        roots = vs.series_root_candidates(db, episodes)
+        if not roots:
+            return ApiResponse.error("找不到剧名根目录，无法设置为系列背景图")
+        output_path = roots[0] / "tvshow-fanart.jpg"
     else:
-        output_name = f"{base}-fanart-frame-v3.jpg"
-    output_path = video_dir / output_name
+        output_path = vs.get_fanart_path(db, video)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     duration = get_media_probe().probe_video_duration(video.file_path) or 0
     ratios = assets.FRAME_RATIOS

@@ -1030,7 +1030,10 @@ def download_movie_logo(db: Session, video: Video, file_path: str | None = None,
         target_path = logos[0].get("file_path") if logos else None
     if not target_path:
         return False
-    dest = get_video_assets_dir(video) / f"{get_base_name(video.file_name)}-logo.png"
+    # 统一用 fixed 命名 movie-logo.png：find_local_video_logo 的候选列表
+    # 认它，即使 DB 字段丢失（重扫/换库）也能从磁盘找回；不再写
+    # {base}-logo.png 这种只有 DB 字段才知道的自造名。
+    dest = get_video_assets_dir(video) / "movie-logo.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     ok = False
     for url in _tmdb_image_urls(target_path):
@@ -1046,6 +1049,7 @@ def download_movie_logo(db: Session, video: Video, file_path: str | None = None,
 
 def download_series_logo(db: Session, series: VideoSeries, file_path: str | None = None) -> bool:
     from fryfrog.services.tmdb import TmdbClient
+    from fryfrog.services import video_service as vs
 
     if file_path:
         urls = _tmdb_image_urls(file_path)
@@ -1062,9 +1066,14 @@ def download_series_logo(db: Session, series: VideoSeries, file_path: str | None
         urls = _tmdb_image_urls(file_path)
     else:
         return False
-    dest_dir = Path(series.metadata_dir) if series.metadata_dir else Path("data/series") / str(series.id)
+    # 统一落到剧名根目录的 tvshow-logo.png，与 find_local_series_logo 的
+    # 「剧根优先」约定一致（总海报/总横屏同层）；metadata_dir 不再用于
+    # logo，避免手动的 logo 落到服务器程序目录、媒体库里看不见。
+    dest_dir = get_series_root_dir(db, vs.series_videos(db, series.id))
+    if dest_dir is None:
+        dest_dir = Path(series.metadata_dir) if series.metadata_dir else Path("data/series") / str(series.id)
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / "logo.png"
+    dest = dest_dir / "tvshow-logo.png"
     ok = False
     for url in urls:
         ok = download_image(url, dest, force=True)
