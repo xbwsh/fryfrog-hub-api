@@ -95,6 +95,9 @@ def _save_song(db: Session, path: Path, library_id: int | None, root: Path) -> M
     existing = db.scalar(select(MusicSong).where(MusicSong.file_path == absolute))
     if existing is not None and not _is_changed(existing, path):
         _ensure_lyrics(existing, path)
+        # 文件没变也做封面幂等检查：把指针修正到内嵌产物（修复历史错指针）
+        album = db.get(MusicAlbum, existing.album_id) if existing.album_id else None
+        _ensure_album_cover(db, album, path.parent, source_audio=path)
         return existing
 
     info = get_media_probe().probe_audio_info(absolute)
@@ -201,52 +204,63 @@ def _ensure_album_cover(
     current = album.cover_art_path
     if current and ".metadata/music-covers" in current:
         album.cover_art_path = None
+        current = None
         db.flush()
-        return
+    # 1) 内嵌封面优先：产物按专辑唯一命名（cover-{album_id}.jpg），
+    #    共享目录（多专辑平铺）下不会互相串图
+    if album.id and album_dir is not None:
+        cache = album_dir / f"cover-{album.id}.jpg"
+        if cache.is_file():
+            if album.cover_art_path != str(cache):
+                album.cover_art_path = str(cache)
+                db.flush()
+            return
+        if source_audio is not None:
+            extracted = _extract_embedded_cover(source_audio, cache)
+            if extracted:
+                album.cover_art_path = str(extracted)
+                db.flush()
+                return
+    # 2) 已有封面（内嵌产物或此前记录的目录封面）
     if album.cover_art_path:
         return
+    # 3) 内嵌抽不到时回退目录封面：标准命名 → 目录里第一张图
     if album_dir and album_dir.is_dir():
         cover = _find_cover(album_dir, album.title) or _find_any_cover(album_dir)
         if cover:
             album.cover_art_path = str(cover)
             db.flush()
-            return
-    # 目录无封面文件时，尝试从音轨内嵌封面提取
-    if source_audio and album_dir and album_dir.is_dir():
-        extracted = _extract_embedded_cover(source_audio, album_dir)
-        if extracted:
-            album.cover_art_path = str(extracted)
-            db.flush()
 
 
-def _extract_embedded_cover(audio_path: Path, album_dir: Path) -> Path | None:
-    """用 ffmpeg 抽出内嵌 APIC 为 cover.jpg。"""
+def _extract_embedded_cover(audio_path: Path, dest: Path) -> Path | None:
+    """用 ffmpeg 抽出内嵌 APIC 到 dest（专辑唯一文件）。"""
     from fryfrog.media_core import get_ffmpeg_runtime
 
     runtime = get_ffmpeg_runtime()
     if not runtime.is_available():
         return None
-    dest = album_dir / "cover.jpg"
     if dest.exists():
         return dest
     cmd = [
         runtime.ffmpeg_path,
+        "-y",
         "-i",
         str(audio_path),
         "-an",
         "-vcodec",
         "copy",
-        "-y",
         str(dest),
     ]
     try:
         import subprocess
 
-        proc = subprocess.run(cmd, capture_output=True, timeout=15, check=False)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            cmd, capture_output=True, timeout=15, check=False, env=runtime.apply_library_env()
+        )
         if proc.returncode == 0 and dest.exists() and dest.stat().st_size > 0:
             return dest
-        if dest.exists():
-            dest.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
     except Exception:
         logger.debug("提取内嵌封面失败: %s", audio_path, exc_info=True)
     return None
