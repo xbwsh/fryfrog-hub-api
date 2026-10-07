@@ -258,10 +258,18 @@ def list_chapters(
     book_id: int,
     db: DbSession,
     media_lib: MediaLibraryService = Depends(get_media_library_service),
+    page: int = 0,
+    size: int = 0,
 ):
-    """TXT 在线阅读：章节目录（字符偏移供前端定位）。"""
+    """TXT 在线阅读：章节目录（字符偏移供前端定位）。
+
+    章节很多的书（如几千章的网文）一次性返回全量会让前端滚动卡顿：
+    传 page/size 只返回当前页（PageResponse）；不传则保持全量返回以兼容旧客户端。
+    """
     book = _require_visible(db, media_lib, book_id)
     path = _require_readable_txt(book)
+    if size > 0:
+        return ApiResponse.ok(ebook_text.chapter_page(path, page, size))
     return ApiResponse.ok(ebook_text.chapters_of(path))
 
 

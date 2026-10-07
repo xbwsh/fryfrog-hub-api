@@ -82,6 +82,27 @@ def chapters_of(path: Path) -> list[dict]:
     return list(_load(path_str, mtime)[1])
 
 
+def chapter_page(path: Path, page: int, size: int) -> dict:
+    """分页章节目录：只返回当前页（大书全量返回会让前端滚动卡顿）。
+
+    返回 {content, page, size, totalElements, totalPages}，与 PageResponse 对齐。
+    """
+    path_str, mtime = _snapshot(path)
+    text, chapters = _load(path_str, mtime)
+    total = len(chapters)
+    size = max(1, size)
+    start = max(0, page) * size
+    content = [dict(c) for c in chapters[start : start + size]]
+    total_pages = (total + size - 1) // size
+    return {
+        "content": content,
+        "page": page,
+        "size": size,
+        "totalElements": total,
+        "totalPages": total_pages,
+    }
+
+
 def chapter_count(path: Path) -> int:
     return len(chapters_of(path))
 

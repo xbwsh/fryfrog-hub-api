@@ -116,6 +116,30 @@ def test_chapter_content_api(tmp_path):
         ebook_text.chapter_content(path, 99)
 
 
+def test_chapter_page_slices(tmp_path):
+    """分页章节目录：总数/总页数正确，每页内容按偏移切片、互不重叠。"""
+    path = tmp_path / "book.txt"
+    path.write_text(SAMPLE, encoding="utf-8")
+
+    page0 = ebook_text.chapter_page(path, 0, 2)
+    assert page0["totalElements"] == 3
+    assert page0["totalPages"] == 2
+    assert [c["title"] for c in page0["content"]] == ["开头", "第一章 觉醒"]
+
+    page1 = ebook_text.chapter_page(path, 1, 2)
+    assert page1["page"] == 1
+    assert [c["title"] for c in page1["content"]] == ["第二章:出发"]
+
+
+def test_chapter_page_beyond_range_is_empty(tmp_path):
+    path = tmp_path / "book.txt"
+    path.write_text(SAMPLE, encoding="utf-8")
+    page = ebook_text.chapter_page(path, 99, 10)
+    assert page["content"] == []
+    assert page["totalElements"] == 3
+    assert page["totalPages"] == 1
+
+
 def test_scan_fills_total_chapters(tmp_path):
     (tmp_path / "book.txt").write_text(SAMPLE, encoding="utf-8")
 
