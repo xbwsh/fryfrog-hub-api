@@ -33,10 +33,15 @@ def _has_cjk(text: str | None) -> bool:
 
 
 def _select_show_name(video: Video) -> str:
-    # 剧集的 title 刮削后是分集名，剧名必须用 series_name，
-    # 否则每集都会各建一个顶层目录，整季被拆散。
+    # 剧集的 title 刮削后是分集名，剧名必须用 series_name / 剧集行标题，
+    # 否则每集都会各建一个顶层目录，整季被拆散。分集名（title）只能当
+    # **最后**兜底：实测「慎重勇者」series_name 是发布名（Kono Yuusha…，
+    # 无中文）而 title 是分集名（这个勇者过于傲慢），按中文优先直接选中了
+    # 分集名当剧名目录——于是季目录/剧根目录全部指错，季海报、总海报、
+    # 剧根 NFO 全部落空，剧集详情页退化成拿 16:9 单集剧照当竖封面。
     if video.is_episode:
-        names = [video.series_name, video.title, video.original_title]
+        series_title = video.series.title if video.series is not None else None
+        names = [video.series_name, series_title, video.original_title, video.title]
     else:
         names = [video.title, video.original_title, video.series_name]
     for name in names:

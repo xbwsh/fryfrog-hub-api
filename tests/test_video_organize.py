@@ -28,6 +28,40 @@ def test_series_folder_uses_series_name():
     ) == "拜托请穿上，鹰峰同学"
 
 
+def test_episode_folder_prefers_series_title_over_episode_name():
+    """series_name 是发布名（无中文）时，剧名目录取**剧集行标题**，不能取分集名。
+
+    实测「慎重勇者」：series_name 是发布名 Kono Yuusha…（无中文），title 是分集名
+    「这个勇者过于傲慢」——按中文优先会选中分集名当剧名目录，于是季目录与剧根目录
+    全部指错，季海报/总海报/剧根 NFO 全部落空，详情页退化成拿 16:9 剧照当竖封面。
+    """
+    from fryfrog.models.video import VideoSeries
+
+    video = Video(
+        title="这个勇者过于傲慢",
+        series_name="Kono Yuusha ga Ore Tsueee Kuse ni Shinchou Sugiru",
+        original_title="慎重勇者～この勇者が俺TUEEEくせに慎重すぎる～",
+        series=VideoSeries(title="慎重勇者 ～这个勇者明明超强却过分慎重～"),
+        media_type="tv",
+        is_series=True,
+        season_number=1,
+        episode_number=1,
+    )
+    assert _clean_folder(_select_show_name(video)) == "慎重勇者 ～这个勇者明明超强却过分慎重～"
+
+
+def test_episode_folder_without_series_row_keeps_old_fallback():
+    """拿不到剧集行（series 为空）时保持原兜底顺序，分集名垫底不出错。"""
+    assert _folder(
+        title="这个勇者过于傲慢",
+        series_name="慎重勇者",
+        media_type="tv",
+        is_series=True,
+        season_number=1,
+        episode_number=1,
+    ) == "慎重勇者"
+
+
 def test_folder_strips_episode_mark():
     """发布名残留的 SxxExx 不应进目录名（季集由「第 N 季/第 M 集」表达）。"""
     messy = "拜托请穿上，鹰峰同学 Haite Kudasai, Takamine-san 2025"
