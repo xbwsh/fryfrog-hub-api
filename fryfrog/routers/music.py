@@ -78,6 +78,12 @@ def _allowed_ids(db: Session) -> list[int]:
     return MediaLibraryService(UserService()).get_allowable_library_ids(db)
 
 
+def _is_visible_library(db: Session, library_id: int | None) -> bool:
+    """受限用户只能访问被授权的媒体库；admin/匿名/无库归属的记录放行。
+    _allowed_ids 内部已对 admin 与匿名返回全部启用库。"""
+    return library_id is None or library_id in _allowed_ids(db)
+
+
 def _starred_ids(db: Session, user_id: int, target_type: str, ids: list[int]) -> set[int]:
     if not ids:
         return set()
@@ -153,21 +159,21 @@ def _set_rating(db: Session, user_id: int, target_type: str, target_id: int, rat
 
 def _require_song(db: Session, song_id: int) -> MusicSong:
     song = db.get(MusicSong, song_id)
-    if song is None:
+    if song is None or not _is_visible_library(db, song.library_id):
         raise ResourceNotFoundException("MusicSong", "id", song_id)
     return song
 
 
 def _require_album(db: Session, album_id: int) -> MusicAlbum:
     album = db.get(MusicAlbum, album_id)
-    if album is None:
+    if album is None or not _is_visible_library(db, album.library_id):
         raise ResourceNotFoundException("MusicAlbum", "id", album_id)
     return album
 
 
 def _require_artist(db: Session, artist_id: int) -> MusicArtist:
     artist = db.get(MusicArtist, artist_id)
-    if artist is None:
+    if artist is None or not _is_visible_library(db, artist.library_id):
         raise ResourceNotFoundException("MusicArtist", "id", artist_id)
     return artist
 
@@ -459,9 +465,21 @@ def music_home(db: DbSession):
 @router.get("/artists")
 def list_artists(db: DbSession, page: int = 0, size: int = 20):
     uid = current_user_id()
-    total = int(db.scalar(select(func.count(MusicArtist.id))) or 0)
+    allowed = _allowed_ids(db)
+    total = int(
+        db.scalar(
+            select(func.count(MusicArtist.id)).where(MusicArtist.library_id.in_(allowed))
+        )
+        or 0
+    )
     artists = list(
-        db.scalars(select(MusicArtist).order_by(MusicArtist.name.asc()).offset(page * size).limit(size)).all()
+        db.scalars(
+            select(MusicArtist)
+            .where(MusicArtist.library_id.in_(allowed))
+            .order_by(MusicArtist.name.asc())
+            .offset(page * size)
+            .limit(size)
+        ).all()
     )
     return ApiResponse.ok(PageResponse.of(_artist_dtos(db, artists, uid), page, size, total).model_dump())
 
@@ -478,9 +496,21 @@ def get_artist(artist_id: int, db: DbSession):
 @router.get("/albums")
 def list_albums(db: DbSession, page: int = 0, size: int = 20):
     uid = current_user_id()
-    total = int(db.scalar(select(func.count(MusicAlbum.id))) or 0)
+    allowed = _allowed_ids(db)
+    total = int(
+        db.scalar(
+            select(func.count(MusicAlbum.id)).where(MusicAlbum.library_id.in_(allowed))
+        )
+        or 0
+    )
     albums = list(
-        db.scalars(select(MusicAlbum).order_by(MusicAlbum.title.asc()).offset(page * size).limit(size)).all()
+        db.scalars(
+            select(MusicAlbum)
+            .where(MusicAlbum.library_id.in_(allowed))
+            .order_by(MusicAlbum.title.asc())
+            .offset(page * size)
+            .limit(size)
+        ).all()
     )
     return ApiResponse.ok(PageResponse.of(_album_dtos(db, albums, uid), page, size, total).model_dump())
 
@@ -511,7 +541,8 @@ def search_songs(
     size: int = 20,
 ):
     uid = current_user_id()
-    query = select(MusicSong)
+    allowed = _allowed_ids(db)
+    query = select(MusicSong).where(MusicSong.library_id.in_(allowed))
     if genre:
         query = query.where(MusicSong.genre.ilike(genre))
     if albumId:
@@ -585,8 +616,16 @@ def get_artist_cover(artist_id: int, db: DbSession):
 
 @router.get("/genres")
 def get_genres(db: DbSession):
+    allowed = _allowed_ids(db)
     rows = db.scalars(
-        select(MusicSong.genre).where(MusicSong.genre.isnot(None), MusicSong.genre != "").distinct().order_by(MusicSong.genre)
+        select(MusicSong.genre)
+        .where(
+            MusicSong.library_id.in_(allowed),
+            MusicSong.genre.isnot(None),
+            MusicSong.genre != "",
+        )
+        .distinct()
+        .order_by(MusicSong.genre)
     ).all()
     return ApiResponse.ok(list(rows))
 
@@ -670,7 +709,7 @@ def _playlist_entries(db: Session, playlist_id: int) -> list[MusicSong]:
     for entry in entries:
         if entry.song_id:
             song = db.get(MusicSong, entry.song_id)
-            if song:
+            if song and _is_visible_library(db, song.library_id):
                 songs.append(song)
     return songs
 
@@ -1282,7 +1321,14 @@ def _ss_dispatch(db: Session, method: str, params: dict, request: Request) -> di
         ]
         return _ok_envelope({"musicFolders": {"musicFolder": [{"id": str(lib.id), "name": lib.name} for lib in libs]}})
     if method in ("getArtists", "getIndexes"):
-        artists = list(db.scalars(select(MusicArtist).order_by(MusicArtist.name.asc())).all())
+        allowed = _allowed_ids(db)
+        artists = list(
+            db.scalars(
+                select(MusicArtist)
+                .where(MusicArtist.library_id.in_(allowed))
+                .order_by(MusicArtist.name.asc())
+            ).all()
+        )
         by_letter: dict[str, list] = {}
         for artist in artists:
             name = artist.name or ""
@@ -1295,14 +1341,14 @@ def _ss_dispatch(db: Session, method: str, params: dict, request: Request) -> di
         return _ok_envelope({key: {"index": indexes}})
     if method == "getArtist":
         artist = _ss_find_artist(db, _q(params, "id"))
-        if artist is None:
+        if artist is None or not _is_visible_library(db, artist.library_id):
             raise SubsonicApiError(ERROR_NOT_FOUND, "Artist not found")
         dto = _ss_to_artist(db, artist, uid)
         dto["album"] = [_ss_to_album(db, a, uid) for a in _albums_of_artist(db, artist.id)]
         return _ok_envelope({"artist": dto})
     if method == "getAlbum":
         album = _ss_find_album(db, _q(params, "id"))
-        if album is None:
+        if album is None or not _is_visible_library(db, album.library_id):
             raise SubsonicApiError(ERROR_NOT_FOUND, "Album not found")
         dto = _ss_to_album(db, album, uid)
         songs = _songs_of_album(db, album.id)
@@ -1312,7 +1358,7 @@ def _ss_dispatch(db: Session, method: str, params: dict, request: Request) -> di
     if method == "getSong":
         song_id = _ss_parse_song(_q(params, "id"))
         song = db.get(MusicSong, song_id) if song_id else None
-        if song is None:
+        if song is None or not _is_visible_library(db, song.library_id):
             raise SubsonicApiError(ERROR_NOT_FOUND, "Song not found")
         return _ok_envelope({"song": _ss_to_song_clean(db, song, uid)})
     if method == "getMusicDirectory":
@@ -1326,7 +1372,8 @@ def _ss_dispatch(db: Session, method: str, params: dict, request: Request) -> di
         genre = _q(params, "genre")
         from_year = _qi(params, "fromYear")
         to_year = _qi(params, "toYear")
-        query = select(MusicSong)
+        allowed = _allowed_ids(db)
+        query = select(MusicSong).where(MusicSong.library_id.in_(allowed))
         if genre:
             query = query.where(MusicSong.genre.ilike(genre))
         if from_year is not None:
@@ -1342,16 +1389,25 @@ def _ss_dispatch(db: Session, method: str, params: dict, request: Request) -> di
         genre = _q(params, "genre") or ""
         count = _qi(params, "count", 10) or 10
         offset = _qi(params, "offset", 0) or 0
+        allowed = _allowed_ids(db)
         songs = list(
             db.scalars(
-                select(MusicSong).where(MusicSong.genre.ilike(genre)).offset(offset).limit(count)
+                select(MusicSong)
+                .where(MusicSong.library_id.in_(allowed), MusicSong.genre.ilike(genre))
+                .offset(offset)
+                .limit(count)
             ).all()
         )
         return _ok_envelope({"songsByGenre": {"song": _ss_songs(db, songs, uid)}})
     if method == "getGenres":
+        allowed = _allowed_ids(db)
         rows = db.execute(
             select(MusicSong.genre, func.count(MusicSong.id))
-            .where(MusicSong.genre.isnot(None), MusicSong.genre != "")
+            .where(
+                MusicSong.library_id.in_(allowed),
+                MusicSong.genre.isnot(None),
+                MusicSong.genre != "",
+            )
             .group_by(MusicSong.genre)
             .order_by(MusicSong.genre)
         ).all()
@@ -1519,7 +1575,7 @@ def _ss_directory(db: Session, raw: str | None, uid: int) -> dict:
     album_id = _ss_parse(raw, "al-")
     if artist_id is not None:
         artist = db.get(MusicArtist, artist_id)
-        if artist is None:
+        if artist is None or not _is_visible_library(db, artist.library_id):
             raise SubsonicApiError(ERROR_NOT_FOUND, "Directory not found")
         return {
             "id": _ss_artist_id(artist_id),
@@ -1528,7 +1584,7 @@ def _ss_directory(db: Session, raw: str | None, uid: int) -> dict:
         }
     if album_id is not None:
         album = db.get(MusicAlbum, album_id)
-        if album is None:
+        if album is None or not _is_visible_library(db, album.library_id):
             raise SubsonicApiError(ERROR_NOT_FOUND, "Directory not found")
         return {
             "id": _ss_album_id(album_id),
@@ -1545,7 +1601,8 @@ def _ss_album_list(db: Session, params: dict, uid: int) -> list[MusicAlbum]:
     from_year = _qi(params, "fromYear")
     to_year = _qi(params, "toYear")
     genre = _q(params, "genre")
-    query = select(MusicAlbum)
+    allowed = _allowed_ids(db)
+    query = select(MusicAlbum).where(MusicAlbum.library_id.in_(allowed))
     if genre:
         query = query.where(MusicAlbum.genre.ilike(genre))
     if type_ == "byYear" and (from_year is not None or to_year is not None):
@@ -1573,13 +1630,29 @@ def _ss_album_list(db: Session, params: dict, uid: int) -> list[MusicAlbum]:
 def _ss_search(db: Session, query: str, artist_count: int, album_count: int, song_count: int, uid: int) -> dict:
     if not query:
         return {}
+    allowed = _allowed_ids(db)
     like = f"%{query}%"
-    artists = list(db.scalars(select(MusicArtist).where(MusicArtist.name.ilike(like)).limit(artist_count)).all())
-    albums = list(db.scalars(select(MusicAlbum).where(MusicAlbum.title.ilike(like)).limit(album_count)).all())
+    artists = list(
+        db.scalars(
+            select(MusicArtist)
+            .where(MusicArtist.library_id.in_(allowed), MusicArtist.name.ilike(like))
+            .limit(artist_count)
+        ).all()
+    )
+    albums = list(
+        db.scalars(
+            select(MusicAlbum)
+            .where(MusicAlbum.library_id.in_(allowed), MusicAlbum.title.ilike(like))
+            .limit(album_count)
+        ).all()
+    )
     songs = list(
         db.scalars(
             select(MusicSong)
-            .where(or_(MusicSong.title.ilike(like), MusicSong.artist_name.ilike(like), MusicSong.album_name.ilike(like)))
+            .where(
+                MusicSong.library_id.in_(allowed),
+                or_(MusicSong.title.ilike(like), MusicSong.artist_name.ilike(like), MusicSong.album_name.ilike(like)),
+            )
             .limit(song_count)
         ).all()
     )
@@ -1591,16 +1664,17 @@ def _ss_search(db: Session, query: str, artist_count: int, album_count: int, son
 
 
 def _ss_starred(db: Session, uid: int) -> dict:
+    allowed = _allowed_ids(db)
     artist_ids = list(db.scalars(select(MusicStar.target_id).where(MusicStar.user_id == uid, MusicStar.target_type == TYPE_ARTIST)).all())
     album_ids = list(db.scalars(select(MusicStar.target_id).where(MusicStar.user_id == uid, MusicStar.target_type == TYPE_ALBUM)).all())
     song_ids = list(db.scalars(select(MusicStar.target_id).where(MusicStar.user_id == uid, MusicStar.target_type == TYPE_SONG)).all())
-    artists = [db.get(MusicArtist, i) for i in artist_ids]
-    albums = [db.get(MusicAlbum, i) for i in album_ids]
-    songs = [db.get(MusicSong, i) for i in song_ids]
+    artists = [a for i in artist_ids if (a := db.get(MusicArtist, i)) and _is_visible_library(db, a.library_id)]
+    albums = [a for i in album_ids if (a := db.get(MusicAlbum, i)) and _is_visible_library(db, a.library_id)]
+    songs = [s for i in song_ids if (s := db.get(MusicSong, i)) and _is_visible_library(db, s.library_id)]
     return {
-        "artist": [_ss_to_artist(db, a, uid) for a in artists if a],
-        "album": [_ss_to_album(db, a, uid) for a in albums if a],
-        "song": _ss_songs(db, [s for s in songs if s], uid),
+        "artist": [_ss_to_artist(db, a, uid) for a in artists],
+        "album": [_ss_to_album(db, a, uid) for a in albums],
+        "song": _ss_songs(db, songs, uid),
     }
 
 
@@ -1702,11 +1776,11 @@ def _ss_star(db: Session, uid: int, params: dict, status: bool) -> None:
         for value in values:
             if key == "albumId":
                 num = _ss_parse(str(value), "al-")
-                if num is not None:
+                if num is not None and _ss_target_visible(db, TYPE_ALBUM, num):
                     _set_star(db, uid, TYPE_ALBUM, num, status)
             elif key == "artistId":
                 num = _ss_parse(str(value), "ar-")
-                if num is not None:
+                if num is not None and _ss_target_visible(db, TYPE_ARTIST, num):
                     _set_star(db, uid, TYPE_ARTIST, num, status)
             else:
                 parsed = _ss_parse_any(str(value))
@@ -1715,6 +1789,8 @@ def _ss_star(db: Session, uid: int, params: dict, status: bool) -> None:
                 kind, num = parsed
                 t = {"artist": TYPE_ARTIST, "album": TYPE_ALBUM, "song": TYPE_SONG, "playlist": TYPE_SONG}[kind]
                 if kind == "playlist":
+                    continue
+                if not _ss_target_visible(db, t, num):
                     continue
                 _set_star(db, uid, t, num, status)
 
@@ -1726,6 +1802,9 @@ def _ss_set_rating(db: Session, uid: int, params: dict) -> None:
     if parsed is None:
         return
     kind, num = parsed
+    kinds = {"artist": TYPE_ARTIST, "album": TYPE_ALBUM, "song": TYPE_SONG}
+    if kind not in kinds or not _ss_target_visible(db, kinds[kind], num):
+        return
     if kind == "artist":
         _set_rating(db, uid, TYPE_ARTIST, num, rating)
     elif kind == "album":
@@ -1734,12 +1813,22 @@ def _ss_set_rating(db: Session, uid: int, params: dict) -> None:
         _set_rating(db, uid, TYPE_SONG, num, rating)
 
 
+def _ss_target_visible(db: Session, target_type: str, target_id: int) -> bool:
+    if target_type == TYPE_ARTIST:
+        obj = db.get(MusicArtist, target_id)
+    elif target_type == TYPE_ALBUM:
+        obj = db.get(MusicAlbum, target_id)
+    else:
+        obj = db.get(MusicSong, target_id)
+    return obj is not None and _is_visible_library(db, obj.library_id)
+
+
 def _ss_bookmarks(db: Session, uid: int, username: str) -> dict:
     rows = list(db.scalars(select(MusicBookmark).where(MusicBookmark.user_id == uid)).all())
     bookmarks = []
     for b in rows:
         song = db.get(MusicSong, b.song_id)
-        entry = _ss_to_song_clean(db, song, uid) if song else {}
+        entry = _ss_to_song_clean(db, song, uid) if song and _is_visible_library(db, song.library_id) else {}
         bookmarks.append(
             {
                 "username": username,
@@ -1758,13 +1847,13 @@ def _ss_play_queue(db: Session, uid: int, username: str) -> dict | None:
     if queue is None:
         return None
     ids = [int(x) for x in (queue.entry_ids or "").split(",") if x.strip().isdigit()]
-    songs = [db.get(MusicSong, i) for i in ids]
+    songs = [s for i in ids if (s := db.get(MusicSong, i)) and _is_visible_library(db, s.library_id)]
     return {
         "current": _ss_song_id(queue.current_song_id) if queue.current_song_id else None,
         "position": int(queue.position_seconds or 0),
         "username": username,
         "changed": queue.changed_at_millis,
-        "entry": _ss_songs(db, [s for s in songs if s], uid),
+        "entry": _ss_songs(db, songs, uid),
     }
 
 
@@ -1791,12 +1880,18 @@ def _ss_lyrics(db: Session, params: dict) -> dict:
     lyrics: dict = {}
     sid = _ss_parse_song(_q(params, "id"))
     song = db.get(MusicSong, sid) if sid else None
-    if song is None:
+    if song is None or not _is_visible_library(db, song.library_id):
         artist = _q(params, "artist")
         title = _q(params, "title")
         if artist and title:
             song = db.scalar(
-                select(MusicSong).where(MusicSong.title.ilike(f"%{title}%"), MusicSong.artist_name.ilike(f"%{artist}%")).limit(1)
+                select(MusicSong)
+                .where(
+                    MusicSong.library_id.in_(_allowed_ids(db)),
+                    MusicSong.title.ilike(f"%{title}%"),
+                    MusicSong.artist_name.ilike(f"%{artist}%"),
+                )
+                .limit(1)
             )
     if song is None:
         return lyrics
@@ -1817,7 +1912,7 @@ def _ss_binary(db: Session, method: str, params: dict, request: Request):
     if method in ("stream", "download"):
         sid = _ss_parse_song(_q(params, "id"))
         song = db.get(MusicSong, sid) if sid else None
-        if song is None:
+        if song is None or not _is_visible_library(db, song.library_id):
             raise SubsonicApiError(ERROR_NOT_FOUND, "Song not found")
         path = Path(song.file_path)
         if not path.is_file():
