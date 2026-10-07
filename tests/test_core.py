@@ -34,6 +34,19 @@ def test_password_hash():
 
 def test_clean_title():
     assert "Inception" in clean_title("Inception.2010.1080p.BluRay.x264")
+    # 词边界：噪声 token 只删「独立成词」的发布标记
+    assert clean_title("Assassin's Creed.2017.2160p.HDR10Plus.Dovi.WEB-DL.DDP.x265-ass.mkv") == (
+        "Assassin's Creed 2017"
+    )
+    assert clean_title("class") == "class"
+    assert clean_title("24K Magic") == "24K Magic"
+    # 扩展后的常见发布标记整段清除
+    assert clean_title("Some.Show.2160p.HDR10Plus.WEB-DL.DDP.x265.ass") == "Some Show"
+    assert clean_title("某剧【1080P】【H265】【内嵌字幕】") == "某剧"
+    assert clean_title(
+        "[TUDO&Ygm] Kono Yuusha ga Ore Tsueee Kuse ni Shinchou Sugiru "
+        "[01][Ma10p_2160p][x265_flac_ass].mkv"
+    ) == "Kono Yuusha ga Ore Tsueee Kuse ni Shinchou Sugiru"
 
 
 def test_primary_title():

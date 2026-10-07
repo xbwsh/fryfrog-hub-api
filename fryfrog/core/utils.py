@@ -3,13 +3,34 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# 常见噪声 token（扩展名外）
+# 常见噪声 token（扩展名外）。两侧用 ASCII 字母/数字边界夹住：
+# 只删「独立成词的发布标记」，不碰 `Assassin's Creed`、`class`、`24K` 这类
+# 标题里的合法子串。分支按「长词在前」排列，避免 `hdr10plus` 被 `hdr10` 截胡。
 _NOISE = re.compile(
-    r"(?i)(2160p|1080p|720p|4k|10bit|8bit|12bit|x264|x265|h264|h265|hevc|avc|"
-    r"aac|ac3|eac3|ddp|dts|truehd|atmos|dolby|ma10p|flac|web-?dl|"
-    r"bluray|blu-ray|bdrip|brrip|dvdrip|hdrip|webrip|hdtv|remux|proper|repack|internal|"
-    r"hdr10|hdr|chs|cht|gb|big5|简体|繁体|中字|双语|未删减|无删减|蓝光|高清|"
-    r"cd1|cd2|disc1|disc2|part1|part2|mp3|flac|m4a|wav|epub|mobi|pdf|cbz|cbr|zip|rar)"
+    r"(?i)(?<![a-z0-9])("
+    # 分辨率
+    r"4320p|2160p|1080p|720p|576p|480p|8k|4k|"
+    # HDR / 动态范围
+    r"hdr10plus|hdr10|dolbyvision|dolby|dovi|hdr|"
+    # 视频编码
+    r"h\.?265|h\.?264|x265|x264|hevc|avc|av1|vp9|vp8|xvid|divx|mpeg[24]|"
+    # 音频
+    r"truehd|dts-?x|dts|atmos|dd(?:\+|p)|eac3|ac3|aac|flac|alac|pcm|lpcm|opus|ogg|mp3|m4a|m4b|wav|"
+    # 字幕
+    r"subbed|dubbed|subs?|ass|srt|dual-?audio|multi-?audio|"
+    # 来源
+    r"web-?dl|webrip|hdtv|hdrip|bdrip|brrip|dvdrip|blu-?ray|remux|"
+    # 版本标记
+    r"openmatte|director'?s?[\s.\-]*cut|extended|theatrical|unrated|uncensored|censored|"
+    r"complete|scalepack|scaled|remaster|proper|repack|internal|imax|ova|"
+    # 平台
+    r"crunchyroll|funimation|hidive|netflix|hmax|dsnp|atvp|itunes|amzn|"
+    # 语言 / 中文字幕
+    r"chs|cht|gb|big5|简体|繁体|中字|国语|台配|粤配|国配|内嵌|外挂|双音轨|双语|字幕|未删减|无删减|蓝光|高清|"
+    # 分卷 / 色深 / 帧率 / 媒体格式
+    r"cd\d+|disc\d+|part\s*[12]|10bit|12bit|8bit|ma10p|\d{2,3}fps|"
+    r"epub|mobi|pdf|cbz|cbr|zip|rar"
+    r")(?![a-z0-9])"
 )
 
 _BRACKET = re.compile(r"[\[\(【（][^\]\)】）]*[\]\)】）]")
@@ -38,7 +59,10 @@ def title_head(name: str) -> str:
 
 def title_parts(name: str) -> list[str]:
     """发布名的各标题段（已清洗），如「中文名.英文名」→ [中文名, 英文名]。"""
-    parts = [clean_title(part) for part in re.split(r"[._]+", title_head(name))]
+    # 先剥掉括号（含组名/集号/编码标记），否则 `[x265_flac_ass]` 会被
+    # `[._]+` 拆成 `'][', 'flac', 'ass]'` 这类垃圾段。
+    head = _BRACKET.sub(" ", title_head(name))
+    parts = [clean_title(part) for part in re.split(r"[._]+", head)]
     return [part for part in parts if part]
 
 

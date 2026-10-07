@@ -39,11 +39,22 @@ _HASH_EPISODE = re.compile(r"(?<![\dA-Za-z])[#＃]\s*(\d{1,3})(?!\d)")
 # 从剧名里剥掉集号标记（与下面 SxxExx / 1x05 的处理保持一致）
 _HASH_EPISODE_STRIP = re.compile(r"[#＃]\s*\d{1,3}(?!\d)")
 
+# `[01]` / `(03)` / `【2】` / `[第1话]` 形式的方括号集号，日系/同人发布常见
+# （`[TUDO&Ygm] ... [01][Ma10p_2160p]...` 这类命名之前完全解析不出集号）。
+#
+# 误判防护：
+#  - 数字前不允许紧贴字母/数字/`-`/`/`：`[FR2]`、`[01-12]` 都不认；
+#  - 只认 1~3 位数字：`[2024]` 年份不认；
+#  - 数字后必须紧跟右括号（或 `第N集/话` 标记）：`[1080p]`、`[Ma10p_2160p]` 不认。
+_BRACKETED_EPISODE = re.compile(
+    r"[\[\(【（]\s*(?:第\s*)?(?<![a-z0-9\-/])(\d{1,3})\s*(?:[集話话])?\s*[\]\)】）]"
+)
+
 
 def parse_episode(title: str) -> tuple[str, int | None, int | None]:
     """返回 (seriesName, season, episode) 的粗解析。
 
-    按「越具体越优先」的顺序尝试：SxxExx → 1x05 → EP/第N话/第N集 → **#N**。
+    按「越具体越优先」的顺序尝试：SxxExx → 1x05 → EP/第N话/第N集 → **#N** → **[N]**。
     """
     import re
 
@@ -71,6 +82,11 @@ def parse_episode(title: str) -> tuple[str, int | None, int | None]:
                 m = _HASH_EPISODE.search(title)
                 if m:
                     episode = int(m.group(1))
+                else:
+                    # 括号裸集号最弱：`[01]` 只有被括号包住的纯数字才算
+                    m = _BRACKETED_EPISODE.search(title)
+                    if m:
+                        episode = int(m.group(1))
             m = re.search(r"第\s*(\d{1,2})\s*季", title, re.I)
             if m:
                 season = int(m.group(1))
