@@ -642,8 +642,12 @@ def generate_series_nfo(
     if not roots:
         return None
     target = roots[0] / "tvshow.nfo"
+    # 剧根目录不存在（视频散放/未整理的库）时**不创建**：
+    # 重建路径 mkdir 会把「库根/剧名」空壳目录造出来，用户删除后每次
+    # 扫描又长回来（实测：散放视频 + 空 tvshow.nfo 目录）。
+    if not target.parent.is_dir():
+        return None
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             build_series_nfo(series, detail, sample=episodes[0]), encoding="utf-8"
         )
@@ -659,8 +663,10 @@ def generate_season_nfo(db: Session, video: Video, season: dict) -> str | None:
     if season_dir is None:
         return None
     target = season_dir / "season.nfo"
+    # 与 generate_series_nfo 同理：季目录不存在（散放视频）时不创建空壳。
+    if not target.parent.is_dir():
+        return None
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(build_season_nfo(season), encoding="utf-8")
         return str(target)
     except Exception:
@@ -813,7 +819,11 @@ def ensure_season_poster(
     target = season_dir / "tvshow-poster.jpg"
     if target.is_file():
         return target, False
-    season_dir.mkdir(parents=True, exist_ok=True)
+    # 季目录不存在（视频散放/未整理，重建路径是空的）时不创建空壳目录：
+    # 扫描每集都会调用本函数，mkdir 会把「库根/剧名/第N季」这类空目录
+    # 一遍遍长回来（用户删掉也没用——下次扫描又建）。
+    if not season_dir.is_dir():
+        return None, False
 
     tmdb_id = series_tmdb_id
     if tmdb_id is None and video.series is not None:
@@ -928,10 +938,13 @@ def download_series_root_art(
     root = get_series_root_dir(db, episodes)
     if root is None or not series.tmdb_id:
         return result
+    # 剧名根目录不存在（未整理/散放）时不创建：自动刮削与扫描会调用
+    # 本函数，mkdir 会把空壳剧名目录一遍遍重建（用户删不掉）。
+    if not root.is_dir():
+        return result
     client = TmdbClient()
     if detail is None:
         detail = client.get_tv(series.tmdb_id) or {}
-    root.mkdir(parents=True, exist_ok=True)
 
     poster_url = client.image_url(detail.get("poster_path")) or series.poster_url
     if poster_url:
