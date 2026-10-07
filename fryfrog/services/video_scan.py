@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -389,7 +389,17 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
                 video.series_name = series_name
                 if not video.title or is_new:
                     video.title = f"{series_name} S{video.season_number:02d}E{(episode or 0):02d}"
-                series = db.scalar(select(VideoSeries).where(VideoSeries.title == series_name))
+                # 已刮削的分集优先按 TMDB 剧 ID 归位：历史 bug 把同一部剧拆成
+                # 每集一个系列（系列被刮削改名成中文后，扫描按旧英文名再也找不到
+                # 它，只能每集重建——实测慎重勇者 12 集 = 12 个同名系列）。
+                # 按 tmdb_id 挂载一遍即可自愈，配合末尾 merge_duplicate_series 收尾。
+                series = None
+                if video.tmdb_id:
+                    series = db.scalar(
+                        select(VideoSeries).where(VideoSeries.tmdb_id == video.tmdb_id)
+                    )
+                if series is None:
+                    series = db.scalar(select(VideoSeries).where(VideoSeries.title == series_name))
                 if series is None:
                     series = VideoSeries(title=series_name)
                     db.add(series)
@@ -512,10 +522,48 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
     removed_dirs = cleanup_orphan_asset_dirs(db, root)
     if removed_dirs:
         logger.info("视频库扫描清理空壳素材目录 %d 个: %s", removed_dirs, library.name)
+    merged = merge_duplicate_series(db)
+    if merged:
+        logger.info("视频库扫描收敛重复系列 %d 个: %s", merged, library.name)
     logger.info(
         "视频库扫描完成: %s, 新增/更新 %d 条, 清理已删除 %d 条", library.name, count, removed_rows
     )
     return count
+
+
+def merge_duplicate_series(db: Session) -> int:
+    """按 tmdb_id 收敛同一部剧的重复系列（历史分裂自愈），返回删除的副系列数。
+
+    分裂成因：扫描按清洗后的英文发布名建/找系列，刮削把该系列标题改成
+    TMDB 中文名——逐集扫描按英文名再也找不到旧系列，每集都新建一个，
+    最终同一部剧散成 N 个同名系列。保留 id 最小的系列，把其余系列的分集
+    迁过去后删除空壳。
+    """
+    victims = 0
+    dup_tmdb_ids = db.execute(
+        select(VideoSeries.tmdb_id)
+        .where(VideoSeries.tmdb_id.is_not(None))
+        .group_by(VideoSeries.tmdb_id)
+        .having(func.count(VideoSeries.id) > 1)
+    ).all()
+    for (tmdb_id,) in dup_tmdb_ids:
+        dups = list(
+            db.scalars(
+                select(VideoSeries)
+                .where(VideoSeries.tmdb_id == tmdb_id)
+                .order_by(VideoSeries.id.asc())
+            ).all()
+        )
+        keep, rest = dups[0], dups[1:]
+        for series in rest:
+            db.execute(
+                update(Video).where(Video.series_id == series.id).values(series_id=keep.id)
+            )
+            db.delete(series)
+            victims += 1
+    if victims:
+        db.flush()
+    return victims
 
 
 def cleanup_redundant_frames(db: Session, video: Video) -> int:

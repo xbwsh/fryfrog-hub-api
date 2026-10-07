@@ -238,6 +238,13 @@ def _apply_tv_detail(db: Session, video: Video, detail: dict, client: TmdbClient
         video.director = ",".join(c.get("name") or "" for c in creators if c.get("name"))
 
     series = video.series
+    if series is not None and detail.get("id") and series.tmdb_id != detail["id"]:
+        # 当前系列绑着别的剧（扫描按英文名新建、尚未刮削的系列）：
+        # 让位给正确的剧系列，避免同一部剧逐集刮削出 N 个系列
+        # （历史 bug 的成因，配套收敛见 video_scan.merge_duplicate_series）
+        series = None
+    if series is None and detail.get("id"):
+        series = db.scalar(select(VideoSeries).where(VideoSeries.tmdb_id == detail["id"]))
     if series is None:
         series = db.scalar(select(VideoSeries).where(VideoSeries.title == show_title))
     if series is None:
