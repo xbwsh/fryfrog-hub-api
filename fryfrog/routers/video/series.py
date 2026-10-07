@@ -463,6 +463,10 @@ def refresh_season_covers(db: DbSession, id: int):
     client = TmdbClient()
     seasons = {vs.season_of(e) for e in episodes}
     by_ep = {(vs.season_of(e), e.episode_number): e for e in episodes}
+    detail = client.get_tv(series.tmdb_id)
+    # 总封面/总横屏先落地（剧名根目录）：季海报下载不到时，ensure_season_poster
+    # 要复制剧根总海报，先写根才能同一次刷新里补上季目录（否则要刷两次）。
+    root_art = assets.download_series_root_art(db, series, episodes, detail=detail)
     for sn in seasons:
         season = client.get_season(series.tmdb_id, sn)
         if not season:
@@ -482,10 +486,7 @@ def refresh_season_covers(db: DbSession, id: int):
             _, created = assets.ensure_season_poster(db, anchor, series.tmdb_id)
             if created:
                 season_posters += 1
-    detail = client.get_tv(series.tmdb_id)
     cast = ((detail or {}).get("credits") or {}).get("cast") or []
-    # 总封面/总横屏落地到剧名根目录（与季文件夹同级）；季横屏复用总横屏，不再逐季写入
-    root_art = assets.download_series_root_art(db, series, episodes, detail=detail)
     for e in episodes:
         # 已有季海报的分集：竖封面共用季海报，不再下载各自的 poster
         season_dir = vs.get_season_dir(db, e)

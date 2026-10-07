@@ -898,6 +898,19 @@ def prune_private_vertical_cover(db: Session, video: Video) -> bool:
         return False
 
 
+def _looks_vertical(path: Path) -> bool:
+    """图片是否竖图（只读文件头，不解码整图）。读不出来时按竖图处理（保持原行为）。"""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            width, height = im.size
+        return height >= width
+    except Exception:
+        logger.debug("判断图片方向失败，按竖图处理: %s", path, exc_info=True)
+        return True
+
+
 def download_all_covers(
     db: Session, video: Video, force: bool = False, poster: bool = True
 ) -> bool:
@@ -909,9 +922,19 @@ def download_all_covers(
         poster = False
         prune_private_vertical_cover(db, video)
     if poster and video.poster_url:
-        poster_ok = download_image(_full_image_url(video.poster_url), get_poster_path(db, video), force)
+        target = get_poster_path(db, video)
+        poster_ok = download_image(_full_image_url(video.poster_url), target, force)
+        # 分集的 poster_url 常是 TMDB 单集剧照（16:9）：落进 poster.jpg 会被
+        # 当作竖封面返回、在 2:3 区域里裁成横图（实测「慎重勇者」12 集）。
+        # 横图删掉，让读取端回退季/剧海报。
+        if poster_ok and video.is_episode and not _looks_vertical(target):
+            try:
+                target.unlink()
+            except OSError:
+                logger.debug("删除横图版分集海报失败: %s", target, exc_info=True)
+            poster_ok = False
         if poster_ok:
-            video.cover_art_path = str(get_poster_path(db, video))
+            video.cover_art_path = str(target)
     # 分集横屏是 TMDB 单集 still：分集恒定 force 下载，覆盖历史「剧 backdrop 拷贝」文件
     if video.backdrop_url:
         fanart_ok = download_image(

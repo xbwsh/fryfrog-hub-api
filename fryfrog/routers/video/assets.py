@@ -86,9 +86,16 @@ def get_cover(db: DbSession, id: int):
             if name.startswith("thumb") or "-thumb." in name:
                 continue
             return FileResponse(str(candidate), media_type="image/jpeg")
-    # 远程 TMDB 兜底（经 make_client 走代理），避免退化到截帧/占位
-    if video.poster_url:
-        data = assets.fetch_tmdb_image(video.poster_url)
+    # 远程 TMDB 兜底（经 make_client 走代理），避免退化到截帧/占位。
+    # 分集的 poster_url 是 TMDB 单集**剧照**（16:9，见 video_scrape.
+    # _apply_episode_detail），拿它当竖封面会被 2:3 区域裁成横图——实测
+    # 「慎重勇者」全 12 集都这样回来的。分集改试剧集级竖海报。
+    poster_url = video.poster_url
+    if video.is_episode and video.series_id:
+        series = vs.get_series(db, video.series_id)
+        poster_url = series.poster_url if series is not None else None
+    if poster_url:
+        data = assets.fetch_tmdb_image(poster_url)
         if data:
             return Response(
                 content=data,
