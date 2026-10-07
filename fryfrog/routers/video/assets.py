@@ -72,10 +72,19 @@ def get_cover(db: DbSession, id: int):
             if root_poster.is_file():
                 return FileResponse(str(root_poster), media_type="image/jpeg")
     if video.cover_art_path and Path(video.cover_art_path).exists():
-        return FileResponse(video.cover_art_path, media_type="image/jpeg")
+        # 历史扫描可能把横屏缩略图（thumb.jpg 等）写进了 cover_art_path，
+        # 当竖封面会被 2:3 区域裁切，跳过它继续走正经竖封面候选。
+        cover_name = Path(video.cover_art_path).name.lower()
+        if not cover_name.startswith("thumb") and "-thumb." not in cover_name:
+            return FileResponse(video.cover_art_path, media_type="image/jpeg")
     # 本地刮削产物优先（含无前缀 poster.jpg/folder.jpg/thumb.jpg），最后才截帧
     for candidate in vs.local_poster_candidates(db, video):
         if candidate.exists():
+            # thumb.jpg 常见是横屏缩略图（尤其分集缩略图），
+            # 作为竖封面会被 2:3 区域裁切，跳过它继续找正儿八经的竖海报。
+            name = candidate.name.lower()
+            if name.startswith("thumb") or "-thumb." in name:
+                continue
             return FileResponse(str(candidate), media_type="image/jpeg")
     # 远程 TMDB 兜底（经 make_client 走代理），避免退化到截帧/占位
     if video.poster_url:

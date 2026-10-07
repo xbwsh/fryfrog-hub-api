@@ -712,8 +712,6 @@ def get_series_fanart(db: DbSession, id: int):
     backdrop_url = None
     if series is not None:
         title = series.title
-        if series.backdrop_local_path and Path(series.backdrop_local_path).exists():
-            return FileResponse(series.backdrop_local_path, media_type="image/jpeg")
         episodes = vs.series_videos(db, id)
         # 总横屏：剧名根目录（与总竖屏放一起，季横屏复用此图）
         root_fanart = vs.find_series_root_file(db, episodes, "tvshow-fanart.jpg")
@@ -722,14 +720,26 @@ def get_series_fanart(db: DbSession, id: int):
                 series.backdrop_local_path = str(root_fanart)
                 db.flush()
             return FileResponse(str(root_fanart), media_type="image/jpeg")
+        # 本地缓存只信任剧名根目录下的；历史版本可能把季/集目录横屏
+        # （如第一季第一集的 fanart/截帧）写进 backdrop_local_path，
+        # 这种错位缓存不能当总横屏返回。
+        if series.backdrop_local_path:
+            cached = Path(series.backdrop_local_path)
+            try:
+                roots = {r.resolve() for r in vs.series_root_candidates(db, episodes)}
+            except Exception:
+                roots = set()
+            if (
+                cached.exists()
+                and roots
+                and cached.parent.resolve() in roots
+            ):
+                return FileResponse(str(cached), media_type="image/jpeg")
         # Local horizontal art next to episodes / season folder.
         local = _find_local_series_fanart(db, episodes)
         if local is not None:
-            try:
-                series.backdrop_local_path = str(local)
-                db.flush()
-            except Exception:
-                logger.debug("persist series fanart failed id=%s", id)
+            # 只回退展示，不再写回持久化：否则下次访问会被旧路径抢占，
+            # 根目录后补的 tvshow-fanart.jpg 永远轮不到。
             return FileResponse(str(local), media_type="image/jpeg")
         # Series row has no backdrop — reuse first episode art (incl. frame grab).
         if episodes:
