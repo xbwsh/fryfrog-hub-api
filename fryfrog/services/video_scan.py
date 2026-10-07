@@ -525,10 +525,37 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
     merged = merge_duplicate_series(db)
     if merged:
         logger.info("视频库扫描收敛重复系列 %d 个: %s", merged, library.name)
+    orphaned_series = cleanup_orphan_series(db)
+    if orphaned_series:
+        logger.info("视频库扫描清理空壳系列 %d 个: %s", orphaned_series, library.name)
     logger.info(
         "视频库扫描完成: %s, 新增/更新 %d 条, 清理已删除 %d 条", library.name, count, removed_rows
     )
     return count
+
+
+def cleanup_orphan_series(db: Session) -> int:
+    """删除没有分集的空壳系列（如刮削归并后遗留的英文名系列）。返回删除数。
+
+    成因：分集先挂在某系列下，刮削按 tmdb_id 归并到另一系列后，原系列
+    没有被清掉——尤其 tmdb_id 为空时 merge_duplicate_series 抓不到它
+    （实测慎重勇者：英文名空壳 216 与中文名 12 集系列 204 并存）。
+    这类系列无元数据、无分集，列表/详情都无法展示，纯残留，直接删。
+    """
+    victims = 0
+    for series in db.scalars(
+        select(VideoSeries).where(
+            select(Video.id)
+            .where(Video.series_id == VideoSeries.id)
+            .exists()
+            .is_(False)
+        )
+    ).all():
+        db.delete(series)
+        victims += 1
+    if victims:
+        db.flush()
+    return victims
 
 
 def merge_duplicate_series(db: Session) -> int:

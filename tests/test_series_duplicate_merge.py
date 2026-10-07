@@ -153,3 +153,44 @@ def test_apply_tv_detail_joins_existing_tmdb_series():
     # 空壳系列仍在（留给扫描末 merge_duplicate_series 收敛），但不再有分集
     assert db.get(VideoSeries, shell.id) is not None
     assert series_a.title == "慎重勇者 ～这个勇者明明超强却过分慎重～"
+
+
+def test_cleanup_orphan_series_removes_shell_without_episodes():
+    """无分集的空壳系列（如刮削归并后遗留的英文名系列）应被清理。"""
+    db = _mk_db()
+    real = VideoSeries(title="慎重勇者 ～这个勇者明明超强却过分慎重～", tmdb_id=93256)
+    shell = VideoSeries(title="Kono Yuusha ga Ore Tsueee Kuse ni Shinchou Sugiru")
+    db.add_all([real, shell])
+    db.flush()
+    v1 = _mk_video(db, "/m/a/01.mkv", 1, real.id)
+    db.flush()
+
+    assert video_scan.cleanup_orphan_series(db) == 1
+    db.flush()
+
+    assert db.get(VideoSeries, shell.id) is None, "空壳系列应被删除"
+    assert db.get(VideoSeries, real.id) is not None, "有分集的系列不受影响"
+    assert db.get(Video, v1.id).series_id == real.id
+
+
+def test_cleanup_orphan_series_keeps_series_with_missing_episode():
+    """分集文件暂时缺失（missing_since 有值）的系列不算空壳，不能删。"""
+    from datetime import datetime
+
+    db = _mk_db()
+    series = VideoSeries(title="慎重勇者 ～这个勇者明明超强却过分慎重～", tmdb_id=93256)
+    db.add(series)
+    db.flush()
+    v1 = Video(
+        file_path="/m/a/01.mkv", file_name="01.mkv", title="占位",
+        media_type="tv", is_series=True, season_number=1, episode_number=1,
+        series_id=series.id,
+        missing_since=datetime(2026, 10, 1, 0, 0, 0),
+    )
+    db.add(v1)
+    db.flush()
+
+    assert video_scan.cleanup_orphan_series(db) == 0
+    db.flush()
+
+    assert db.get(VideoSeries, series.id) is not None, "缺失分集也算有分集，不能删"
