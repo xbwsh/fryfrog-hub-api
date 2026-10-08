@@ -277,15 +277,23 @@ class FileWatcher:
                 raise OSError(ctypes.get_errno(), f"inotify_add_watch failed: {path}")
             self._watch_paths[wd] = str(path)
             self._watch_fail_warned = False
-        except Exception:
+        except FileNotFoundError:
+            # 目录还没建出来（老库路径没挂载等）：video_scan 已有
+            # “媒体库路径不存在” WARNING，这里降 debug。绝不能带
+            # exc_info——冒烟测试按日志里有无 Traceback 判启动异常
+            logger.debug("inotify watch skipped, path missing: %s", path)
+        except Exception as exc:
             if not self._watch_fail_warned:
                 self._watch_fail_warned = True
+                # 异常文本并进消息、不带 traceback：配额耗尽这类失败每个目录
+                # 都会发生，运维需要在日志看到原因，但 traceback 会被冒烟
+                # 测试的 Traceback 扫描误判为启动崩溃
                 logger.warning(
-                    "inotify watch 注册失败: %s（常见原因：fs.inotify.max_user_watches "
+                    "inotify watch 注册失败: %s（%s）。常见原因：fs.inotify.max_user_watches "
                     "配额耗尽，超出部分目录将不再触发热扫描，且 inotify 模式无轮询兜底；"
-                    "可调大内核配额或设 WATCHER_ENABLED=false 改用周期扫描）",
+                    "可调大内核配额或设 WATCHER_ENABLED=false 改用周期扫描",
                     path,
-                    exc_info=True,
+                    exc,
                 )
             else:
                 logger.debug("inotify watch failed: %s", path, exc_info=True)

@@ -174,3 +174,38 @@ def test_inotify_mode_still_fires_debounced_scan(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher.time, "time", lambda: 1000.0 + watcher.DEBOUNCE_SECONDS + 1)
     worker._tick()
     assert fired == [lib.path], "inotify 模式下去抖事件也必须触发扫描"
+
+
+def test_watch_fail_logs_never_carry_traceback(caplog, tmp_path):
+    """冒烟测试按日志里有无 Traceback 判启动异常：watch 注册失败不得带 exc_info。
+
+    实测故障：老库路径 /data/media/video 没挂载，inotify_add_watch 抛
+    FileNotFoundError，warning(exc_info=True) 打出完整 Traceback → CI 直接红。
+    """
+    import logging as _logging
+
+    worker = watcher.FileWatcher()
+
+    class _QuotaExhausted:
+        def inotify_add_watch(self, fd, path, mask):
+            raise OSError(28, f"inotify_add_watch failed: {path}")  # ENOSPC
+
+    worker._event = (0, _QuotaExhausted())
+    with caplog.at_level(_logging.DEBUG):
+        worker._add_watch(tmp_path / "sub")
+    warns = [r for r in caplog.records if "inotify watch 注册失败" in r.getMessage()]
+    assert warns, "配额耗尽必须保留 WARNING（inotify 模式无轮询兜底，运维可见）"
+    assert warns[0].exc_info is None, "WARNING 不能带 traceback"
+    assert "Errno 28" in warns[0].getMessage(), "异常文本并进消息，errno 仍可见"
+
+    class _PathMissing:
+        def inotify_add_watch(self, fd, path, mask):
+            raise FileNotFoundError(2, f"inotify_add_watch failed: {path}")
+
+    caplog.clear()
+    worker._event = (0, _PathMissing())
+    with caplog.at_level(_logging.DEBUG):
+        worker._add_watch(tmp_path / "nope")
+    assert not [r for r in caplog.records if r.levelno >= _logging.WARNING], (
+        "目录不存在只是预期缺挂载，video_scan 已有 WARNING，watcher 不再重复告警"
+    )
