@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import html
 import json
 import logging
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -23,7 +25,14 @@ from fryfrog.core.api_response import ApiResponse, PageResponse
 from fryfrog.core.crypto import SubsonicPasswordEncryptor
 from fryfrog.core.deps import DbSession, get_media_library_service
 from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
-from fryfrog.core.security import ANONYMOUS_ID, UserService, current_user_id, set_current_user_id, verify_password
+from fryfrog.core.security import (
+    ANONYMOUS_ID,
+    LoginThrottle,
+    UserService,
+    current_user_id,
+    set_current_user_id,
+    verify_password,
+)
 from fryfrog.core.signer import sign
 from fryfrog.core.utils import placeholder_jpeg
 from fryfrog.models.library import MediaLibrary
@@ -42,7 +51,7 @@ from fryfrog.models.music import (
 from fryfrog.models.user import User, UserRole
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
-from fryfrog.services.music_scan import organize_music_library, scan_music_library
+from fryfrog.services.music_scan import organize_music_library
 
 logger = logging.getLogger(__name__)
 
@@ -958,14 +967,15 @@ def scan(
         libs = [lib]
     else:
         libs = [lib for lib in service.get_visible_libraries(db) if lib.is_music_type()]
-    results = []
-    for lib in libs:
-        try:
-            results.append(scan_music_library(db, lib))
-        except Exception as exc:
-            logger.warning("Music scan failed library %s: %s", lib.id, exc)
-            results.append({"libraryId": lib.id, "error": str(exc)})
-    return ApiResponse.ok({"status": "started", "libraryCount": len(libs), "results": results}, message="扫描任务已启动")
+    # 后台线程执行：首次扫描逐条 ffprobe，1 万首歌可达数小时——在请求里同步跑
+    # 会一直占着线程且客户端长时间挂起。走 submit_scan_job 统一获得：
+    # 占位护栏（防热监听/周期/手动并发扫同一库）+ 进度上报 + 每库独立提交。
+    from fryfrog.services.scan import submit_scan_job
+
+    submit_scan_job([lib.id for lib in libs if lib.id is not None])
+    return ApiResponse.ok(
+        {"status": "started", "libraryCount": len(libs)}, message="扫描任务已启动"
+    )
 
 
 # ── Subsonic ──────────────────────────────────────────────
@@ -982,8 +992,16 @@ class SubsonicAuthService:
             return None
         if not username:
             raise SubsonicApiError(ERROR_AUTH, "Missing username")
+        # /rest 不走 Bearer 中间件，登录失败限速必须在这里做，否则可无限爆破。
+        # key 与 /auth/login 同为用户名：同一账号换个入口不能绕过锁定
+        throttle = LoginThrottle.shared()
+        throttle_key = username
+        retry_after = throttle.retry_after(throttle_key)
+        if retry_after > 0:
+            raise SubsonicApiError(ERROR_AUTH, f"Too many failed logins, retry in {retry_after}s")
         user = db.scalar(select(User).where(User.username == username))
         if user is None or not user.enabled:
+            throttle.record_failure(throttle_key)
             raise SubsonicApiError(ERROR_AUTH, "Wrong username or password")
         plain = self.encryptor.decrypt(user.subsonic_password) if user.subsonic_password else None
 
@@ -996,17 +1014,19 @@ class SubsonicAuthService:
                 except ValueError:
                     raise SubsonicApiError(ERROR_AUTH, "Invalid enc password")
             if plain is not None:
-                valid = pass_val == plain
+                valid = hmac.compare_digest(pass_val, plain)
             elif user.password_hash:
                 valid = verify_password(pass_val, user.password_hash)
         elif token and salt:
             if plain is None:
                 raise SubsonicApiError(ERROR_AUTH, "Token auth requires password reset (no subsonic password on record)")
             expected = hashlib.md5((plain + salt).encode("utf-8")).hexdigest()
-            valid = expected.lower() == token.lower()
+            valid = hmac.compare_digest(expected.lower(), token.lower())
 
         if not valid:
+            throttle.record_failure(throttle_key)
             raise SubsonicApiError(ERROR_AUTH, "Wrong username or password")
+        throttle.record_success(throttle_key)
         return user
 
 
@@ -1280,15 +1300,21 @@ async def subsonic_entry(method: str, request: Request, db: DbSession):
     fmt = _q(params, "f")
     callback = _q(params, "callback")
     method_name = method[:-5] if method.endswith(".view") else method
-    try:
-        if method_name in ("stream", "download", "getCoverArt", "getAvatar", "hls"):
-            return _ss_binary(db, method_name, params, request)
-        return _render_envelope(_ss_dispatch(db, method_name, params, request), fmt, callback)
-    except SubsonicApiError as exc:
-        return _render_envelope(_error_envelope(exc.code, exc.message), fmt, callback)
-    except Exception as exc:
-        logger.warning("Subsonic %s error: %s", method_name, exc, exc_info=True)
-        return _render_envelope(_error_envelope(ERROR_GENERIC, str(exc)), fmt, callback)
+
+    def _handle():
+        try:
+            if method_name in ("stream", "download", "getCoverArt", "getAvatar", "hls"):
+                return _ss_binary(db, method_name, params, request)
+            return _render_envelope(_ss_dispatch(db, method_name, params, request), fmt, callback)
+        except SubsonicApiError as exc:
+            return _render_envelope(_error_envelope(exc.code, exc.message), fmt, callback)
+        except Exception as exc:
+            logger.warning("Subsonic %s error: %s", method_name, exc, exc_info=True)
+            return _render_envelope(_error_envelope(ERROR_GENERIC, str(exc)), fmt, callback)
+
+    # 整个分发都是同步重活（SQLite 查询、封面要起 ffmpeg 子进程）：直接在 async
+    # 入口里跑会堵死事件循环，几个并发的封面请求就能让整个服务停摆。
+    return await run_in_threadpool(_handle)
 
 
 def _ss_auth(db: Session, params: dict) -> User | None:
@@ -1931,26 +1957,35 @@ def _ss_binary(db: Session, method: str, params: dict, request: Request):
             kind, num = parsed
             if kind == "artist":
                 artist = db.get(MusicArtist, num)
-                return _image_response(artist.cover_art_path if artist else None)
+                if not artist or not _is_visible_library(db, artist.library_id):
+                    return Response(content=placeholder_jpeg(), media_type="image/jpeg")
+                if artist.cover_art_path:
+                    return _image_response(artist.cover_art_path)
+                return Response(content=placeholder_jpeg(), media_type="image/jpeg")
             if kind == "album":
                 album = db.get(MusicAlbum, num)
-                if album and album.cover_art_path and Path(album.cover_art_path).is_file():
+                # 校验可见性：隐藏库的专辑封面不允许泄露（与 stream/download 一致）
+                if not album or not _is_visible_library(db, album.library_id):
+                    return Response(content=placeholder_jpeg(), media_type="image/jpeg")
+                if album.cover_art_path and Path(album.cover_art_path).is_file():
                     return _image_response(album.cover_art_path)
-                if album:
-                    for song in _songs_of_album(db, num):
-                        embedded = _embedded_cover(song.file_path)
-                        if embedded:
-                            return Response(content=embedded[0], media_type=embedded[1])
-            if kind == "song":
-                song = db.get(MusicSong, num)
-                if song and song.album_id:
-                    album = db.get(MusicAlbum, song.album_id)
-                    if album and album.cover_art_path and Path(album.cover_art_path).is_file():
-                        return _image_response(album.cover_art_path)
-                if song:
+                for song in _songs_of_album(db, num):
                     embedded = _embedded_cover(song.file_path)
                     if embedded:
                         return Response(content=embedded[0], media_type=embedded[1])
+                return Response(content=placeholder_jpeg(), media_type="image/jpeg")
+            if kind == "song":
+                song = db.get(MusicSong, num)
+                # 隐藏库的歌曲封面对外与「不存在」等价，不泄露存在性
+                if not song or not _is_visible_library(db, song.library_id):
+                    return Response(content=placeholder_jpeg(), media_type="image/jpeg")
+                if song.album_id:
+                    album = db.get(MusicAlbum, song.album_id)
+                    if album and album.cover_art_path and Path(album.cover_art_path).is_file():
+                        return _image_response(album.cover_art_path)
+                embedded = _embedded_cover(song.file_path)
+                if embedded:
+                    return Response(content=embedded[0], media_type=embedded[1])
         return Response(content=placeholder_jpeg(), media_type="image/jpeg")
     if method == "getAvatar":
         username = _q(params, "username") or (user.username if user else "")

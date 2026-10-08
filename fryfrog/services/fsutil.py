@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fryfrog.core.natural_order import natural_compare
 from fryfrog.core.utils import clean_title
 from fryfrog.media_core import get_media_probe
 
@@ -18,9 +17,12 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 def iter_files(root: Path, exts: set[str]) -> list[Path]:
     if not root.exists():
         return []
-    result = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts]
-    result.sort(key=lambda p: natural_compare(p.name, p.name))
-    return sorted(result, key=lambda p: (str(p.parent), p.name))
+    # 排序键必须用真实比较：(name, name) 自比较恒为 0，整轮排序是死代码；
+    # 自然序由 natural_compare 提供（见 natural_sort）。
+    return sorted(
+        (p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts),
+        key=lambda p: (str(p.parent), p.name),
+    )
 
 
 # `#12` / `＃12`（全角）形式的集号，JAV/同人动画常见。

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from fryfrog.core.utils import clean_title, primary_title
 from fryfrog.media_core import get_media_probe
 from fryfrog.models.library import MediaLibrary, SystemSetting
-from fryfrog.models.video import Video, VideoActor, VideoSeries, WatchProgress
+from fryfrog.models.video import Favorite, Video, VideoActor, VideoSeries, WatchProgress
 from fryfrog.services.fsutil import VIDEO_EXTS, iter_files, parse_episode
 
 logger = logging.getLogger(__name__)
@@ -63,13 +63,26 @@ def _guard_min_ratio() -> float:
     return max(min(float(get_settings().scan_guard_min_ratio), 1.0), 0.0)
 
 
+def _guard_allows(db: Session, library: MediaLibrary, seen: int) -> tuple[bool, int | None]:
+    """磁盘异常护栏：返回 (本轮是否放行删除, 上轮存量)。
+
+    实见文件数低于上轮存量的 scan_guard_min_ratio 时拦截（seen == 0 的空库
+    也在此列）。拦截期间调用方会冻结 last_count 基线，避免下一轮护栏失效。
+    """
+    previous = _to_int(_read_scan_setting(db, library.id or 0, "last_count"))
+    guard_ratio = _guard_min_ratio()
+    allowed = not (previous and guard_ratio > 0 and seen < previous * guard_ratio)
+    return allowed, previous
+
+
 def _resolve_missing(db: Session, library: MediaLibrary, missing_ids: list[int], seen: int) -> int:
     """宽限期满仍缺失的行才删；顺带清掉因此变成空壳的系列行。
 
     两重保护：
     1. 宽限期（scan_missing_grace_seconds）：拷入中/挂载抖动不会立刻删行；
     2. 磁盘异常护栏：本轮实见文件数不足上轮存量的 scan_guard_min_ratio 时整轮暂缓，
-       等下一轮复核；磁盘真的变小了，下一轮的基准就是新数量，删除照常放行。
+       且扫描收尾不再把基线刷小（见 scan_video_library）。空库会被一直拦住，
+       确认磁盘正常后可用 SCAN_GUARD_MIN_RATIO=0 临时放开。
     """
     grace = _missing_grace()
     threshold = datetime.now() - timedelta(seconds=grace)
@@ -82,12 +95,14 @@ def _resolve_missing(db: Session, library: MediaLibrary, missing_ids: list[int],
     if not missing_ids:
         return 0
 
-    previous = _to_int(_read_scan_setting(db, library.id or 0, "last_count"))
-    guard_ratio = _guard_min_ratio()
-    if seen > 0 and previous and guard_ratio > 0 and seen < previous * guard_ratio:
-        # 目录还在但内容几乎清空的典型场景：挂载掉了/盘没就绪，本轮只记录不删
+    allowed, previous = _guard_allows(db, library, seen)
+    if not allowed:
+        # 目录还在但内容几乎清空的典型场景：挂载掉了/盘没就绪，本轮只记录不删。
+        # seen == 0（空库）也走这里，调用方同时冻结 last_count 基线，避免下一轮
+        # 基线被刷小后护栏失效、整库被清空。
         logger.warning(
-            "视频库疑似磁盘异常（本轮 %d 条 / 上轮 %d 条），暂缓删除 %d 条: %s",
+            "视频库疑似磁盘异常（本轮 %d 条 / 上轮 %d 条），暂缓删除 %d 条: %s；"
+            "如确认磁盘正常，可临时把 SCAN_GUARD_MIN_RATIO 设为 0 后重扫/清理",
             seen,
             previous,
             len(missing_ids),
@@ -149,11 +164,11 @@ def purge_missing_videos(
         return {"stale": 0, "deleted": 0, "orphanedSeries": 0, "skipped": None}
 
     current = len(iter_files(root, VIDEO_EXTS))
-    previous = _to_int(_read_scan_setting(db, library.id or 0, "last_count"))
-    guard_ratio = _guard_min_ratio()
-    if guard_ratio > 0 and previous and current < previous * guard_ratio:
+    allowed, previous = _guard_allows(db, library, current)
+    if not allowed:
         logger.warning(
-            "残留清理被磁盘护栏拦下（现有 %d 条 / 上轮 %d 条）: %s",
+            "残留清理被磁盘护栏拦下（现有 %d 条 / 上轮 %s 条）: %s；"
+            "如确认磁盘正常，可临时把 SCAN_GUARD_MIN_RATIO 设为 0 后重试",
             current,
             previous,
             library.name,
@@ -211,6 +226,8 @@ def _delete_videos(
         }
     db.execute(delete(WatchProgress).where(WatchProgress.video_id.in_(video_ids)))
     db.execute(delete(VideoActor).where(VideoActor.video_id.in_(video_ids)))
+    # favorites 没有外键：不一起清就是永久孤儿（视频都删了，收藏还挂在 id 上）
+    db.execute(delete(Favorite).where(Favorite.content_type == "VIDEO", Favorite.content_id.in_(video_ids)))
     for vid in video_ids:
         video = db.get(Video, vid)
         if video is not None:
@@ -223,12 +240,16 @@ def _delete_videos(
         kept = set(
             db.scalars(select(Video.series_id).where(Video.series_id.in_(series_ids))).all()
         )
+        emptied: list[int] = []
         for series in db.scalars(
             select(VideoSeries).where(VideoSeries.id.in_(series_ids))
         ).all():
             if series.id not in kept:
                 db.delete(series)
+                emptied.append(series.id)
                 orphaned_series += 1
+        if emptied:
+            db.execute(delete(Favorite).where(Favorite.content_type == "SERIES", Favorite.content_id.in_(emptied)))
         db.flush()
 
     logger.info(
@@ -515,7 +536,12 @@ def scan_video_library(db: Session, library: MediaLibrary) -> int:
             video.missing_since = scanned_at
     db.flush()
     removed_rows = _resolve_missing(db, library, missing_ids, count)
-    _write_scan_setting(db, library.id or 0, "last_count", str(count))
+    allowed, previous = _guard_allows(db, library, count)
+    if not allowed:
+        # 护栏拦截期间冻结基线：否则下一轮 previous 变成小值、护栏失效 → 整库清空
+        logger.warning("视频库扫描基线保持不变（上轮 %s 条、本轮 %d 条）: %s", previous, count, library.name)
+    else:
+        _write_scan_setting(db, library.id or 0, "last_count", str(count))
     _write_scan_setting(db, library.id or 0, "last_scan_at", scanned_at.isoformat())
     if frames_removed:
         logger.info("视频库扫描清理帧截图 %d 个: %s", frames_removed, library.name)

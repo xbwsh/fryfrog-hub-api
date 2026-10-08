@@ -6,11 +6,11 @@ import secrets
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import bcrypt
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from fryfrog.config import get_settings
@@ -71,14 +71,63 @@ class LoginAttempt:
     last_failure_at: float = 0.0
 
 
+class LoginThrottle:
+    """登录失败锁定（进程内共享单例，登录接口与 /rest 共用）。
+
+    计数必须跨请求共享：每个请求都会新建 AuthManager，若把失败计数放在实例
+    字段上，锁定阈值永远攒不满（实测连续错误密码也触发不了 429）。
+    多进程部署下各进程独立计数，属已知限制。
+    """
+
+    _shared: "LoginThrottle | None" = None
+
+    @classmethod
+    def shared(cls) -> "LoginThrottle":
+        if cls._shared is None:
+            cls._shared = cls()
+        return cls._shared
+
+    def __init__(self) -> None:
+        self._attempts: dict[str, LoginAttempt] = {}
+        self._lock = threading.Lock()
+
+    def retry_after(self, key: str) -> int:
+        """处于锁定期时返回剩余秒数，否则 0。"""
+        self._purge_stale()
+        with self._lock:
+            attempt = self._attempts.get(key)
+            if attempt is None:
+                return 0
+            remaining = attempt.lock_until - time.time()
+            return int(remaining + 0.999) if remaining > 0 else 0
+
+    def record_failure(self, key: str) -> None:
+        settings = get_settings()
+        max_failures = max(int(settings.auth_login_max_failures), 1)
+        lock_minutes = max(int(settings.auth_login_lock_minutes), 0)
+        with self._lock:
+            attempt = self._attempts.setdefault(key, LoginAttempt())
+            attempt.failures += 1
+            attempt.last_failure_at = time.time()
+            if attempt.failures >= max_failures:
+                attempt.lock_until = time.time() + lock_minutes * 60
+                attempt.failures = 0
+
+    def record_success(self, key: str) -> None:
+        with self._lock:
+            self._attempts.pop(key, None)
+
+    def _purge_stale(self) -> None:
+        cutoff = time.time() - 24 * 60 * 60
+        with self._lock:
+            for key in [k for k, v in self._attempts.items() if v.last_failure_at < cutoff]:
+                del self._attempts[key]
+
+
 @dataclass
 class AuthManager:
     enabled: bool = True
     token_ttl_seconds: int = 604800
-    max_failures: int = 5
-    lock_minutes: int = 15
-    _attempts: dict[str, LoginAttempt] = field(default_factory=dict)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @classmethod
     def from_settings(cls) -> "AuthManager":
@@ -86,8 +135,6 @@ class AuthManager:
         return cls(
             enabled=s.auth_enabled,
             token_ttl_seconds=s.auth_token_ttl,
-            max_failures=s.auth_login_max_failures,
-            lock_minutes=s.auth_login_lock_minutes,
         )
 
     def login(self, db: Session, username: str, password: str, ip: str) -> LoginResult:
@@ -96,22 +143,17 @@ class AuthManager:
         if not username:
             return LoginResult(error="INVALID")
 
-        self._purge_stale()
-        attempt = self._attempts.setdefault(username, LoginAttempt())
-        with self._lock:
-            if attempt.lock_until > time.time():
-                retry_after = int(attempt.lock_until - time.time() + 0.999)
-                return LoginResult(error="LOCKED", retry_after_seconds=retry_after)
+        throttle = LoginThrottle.shared()
+        retry_after = throttle.retry_after(username)
+        if retry_after > 0:
+            return LoginResult(error="LOCKED", retry_after_seconds=retry_after)
 
         user = db.scalar(select(User).where(User.username == username))
         if user is None or not user.enabled or not verify_password(password, user.password_hash):
-            self._record_failure(attempt)
+            throttle.record_failure(username)
             return LoginResult(error="INVALID")
 
-        with self._lock:
-            attempt.failures = 0
-            attempt.lock_until = 0.0
-        self._attempts.pop(username, None)
+        throttle.record_success(username)
 
         token = str(uuid.uuid4())
         db.add(
@@ -153,19 +195,51 @@ class AuthManager:
             db.delete(row)
         db.flush()
 
-    def _record_failure(self, attempt: LoginAttempt) -> None:
-        with self._lock:
-            attempt.failures += 1
-            attempt.last_failure_at = time.time()
-            if attempt.failures >= self.max_failures:
-                attempt.lock_until = time.time() + self.lock_minutes * 60
-                attempt.failures = 0
 
-    def _purge_stale(self) -> None:
-        cutoff = time.time() - 24 * 60 * 60
-        with self._lock:
-            for key in [k for k, v in self._attempts.items() if v.last_failure_at < cutoff]:
-                del self._attempts[key]
+def _purge_user_rows(db: Session, user_id: int) -> None:
+    """删用户时把该用户的子行一起清掉（token/进度/歌单/授权等）。
+
+    这些表都只有裸 user_id、没有外键，只删 users 会留孤儿行：SQLite
+    删掉最大 id 后新用户会复用同一 rowid，旧用户的收藏/进度/歌单直接
+    串号到新用户头上。子行先删（歌单条目必须先于歌单，playlist_id 是真外键）。
+    """
+    from fryfrog.models.audiobook import AudiobookProgress
+    from fryfrog.models.comic import ComicProgress
+    from fryfrog.models.ebook import EbookProgress
+    from fryfrog.models.library import UserLibrary, UserPreference
+    from fryfrog.models.music import (
+        MusicBookmark,
+        MusicPlayQueue,
+        MusicPlayStat,
+        MusicPlaylist,
+        MusicPlaylistEntry,
+        MusicRating,
+        MusicStar,
+    )
+    from fryfrog.models.video import Favorite, WatchProgress
+
+    playlist_ids = list(
+        db.scalars(select(MusicPlaylist.id).where(MusicPlaylist.user_id == user_id)).all()
+    )
+    if playlist_ids:
+        db.execute(
+            delete(MusicPlaylistEntry).where(MusicPlaylistEntry.playlist_id.in_(playlist_ids))
+        )
+    db.execute(delete(MusicPlaylist).where(MusicPlaylist.user_id == user_id))
+    db.execute(delete(MusicRating).where(MusicRating.user_id == user_id))
+    db.execute(delete(MusicStar).where(MusicStar.user_id == user_id))
+    db.execute(delete(MusicBookmark).where(MusicBookmark.user_id == user_id))
+    db.execute(delete(MusicPlayStat).where(MusicPlayStat.user_id == user_id))
+    db.execute(delete(MusicPlayQueue).where(MusicPlayQueue.user_id == user_id))
+    db.execute(delete(WatchProgress).where(WatchProgress.user_id == user_id))
+    db.execute(delete(Favorite).where(Favorite.user_id == user_id))
+    db.execute(delete(EbookProgress).where(EbookProgress.user_id == user_id))
+    db.execute(delete(ComicProgress).where(ComicProgress.user_id == user_id))
+    db.execute(delete(AudiobookProgress).where(AudiobookProgress.user_id == user_id))
+    db.execute(delete(UserLibrary).where(UserLibrary.user_id == user_id))
+    db.execute(delete(UserPreference).where(UserPreference.user_id == user_id))
+    db.execute(delete(AuthToken).where(AuthToken.user_id == user_id))
+    db.flush()
 
 
 class UserService:
@@ -238,6 +312,7 @@ class UserService:
 
     def delete_user(self, db: Session, user_id: int) -> None:
         user = self.get_user(db, user_id)
+        _purge_user_rows(db, user_id)
         db.delete(user)
         db.flush()
 

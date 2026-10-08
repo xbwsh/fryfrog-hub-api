@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
-
 from fryfrog.core.api_response import ApiResponse, PageResponse
 from fryfrog.core.deps import DbSession, get_media_library_service
 from fryfrog.core.exceptions import BadRequestException, ForbiddenException, ResourceNotFoundException
@@ -16,6 +17,8 @@ from fryfrog.models.comic import Comic, ComicChapter, ComicProgress
 from fryfrog.services import comic_organize, comic_pages, comic_scan, comic_scrape
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/comics", tags=["漫画"])
 
@@ -181,15 +184,20 @@ def scan(
 
     def run():
         from fryfrog.db import get_session_factory
+        from fryfrog.services.scan import _claim_library_scan
 
         session = get_session_factory()()
         try:
             for lib in libraries:
                 try:
+                    # 与视频/音乐同一条护栏：热监听+周期+手动可能同时触发同一库
+                    if not _claim_library_scan(lib):
+                        continue
                     comic_scan.scan_comic_library(session, lib)
                     session.commit()
                 except Exception:
                     session.rollback()
+                    logger.exception("Comic scan failed for library %s", lib.id)
         finally:
             session.close()
 

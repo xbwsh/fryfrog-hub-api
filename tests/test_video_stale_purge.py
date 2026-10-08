@@ -141,6 +141,21 @@ def test_guard_blocks_purge_when_disk_looks_wrong(env, monkeypatch):
     assert db.scalars(select(Video)).all(), "护栏拦截时不能删任何行"
 
 
+def test_guard_blocks_purge_when_disk_is_empty(env):
+    """挂载掉线常见形态是「目录还在但空」（seen == 0），手动清理同样必须被拦。"""
+    from fryfrog.models.library import SystemSetting
+
+    db, lib, media, add_video = env
+    gone = add_video("gone.mp4", exists=False)
+    db.add(SystemSetting(key=f"video_scan.last_count.{lib.id}", value="5", description="基线"))
+    db.commit()
+
+    result = purge_missing_videos(db, lib, force=True)
+    assert result["deleted"] == 0, result
+    assert result["skipped"], "应给出跳过原因"
+    assert db.get(Video, gone.id) is not None, "护栏拦截时不能删任何行"
+
+
 def test_purge_respects_grace_period_without_force(env):
     """不强制时，宽限期内（刚移走的文件）不删。"""
     db, lib, media, add_video = env

@@ -54,7 +54,11 @@ def get_db() -> Generator[Session, None, None]:
     session = get_session_factory()()
     try:
         yield session
-        session.commit()
+        # 后台扫描持写锁时裸 commit 会直接 500（响应已生成，客户端只看到一个失败），
+        # 这里与认证中间件走同一条重试路径，把硬失败换成短暂等待。
+        from fryfrog.core.deps import commit_with_retry
+
+        commit_with_retry(session)
     except Exception:
         session.rollback()
         raise

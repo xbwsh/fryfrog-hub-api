@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -18,6 +19,8 @@ from fryfrog.models.ebook import Ebook, EbookProgress
 from fryfrog.services import ebook_scan, ebook_scrape, ebook_text
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/ebooks", tags=["电子书"])
 
@@ -162,15 +165,20 @@ def scan(
 
     def run():
         from fryfrog.db import get_session_factory
+        from fryfrog.services.scan import _claim_library_scan
 
         session = get_session_factory()()
         try:
             for lib in libraries:
                 try:
+                    # 与视频/音乐同一条护栏：热监听+周期+手动可能同时触发同一库
+                    if not _claim_library_scan(lib):
+                        continue
                     ebook_scan.scan_ebook_library(session, lib)
                     session.commit()
                 except Exception:
                     session.rollback()
+                    logger.exception("Ebook scan failed for library %s", lib.id)
         finally:
             session.close()
 

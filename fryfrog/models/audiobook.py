@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
     Boolean,
+    DateTime,
     Double,
     ForeignKey,
     Integer,
@@ -36,6 +39,8 @@ class Audiobook(TimestampMixin, Base):
     total_duration_seconds: Mapped[float | None] = mapped_column(Double, nullable=True)
     track_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 扫描簿记：文件消失后先标记，宽限期满仍缺失才删行（与视频库同款保护）
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AudiobookTrack(TimestampMixin, Base):

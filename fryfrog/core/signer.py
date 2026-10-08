@@ -8,6 +8,7 @@ import secrets
 import shutil
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,14 @@ def _load_secret() -> bytes:
         secret = secrets.token_bytes(32)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(secret.hex(), encoding="utf-8")
+        # 收紧到仅属主可读：默认 umask 下是 0644，多用户主机上其他本地用户
+        # 读到密钥即可伪造全部签名媒体 URL
+        import os as _os
+
+        try:
+            _os.chmod(path, 0o600)
+        except OSError:
+            logger.warning("签名密钥文件权限收紧失败: %s", path, exc_info=True)
         _SECRET = secret
         logger.info("已生成签名密钥: %s", path)
         return _SECRET
@@ -99,10 +108,20 @@ def _hmac_hex(data: str) -> str:
     return hmac.new(_load_secret(), data.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _signable(path: str) -> str:
+    """签名对象统一成「服务端解码后的 path」。
+
+    uvicorn 会把 URL 里的 %XX 解码后再交给中间件校验（`scope["path"]`），
+    而对编码后的串签名会让中文/带空格的文件名（字幕等）永远 401——
+    签发端与校验端必须用同一种形态。
+    """
+    return unquote(path)
+
+
 def sign(path: str, expires_at_ms: int | None = None) -> str:
     if expires_at_ms is None:
         expires_at_ms = int(time.time() * 1000) + DEFAULT_TTL_MS
-    sig = _hmac_hex(f"{path}|{expires_at_ms}")
+    sig = _hmac_hex(f"{_signable(path)}|{expires_at_ms}")
     sep = "&" if "?" in path else "?"
     return f"{path}{sep}exp={expires_at_ms}&sig={sig}"
 
@@ -110,7 +129,9 @@ def sign(path: str, expires_at_ms: int | None = None) -> str:
 def verify(path: str, expires_at_ms: int, sig: str | None) -> bool:
     if expires_at_ms <= int(time.time() * 1000):
         return False
-    if not sig:
+    # 非 ASCII 的 sig 必然不合法，直接判失败：compare_digest 对非 ASCII str
+    # 会抛 TypeError，让任意匿名请求（?sig=中文）都能打出 500
+    if not sig or not sig.isascii():
         return False
-    expected = _hmac_hex(f"{path}|{expires_at_ms}")
+    expected = _hmac_hex(f"{_signable(path)}|{expires_at_ms}")
     return hmac.compare_digest(expected, sig)

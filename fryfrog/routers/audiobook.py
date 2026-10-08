@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from fryfrog.models.audiobook import (
 from fryfrog.services import audiobook_organize, audiobook_scan, audiobook_scrape
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/audiobooks", tags=["有声书"])
 
@@ -249,10 +252,22 @@ def _list_dto(book: Audiobook, progress: AudiobookProgress | None) -> dict:
 
 
 def _file_stream(path: Path, media_type: str, range_header: str | None):
+    # 复用视频域的 Range 解析：此前自己 split("-")，多段范围（"0-4,20-29"）
+    # ValueError 后兜底成整文件 206、start 越界时 length 为负仍回 206 空体，
+    # 均违反 HTTP 语义（应为 416）。_parse_range 已统一处理 416/后缀/裁剪。
+    from fryfrog.routers.video.playback import _parse_range
+
     if not path.is_file():
         raise ResourceNotFoundException("File", "path", str(path))
     file_len = path.stat().st_size
-    if not range_header or not range_header.startswith("bytes="):
+    rng = _parse_range(range_header, file_len)
+    if rng == (-1, -1):
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{file_len}"},
+        )
+    if rng is None:
+
         def full():
             with path.open("rb") as f:
                 yield from f
@@ -262,14 +277,7 @@ def _file_stream(path: Path, media_type: str, range_header: str | None):
             media_type=media_type,
             headers={"Accept-Ranges": "bytes", "Content-Length": str(file_len)},
         )
-    parts = range_header[6:].split("-")
-    try:
-        start = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_len - 1
-    except ValueError:
-        start, end = 0, file_len - 1
-    start = max(0, start)
-    end = min(file_len - 1, end)
+    start, end = rng
     length = end - start + 1
 
     def ranged():
@@ -312,15 +320,20 @@ def scan(
 
     def run():
         from fryfrog.db import get_session_factory
+        from fryfrog.services.scan import _claim_library_scan
 
         session = get_session_factory()()
         try:
             for lib in libraries:
                 try:
+                    # 与视频/音乐同一条护栏：热监听+周期+手动可能同时触发同一库
+                    if not _claim_library_scan(lib):
+                        continue
                     audiobook_scan.scan_audiobook_library(session, lib)
                     session.commit()
                 except Exception:
                     session.rollback()
+                    logger.exception("Audiobook scan failed for library %s", lib.id)
         finally:
             session.close()
 

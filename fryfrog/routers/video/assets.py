@@ -480,9 +480,16 @@ async def upload_video_cover(
     video = vs.get_video(db, id)
     _require_visible(db, video.library_id, "Video", id)
     data = await file.read()
-    episodes = vs.series_videos(db, video.series_id) if video.series_id else [video]
+    # PIL 解码/规范化/编码是同步重 CPU 活，放在 async 入口里会冻结事件循环
+    # （大图上传瞬间全服务其他请求停摆）。挪去线程池，与 Subsonic 入口同一策略。
+    from starlette.concurrency import run_in_threadpool
+
+    def _save() -> Path:
+        episodes = vs.series_videos(db, video.series_id) if video.series_id else [video]
+        return assets.save_uploaded_cover(db, video, episodes, level, kind, data)
+
     try:
-        target = assets.save_uploaded_cover(db, video, episodes, level, kind, data)
+        target = await run_in_threadpool(_save)
     except assets.UploadError as exc:
         return ApiResponse.error(exc.message)
     db.commit()

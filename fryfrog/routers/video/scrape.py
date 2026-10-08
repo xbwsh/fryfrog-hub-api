@@ -38,7 +38,10 @@ def _download_root_art_if_series(session, videos) -> None:
     if series is not None and series.tmdb_id:
         assets.download_series_root_art(session, series, eps)
 @router.get("/tmdb/search")
-def tmdb_search(q: str):
+def tmdb_search(db: DbSession, q: str):
+    # 刮削面统一 admin：不加校验时普通登录用户可借服务器刷 TMDB 配额
+    # （其余 tmdb/* 端点均有 _require_admin）
+    _require_admin(db)
     return ApiResponse.ok(scrape.search_tmdb(q))
 
 
@@ -179,9 +182,9 @@ def refresh_all_actors(db: DbSession):
         for lib in mls.get_visible_libraries(db)
         if lib.enable_scraping and lib.is_video_type()
     ]
-    videos = list(
+    video_ids = list(
         db.scalars(
-            select(Video).where(
+            select(Video.id).where(
                 Video.tmdb_id.is_not(None), Video.library_id.in_(scrape_libs or [-1])
             )
         ).all()
@@ -193,7 +196,11 @@ def refresh_all_actors(db: DbSession):
 
         completed = failed = 0
         client = TmdbClient()
-        for v in videos:
+        # 只带 id 进后台任务：请求 session 里的 ORM 对象在任务线程里是 detached 的，
+        # save_actors 写的是另一个 session，必须按 id 重新取
+        for v in [session.get(Video, vid) for vid in video_ids]:
+            if v is None:
+                continue
             try:
                 detail = (
                     client.get_movie(v.tmdb_id)
@@ -210,10 +217,10 @@ def refresh_all_actors(db: DbSession):
                 failed += 1
                 progress_svc.update_progress(module, completed=completed, failed=failed)
 
-    submit_job(module, "actors", len(videos), work)
+    submit_job(module, "actors", len(video_ids), work)
     return ApiResponse.ok(
         {
-            "totalVideos": len(videos),
+            "totalVideos": len(video_ids),
             "status": "submitted",
             "message": "批量刷新演员任务已提交，正在后台执行",
             "module": module,
@@ -248,17 +255,27 @@ def refresh_all_logos(db: DbSession):
     )
     total = len(series_list) + len(movies)
     module = "logo:all"
+    # 同样只带 id：下载完 logo 要写回 logo_local_path，detached 对象上的赋值
+    # 会静默丢失（磁盘有图、库里还是空的）
+    series_ids = [s.id for s in series_list]
+    movie_ids = [m.id for m in movies]
 
     def work(session):
         completed = 0
-        for s in series_list:
+        for sid in series_ids:
+            s = session.get(VideoSeries, sid)
+            if s is None:
+                continue
             try:
                 assets.download_series_logo(session, s)
             except Exception:
                 pass
             completed += 1
             progress_svc.update_progress(module, completed=completed, currentItem=s.title)
-        for m in movies:
+        for mid in movie_ids:
+            m = session.get(Video, mid)
+            if m is None:
+                continue
             try:
                 assets.download_movie_logo(session, m)
             except Exception:
@@ -281,30 +298,37 @@ def refresh_all_logos(db: DbSession):
 
 @router.post("/refresh-all-resolutions")
 def refresh_all_resolutions(db: DbSession):
-    all_videos = list(db.scalars(select(Video)).all())
-    missing = [v for v in all_videos if not v.resolution]
+    missing_ids = list(db.scalars(select(Video.id).where(Video.resolution.is_(None))).all())
     module = "resolution"
 
     def work(session):
+        from fryfrog.core.deps import commit_with_retry
+
         probe = get_media_probe()
         updated = 0
-        for v in missing:
+        for i, vid in enumerate(missing_ids, start=1):
+            v = session.get(Video, vid)
+            if v is None:
+                continue
+            name = v.file_name
             try:
                 wh = probe.probe_video_resolution(v.file_path)
                 if wh and wh[0] and wh[1]:
                     v.resolution = f"{wh[0]}x{wh[1]}"
                     updated += 1
-                progress_svc.update_progress(
-                    module, completed=updated, currentItem=v.file_name
-                )
+                progress_svc.update_progress(module, completed=updated, currentItem=name)
             except Exception:
                 pass
+            # 探测走子进程（最长 15s），整批只提交一次会把写锁握到天荒地老；
+            # 分批提交让 API 的写请求有机会插进来（与扫描同一策略）
+            if i % 50 == 0:
+                commit_with_retry(session)
 
-    submit_job(module, "resolution", len(missing), work)
+    submit_job(module, "resolution", len(missing_ids), work)
     return ApiResponse.ok(
         {
-            "totalVideos": len(all_videos),
-            "pendingVideos": len(missing),
+            "totalVideos": db.scalar(select(func.count(Video.id))) or 0,
+            "pendingVideos": len(missing_ids),
             "status": "submitted",
             "message": "批量补全分辨率任务已提交，正在后台执行",
             "module": module,

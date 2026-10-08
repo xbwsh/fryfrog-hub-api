@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from fryfrog.config import get_settings
@@ -105,6 +105,7 @@ class MediaLibraryService:
     def delete_library(self, db: Session, library_id: int) -> None:
         lib = self.get_library_by_id(db, library_id)
         deleted_order = lib.sort_order or 0
+        _purge_library_rows(db, library_id)
         db.delete(lib)
         db.flush()
         for other in self.get_all_libraries(db):
@@ -182,3 +183,90 @@ class MediaLibraryService:
             if path.startswith(lib.path) or lib.path.startswith(path):
                 return lib
         return None
+
+def _purge_library_rows(db: Session, library_id: int) -> None:
+    """删库时把库里所有媒体的行一起清掉（含子表）。
+
+    这些表都带 library_id 但**没有外键**，只删 media_libraries 会留下孤儿行：
+    file_path/book_path 是全局唯一约束，孤儿行会把重建的同路径库顶死
+    （ebooks 实测「扫描永久失败」）；user_libraries 残留还会在库 id 复用时
+    白送一次越权授权。删除顺序先子后主，避免 foreign_keys=ON 下的 FK 冲突。
+    """
+    from fryfrog.models.audiobook import (
+        Audiobook,
+        AudiobookChapter,
+        AudiobookProgress,
+        AudiobookTrack,
+    )
+    from fryfrog.models.comic import Comic, ComicChapter, ComicProgress
+    from fryfrog.models.ebook import Ebook, EbookProgress
+    from fryfrog.models.music import (
+        MusicAlbum,
+        MusicArtist,
+        MusicBookmark,
+        MusicPlayStat,
+        MusicPlaylistEntry,
+        MusicRating,
+        MusicSong,
+        MusicStar,
+    )
+    from fryfrog.models.video import Favorite, Video, VideoActor, VideoSeries, WatchProgress
+
+    # 视频/剧
+    video_ids = list(db.scalars(select(Video.id).where(Video.library_id == library_id)).all())
+    series_ids = {
+        sid
+        for sid in db.scalars(select(Video.series_id).where(Video.library_id == library_id)).all()
+        if sid is not None
+    }
+    db.execute(delete(WatchProgress).where(WatchProgress.video_id.in_(video_ids)))
+    db.execute(delete(VideoActor).where(VideoActor.video_id.in_(video_ids)))
+    db.execute(delete(Favorite).where(Favorite.content_type == "VIDEO", Favorite.content_id.in_(video_ids)))
+    db.execute(delete(Video).where(Video.library_id == library_id))
+    db.flush()
+    if series_ids:
+        kept = set(db.scalars(select(Video.series_id).where(Video.series_id.in_(series_ids))).all())
+        emptied = [sid for sid in series_ids if sid not in kept]
+        if emptied:
+            db.execute(delete(Favorite).where(Favorite.content_type == "SERIES", Favorite.content_id.in_(emptied)))
+            db.execute(delete(VideoSeries).where(VideoSeries.id.in_(emptied)))
+    db.flush()
+
+    # 音乐
+    song_ids = list(db.scalars(select(MusicSong.id).where(MusicSong.library_id == library_id)).all())
+    album_ids = [a.id for a in db.scalars(select(MusicAlbum.id).where(MusicAlbum.library_id == library_id)).all()]
+    artist_ids = [a.id for a in db.scalars(select(MusicArtist.id).where(MusicArtist.library_id == library_id)).all()]
+    db.execute(delete(MusicPlaylistEntry).where(MusicPlaylistEntry.song_id.in_(song_ids)))
+    db.execute(delete(MusicBookmark).where(MusicBookmark.song_id.in_(song_ids)))
+    db.execute(delete(MusicPlayStat).where(MusicPlayStat.song_id.in_(song_ids)))
+    for target_type, ids in (("SONG", song_ids), ("ALBUM", album_ids), ("ARTIST", artist_ids)):
+        if not ids:
+            continue
+        db.execute(delete(MusicStar).where(MusicStar.target_type == target_type, MusicStar.target_id.in_(ids)))
+        db.execute(delete(MusicRating).where(MusicRating.target_type == target_type, MusicRating.target_id.in_(ids)))
+    db.execute(delete(MusicSong).where(MusicSong.library_id == library_id))
+    db.execute(delete(MusicAlbum).where(MusicAlbum.library_id == library_id))
+    db.execute(delete(MusicArtist).where(MusicArtist.library_id == library_id))
+    db.flush()
+
+    # 有声书
+    book_ids = list(db.scalars(select(Audiobook.id).where(Audiobook.library_id == library_id)).all())
+    db.execute(delete(AudiobookTrack).where(AudiobookTrack.audiobook_id.in_(book_ids)))
+    db.execute(delete(AudiobookChapter).where(AudiobookChapter.audiobook_id.in_(book_ids)))
+    db.execute(delete(AudiobookProgress).where(AudiobookProgress.audiobook_id.in_(book_ids)))
+    db.execute(delete(Audiobook).where(Audiobook.library_id == library_id))
+
+    # 漫画
+    comic_ids = list(db.scalars(select(Comic.id).where(Comic.library_id == library_id)).all())
+    db.execute(delete(ComicChapter).where(ComicChapter.comic_id.in_(comic_ids)))
+    db.execute(delete(ComicProgress).where(ComicProgress.comic_id.in_(comic_ids)))
+    db.execute(delete(Comic).where(Comic.library_id == library_id))
+
+    # 电子书
+    ebook_ids = list(db.scalars(select(Ebook.id).where(Ebook.library_id == library_id)).all())
+    db.execute(delete(EbookProgress).where(EbookProgress.ebook_id.in_(ebook_ids)))
+    db.execute(delete(Ebook).where(Ebook.library_id == library_id))
+
+    # 授权关系：库 id 复用时会白送越权访问
+    db.execute(delete(UserLibrary).where(UserLibrary.library_id == library_id))
+    db.flush()

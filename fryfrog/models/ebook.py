@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Double, ForeignKey, Integer, String, Text, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Double, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fryfrog.db import Base
@@ -28,6 +30,8 @@ class Ebook(TimestampMixin, Base):
     cover_art_path: Mapped[str | None] = mapped_column(String, nullable=True)
     total_chapters: Mapped[int | None] = mapped_column(Integer, nullable=True)
     library_id: Mapped[int | None] = mapped_column("library_id", Integer, nullable=True, index=True)
+    # 扫描簿记：文件消失后先标记，宽限期满仍缺失才删行（与视频库同款保护）
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class EbookProgress(TimestampMixin, Base):

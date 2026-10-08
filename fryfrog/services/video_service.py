@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from fryfrog.core.exceptions import ResourceNotFoundException
-from fryfrog.core.security import ANONYMOUS_ID, current_user_id
+from fryfrog.core.security import ANONYMOUS_ID, UserService, current_user_id
 from fryfrog.core.utils import clean_title
 from fryfrog.models.video import Favorite, Video, VideoActor, VideoSeries, WatchProgress
 
@@ -177,8 +177,14 @@ def rename_show_dir(db: Session, video: Video) -> bool:
         os.rename(str(root), str(new_root))
         old_prefix = str(root.resolve())
         for row in db.scalars(select(Video)).all():
-            if row.file_path and row.file_path.startswith(old_prefix):
-                row.file_path = str(new_root.resolve()) + row.file_path[len(old_prefix):]
+            if not row.file_path or not row.file_path.startswith(old_prefix):
+                continue
+            # 必须校验分隔符边界：/data/Show 改名不能连带 /data/Show2024——
+            # 否则那批记录指向不存在的路径，下轮扫描判缺失、宽限期满删行
+            # （连带进度/收藏一起丢）。
+            rest = row.file_path[len(old_prefix):]
+            if rest == "" or rest.startswith("/"):
+                row.file_path = str(new_root.resolve()) + rest
         db.flush()
         logger.info("剧名级目录重命名: %s → %s", root, new_root)
         return True
@@ -298,15 +304,47 @@ def asset_flags(db: Session, video: Video) -> dict:
 
 # -------------------- 查询 --------------------
 
+def _require_visible_library(db: Session, library_id: int | None, resource: str, rid: int) -> None:
+    """受限用户不许靠 id 访问未授权库里的记录，访问不到就当不存在（不泄露存在性）。
+
+    放在 get_video/get_series 这一层而不是各路由里：playback/assets 这类直连 id
+    的端点太多，逐个补检查漏一个就是一个 IDOR（实测 playlist.m3u 会泄露隐藏库
+    全部分集的签名流 URL）。后台线程没有当前用户，不受影响。
+    """
+    from fryfrog.services.media_library import MediaLibraryService
+
+    if not MediaLibraryService(UserService()).is_visible_to_current_user(db, library_id):
+        raise ResourceNotFoundException(resource, "id", rid)
+
+
 def get_video(db: Session, video_id: int) -> Video:
     video = db.get(Video, video_id)
     if video is None:
         raise ResourceNotFoundException("Video", "id", video_id)
+    _require_visible_library(db, video.library_id, "Video", video_id)
     return video
 
 
 def get_series(db: Session, series_id: int) -> VideoSeries | None:
-    return db.get(VideoSeries, series_id)
+    series = db.get(VideoSeries, series_id)
+    if series is None:
+        return None
+    # 跨库系列真实存在（merge_duplicate_series 会按 tmdb_id 跨库合并），
+    # 不能取"任意一行的 library_id"判断——那样可见性随数据库返回顺序摆动。
+    # 与列表页 _series_visible 保持同一语义：只要有一集落在可见库就算可见。
+    from fryfrog.services.media_library import MediaLibraryService
+
+    mls = MediaLibraryService(UserService())
+    if mls.is_restricted_current_user(db):
+        allowed = mls.get_allowable_library_ids(db)
+        visible = db.scalar(
+            select(func.count(Video.id)).where(
+                Video.series_id == series_id, Video.library_id.in_(allowed or [-1])
+            )
+        )
+        if not visible:
+            raise ResourceNotFoundException("Series", "id", series_id)
+    return series
 
 
 def series_videos(db: Session, series_id: int) -> list[Video]:

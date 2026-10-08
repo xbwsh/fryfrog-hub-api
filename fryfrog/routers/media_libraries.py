@@ -132,6 +132,16 @@ def scan_progress(db: DbSession, service: MediaLibraryService = Depends(get_medi
     from fryfrog.services import progress as progress_svc
 
     items = progress_svc.get_scrape_progress(library_id)
+    # 库隔离：受限用户不得借扫描进度看到隐藏库的存在/片名（currentItem 是
+    # 文件名/剧名）。与 stale-records/pipeline-progress 同一套语义；
+    # 无 libraryId 的全局任务项一并隐藏（其中同样可能有隐藏库的内容）。
+    if service.is_restricted_current_user(db):
+        allowed = set(service.get_allowable_library_ids(db))
+        items = [
+            i
+            for i in items
+            if i.get("libraryId") is not None and i.get("libraryId") in allowed
+        ]
     return ApiResponse.ok(items)
 
 

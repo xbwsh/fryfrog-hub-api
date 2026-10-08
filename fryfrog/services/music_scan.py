@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from fryfrog.config import get_settings
 from fryfrog.media_core import get_media_probe
-from fryfrog.models.library import MediaLibrary
-from fryfrog.models.music import MusicAlbum, MusicArtist, MusicSong
+from fryfrog.models.library import MediaLibrary, SystemSetting
+from fryfrog.models.music import (
+    MusicAlbum,
+    MusicArtist,
+    MusicBookmark,
+    MusicPlayStat,
+    MusicPlaylistEntry,
+    MusicRating,
+    MusicSong,
+    MusicStar,
+)
 from fryfrog.services.fsutil import IMAGE_EXTS, MUSIC_EXTS, iter_files
 
 logger = logging.getLogger(__name__)
@@ -21,20 +32,71 @@ UNKNOWN_ALBUM = "未知专辑"
 COVER_NAMES = ("cover", "folder", "front", "album")
 COVER_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
+# 扫描簿记存入 SystemSetting（与视频库同款，前缀区分）
+SCAN_SETTING_PREFIX = "music_scan"
+
+
+def _scan_setting_key(library_id: int, name: str) -> str:
+    return f"{SCAN_SETTING_PREFIX}.{name}.{library_id}"
+
+
+def _read_scan_setting(db: Session, library_id: int, name: str) -> str | None:
+    return db.scalar(
+        select(SystemSetting.value).where(SystemSetting.key == _scan_setting_key(library_id, name))
+    )
+
+
+def _write_scan_setting(db: Session, library_id: int, name: str, value: str) -> None:
+    key = _scan_setting_key(library_id, name)
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == key))
+    if row is None:
+        db.add(SystemSetting(key=key, value=value, description="音乐库扫描簿记"))
+    else:
+        row.value = value
+    db.flush()
+
+
+def _to_int(value: str | None) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except ValueError:
+        return None
+
 
 def scan_music_library(db: Session, library: MediaLibrary) -> dict:
     root = Path(library.path)
+    # 路径不存在/未挂载时必须直接跳过：iter_files 对不存在的根返回空列表，
+    # 若继续走清理会把该库全部记录删光（实测一次扫描清空整个音乐库）。
+    if not root.exists():
+        logger.warning("音乐库路径不存在，跳过扫描以免误清记录: %s", library.path)
+        return {
+            "libraryId": library.id,
+            "total": 0,
+            "saved": 0,
+            "failed": 0,
+            "skipped": "库路径不存在",
+        }
+
     files = iter_files(root, MUSIC_EXTS)
     saved = 0
     failed = 0
+    seen_paths: set[str] = set()
+    from fryfrog.core.deps import commit_with_retry
+
     for path in files:
         try:
+            seen_paths.add(str(path.resolve()))
             _save_song(db, path, library.id, root)
             saved += 1
         except Exception:
             failed += 1
             logger.warning("Failed to scan %s", path, exc_info=True)
-    _cleanup_missing(db, library.id)
+        # 每 50 条提交一次：SQLite 单写者，整库扫描不提交会把写锁握到扫描
+        # 结束，期间所有写请求（含登录写 token）busy 等满 30 秒后失败。
+        # 首扫大库（逐条 ffprobe，每个最长 10s）可达数小时，必须分批放锁。
+        if saved % 50 == 0:
+            commit_with_retry(db)
+    _cleanup_missing(db, library, seen_paths)
     db.flush()
     return {"libraryId": library.id, "total": len(files), "saved": saved, "failed": failed}
 
@@ -272,12 +334,71 @@ def _ensure_lyrics(song: MusicSong, path: Path) -> None:
         song.lyrics_path = lyrics_path
 
 
-def _cleanup_missing(db: Session, library_id: int | None) -> None:
-    songs = db.scalars(select(MusicSong).where(MusicSong.library_id == library_id)).all()
+def _cleanup_missing(db: Session, library: MediaLibrary, seen_paths: set[str]) -> None:
+    """删除磁盘上已消失的行：宽限期内只标记，期满且过护栏才删（与视频库同款）。
+
+    两重保护：
+    1. 宽限期：刚被移走/拷贝中的文件不立刻删；
+    2. 磁盘异常护栏：本轮实见文件数不足上轮存量 scan_guard_min_ratio 时整轮
+       暂缓，且**不更新基线**（护栏拦截期间基线冻结）。空库（seen=0）典型是
+       挂载掉线，会一直被拦住，不会自动清空。
+    """
+    settings = get_settings()
+    grace = max(float(settings.scan_missing_grace_seconds), 0.0)
+    ratio = max(min(float(settings.scan_guard_min_ratio), 1.0), 0.0)
+    now = datetime.now()
+    threshold = now - timedelta(seconds=grace)
+
+    songs = list(db.scalars(select(MusicSong).where(MusicSong.library_id == library.id)).all())
+    missing: list[MusicSong] = []
     for song in songs:
-        if song.file_path and not Path(song.file_path).is_file():
-            db.delete(song)
+        if song.file_path in seen_paths:
+            if song.missing_since is not None:
+                song.missing_since = None
+            continue
+        if song.missing_since is None:
+            song.missing_since = now
+        elif song.missing_since < threshold:
+            missing.append(song)
+
+    seen = len(seen_paths)
+    previous = _to_int(_read_scan_setting(db, library.id or 0, "last_count"))
+    blocked = bool(previous) and ratio > 0 and seen < previous * ratio
+    if missing:
+        if blocked:
+            logger.warning(
+                "音乐库疑似磁盘异常（本轮 %d 条 / 上轮 %d 条），暂缓删除 %d 条: %s；"
+                "如确认磁盘正常，可临时把 SCAN_GUARD_MIN_RATIO 设为 0 后重扫",
+                seen,
+                previous,
+                len(missing),
+                library.name,
+            )
+        else:
+            _delete_missing_songs(db, [song.id for song in missing if song.id is not None])
+    _prune_empty_albums_artists(db, library.id)
+    if blocked:
+        # 护栏拦截期间冻结基线：否则下一轮 previous 变小、护栏失效 → 整库被清空
+        logger.warning("音乐库扫描基线保持不变（疑似磁盘异常）: %s", library.name)
+    else:
+        _write_scan_setting(db, library.id or 0, "last_count", str(seen))
+
+
+def _delete_missing_songs(db: Session, song_ids: list[int]) -> None:
+    """删歌前先清外键子行（播放列表项/书签/播放统计），否则 foreign_keys=ON 报错。"""
+    if not song_ids:
+        return
+    db.execute(delete(MusicPlaylistEntry).where(MusicPlaylistEntry.song_id.in_(song_ids)))
+    db.execute(delete(MusicBookmark).where(MusicBookmark.song_id.in_(song_ids)))
+    db.execute(delete(MusicPlayStat).where(MusicPlayStat.song_id.in_(song_ids)))
+    db.execute(delete(MusicStar).where(MusicStar.target_type == "SONG", MusicStar.target_id.in_(song_ids)))
+    db.execute(delete(MusicRating).where(MusicRating.target_type == "SONG", MusicRating.target_id.in_(song_ids)))
+    for song in db.scalars(select(MusicSong).where(MusicSong.id.in_(song_ids))).all():
+        db.delete(song)
     db.flush()
+
+
+def _prune_empty_albums_artists(db: Session, library_id: int | None) -> None:
     for album in db.scalars(select(MusicAlbum).where(MusicAlbum.library_id == library_id)).all():
         if db.scalar(select(MusicSong.id).where(MusicSong.album_id == album.id).limit(1)) is None:
             db.delete(album)
@@ -448,7 +569,9 @@ def _find_lyrics(song_dir: Path | None, song_path: Path) -> str | None:
     stem = song_path.stem.lower()
     candidates = sorted(song_dir.glob("*.lrc")) + sorted(song_dir.glob("*.txt"))
     for candidate in candidates:
-        if candidate.stem.lower() == stem or candidate.suffix.lower() == ".lrc":
+        # 必须同文件名词干：目录里每轨一个 .lrc 的专辑是常态，无条件放行
+        # 任何 .lrc 会把 track01.lrc 配给 track05.mp3（实测除一首外全错配）
+        if candidate.stem.lower() == stem:
             return str(candidate)
     return None
 

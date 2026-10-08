@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from fryfrog.core.natural_order import natural_key
@@ -20,6 +21,7 @@ from fryfrog.models.audiobook import (
     AudiobookTrack,
 )
 from fryfrog.models.library import MediaLibrary
+from fryfrog.services import scan_guard
 from fryfrog.services.fsutil import AUDIOBOOK_EXTS
 
 logger = logging.getLogger(__name__)
@@ -313,26 +315,55 @@ def _ensure_cover(book: Audiobook, first_audio: Path | None) -> None:
 
 
 def _cleanup_missing(db: Session, scanned_paths: set[str], library_id: int) -> int:
-    removed = 0
+    """删除磁盘上已消失的有声书：宽限期内只标记，期满且过护栏才删。
+
+    与视频/音乐同款两重保护。注意目录判定：目录整个没了（挂载掉线/被删）
+    之前被 `_dir_has_audio` 的 OSError 兜底当成「还有音频」→ 永不清理的僵尸行；
+    现在改成先 `is_dir()`，目录不在就按缺失走宽限期（护栏会兜住挂载掉线）。
+    """
+    now = datetime.now()
+    threshold = scan_guard.grace_threshold()
+    pending: list[Audiobook] = []
     rows = list(db.scalars(select(Audiobook).where(Audiobook.library_id == library_id)).all())
     for book in rows:
         if book.book_path in scanned_paths:
+            book.missing_since = None
             continue
-        if _dir_has_audio(Path(book.book_path)):
+        book_dir = Path(book.book_path)
+        if book_dir.is_dir() and _dir_has_audio(book_dir):
+            book.missing_since = None
             continue
-        for p in db.scalars(
-            select(AudiobookProgress).where(AudiobookProgress.audiobook_id == book.id)
-        ).all():
-            db.delete(p)
-        for t in db.scalars(
-            select(AudiobookTrack).where(AudiobookTrack.audiobook_id == book.id)
-        ).all():
-            db.delete(t)
-        for c in db.scalars(
-            select(AudiobookChapter).where(AudiobookChapter.audiobook_id == book.id)
-        ).all():
-            db.delete(c)
-        db.delete(book)
-        removed += 1
+        if book.missing_since is None:
+            book.missing_since = now
+        elif book.missing_since < threshold:
+            pending.append(book)
+
+    previous = scan_guard.read_last_count(db, "audiobook_scan", library_id or 0)
+    allowed = scan_guard.guard_allows(len(scanned_paths), previous)
+    removed = 0
+    if pending:
+        if allowed:
+            for book in pending:
+                # 子行用 core delete 立即执行（与 video/music 扫描同款）：
+                # ORM 混合 flush 里父行可能先删，撞 FOREIGN KEY constraint failed
+                db.execute(delete(AudiobookProgress).where(AudiobookProgress.audiobook_id == book.id))
+                db.execute(delete(AudiobookTrack).where(AudiobookTrack.audiobook_id == book.id))
+                db.execute(delete(AudiobookChapter).where(AudiobookChapter.audiobook_id == book.id))
+                db.delete(book)
+                removed += 1
+        else:
+            logger.warning(
+                "有声书库疑似磁盘异常（本轮 %d 条 / 上轮 %s 条），暂缓删除 %d 条: %s；"
+                "如确认磁盘正常，可临时把 SCAN_GUARD_MIN_RATIO 设为 0 后重扫",
+                len(scanned_paths),
+                previous,
+                len(pending),
+                library_id,
+            )
+    if allowed:
+        scan_guard.write_last_count(db, "audiobook_scan", library_id or 0, len(scanned_paths))
+    else:
+        # 护栏拦截期间冻结基线：否则下一轮 previous 变小、护栏失效 → 整库被清空
+        logger.warning("有声书库扫描基线保持不变（疑似磁盘异常）: library %s", library_id)
     db.flush()
     return removed

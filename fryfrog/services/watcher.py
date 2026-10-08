@@ -93,6 +93,10 @@ class FileWatcher:
         self._next_poll = 0.0
         # 正在执行的扫描数：>0 期间的文件事件视为扫描自身写入，忽略
         self._scanning = 0
+        # watch 注册失败只告警一次：配额耗尽时每个目录都会失败，逐条 warning
+        # 会刷爆日志；但不能降到 debug——inotify 模式没有轮询兜底，
+        # 配额耗尽意味着超出部分从此失明，运维必须能在日志里看到原因
+        self._watch_fail_warned = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -218,7 +222,6 @@ class FileWatcher:
 
             if self._event is not None:
                 self._sync_event_roots(seen_roots)
-                return
             for root, ready in list(self._pending.items()):
                 if now >= ready:
                     self._pending.pop(root, None)
@@ -273,8 +276,19 @@ class FileWatcher:
             if wd < 0:
                 raise OSError(ctypes.get_errno(), f"inotify_add_watch failed: {path}")
             self._watch_paths[wd] = str(path)
+            self._watch_fail_warned = False
         except Exception:
-            logger.debug("inotify watch failed: %s", path, exc_info=True)
+            if not self._watch_fail_warned:
+                self._watch_fail_warned = True
+                logger.warning(
+                    "inotify watch 注册失败: %s（常见原因：fs.inotify.max_user_watches "
+                    "配额耗尽，超出部分目录将不再触发热扫描，且 inotify 模式无轮询兜底；"
+                    "可调大内核配额或设 WATCHER_ENABLED=false 改用周期扫描）",
+                    path,
+                    exc_info=True,
+                )
+            else:
+                logger.debug("inotify watch failed: %s", path, exc_info=True)
 
     def _remove_watch(self, wd: int) -> None:
         if self._event is None:
@@ -314,8 +328,16 @@ class FileWatcher:
                 self._pending[root] = now + DEBOUNCE_SECONDS
             return
         watch_path = self._watch_paths.get(wd)
-        if not watch_path or mask & IN_IGNORED:
-            self._remove_watch(wd)
+        if mask & IN_IGNORED:
+            # wd 已失效。不能无条件 _remove_watch：inotify_rm_watch 产生的
+            # IN_IGNORED 排在事件队列尾部，期间 wd 可能已被内核复用指向新
+            # 目录（把目录移出再移入即可复现）——无条件删除会误杀新 watch，
+            # 新目录子树从此失明。只在路径已不存在（目录被删而我们没处理到
+            # delete 事件，如扫描期间被丢弃）时清理这条映射。
+            if watch_path and not Path(watch_path).exists():
+                self._remove_watch(wd)
+            return
+        if not watch_path:
             return
         root = next(
             (

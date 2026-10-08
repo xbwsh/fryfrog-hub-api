@@ -98,3 +98,30 @@ def test_invalid_env_secret_ignored(tmp_path, monkeypatch):
     loaded = signer._load_secret()
     assert len(loaded) == 32
     assert signer.secret_path().is_file(), "应回退到落盘方式"
+
+
+def test_signed_url_for_encoded_path_verifies_decoded():
+    """中文/空格文件名的签名回归：签发用编码 URL，校验用解码后的 path。
+
+    uvicorn 会把 %XX 解码成 scope["path"]，若签名覆盖编码后的串，
+    `/subtitles/{中文}.srt` 这类链接永远 401（Apple 端直接把 url 喂给播放器）。
+    """
+    from urllib.parse import quote
+
+    name = "第 01 集.srt"
+    encoded = quote(name, safe="")
+    signed = signer.sign(f"/api/v1/video/1/subtitles/{encoded}")
+    query = signed.split("?", 1)[1]
+    exp = int(dict(part.split("=", 1) for part in query.split("&"))["exp"])
+    sig = dict(part.split("=", 1) for part in query.split("&"))["sig"]
+
+    assert signer.verify(f"/api/v1/video/1/subtitles/{name}", exp, sig) is True
+    assert signer.verify(f"/api/v1/video/1/subtitles/{encoded}", exp, sig) is True
+
+
+def test_non_ascii_sig_is_rejected_without_500():
+    """`?sig=中文` 之前会让 compare_digest 抛 TypeError → 匿名可打 500。"""
+    exp = 9999999999999
+    assert signer.verify("/api/v1/video/1/cover", exp, "中文签名") is False
+    assert signer.verify("/api/v1/video/1/cover", exp, "") is False
+    assert signer.verify("/api/v1/video/1/cover", exp, None) is False

@@ -20,6 +20,12 @@ ARCHIVE_EXTS = ZIP_EXTS | RAR_EXTS | SEVEN_EXTS | PDF_EXTS
 # 渲染目标宽度（px）：缩放按 PDF 页宽折算，限制在 1x~4x
 PDF_TARGET_WIDTH = 1600.0
 PDF_JPEG_QUALITY = 85
+# 压缩包单条目读取上限：页面图片不可能这么大；构造的 cbz（zip bomb）
+# 一个条目解出数 GB，zf.read 直接整块进内存会打爆进程
+MAX_ENTRY_BYTES = 256 * 1024 * 1024
+# PDF 渲染像素上限（宽×高）：异常尺寸的 PDF 页按原生尺寸渲染会产生
+# 10^10 像素级分配。超过上限按比例缩小到边界内。
+MAX_RENDER_PIXELS = 40_000_000
 
 
 def is_image_name(name: str) -> bool:
@@ -75,7 +81,12 @@ def _render_pdf_page(path: Path, index: int) -> bytes:
             raise ResourceNotFoundException("ComicPage", "index", index)
         page = doc[index]
         width = page.get_width() or 595.0
+        height = page.get_height() or 842.0
         scale = min(4.0, max(1.0, PDF_TARGET_WIDTH / width))
+        # 异常大页（恶意/损坏 PDF）：scale 钳到 1.0 后仍按原生尺寸渲染会产生
+        # 海量像素分配，必须按像素预算二次收缩
+        if width * height * scale * scale > MAX_RENDER_PIXELS:
+            scale = (MAX_RENDER_PIXELS / (width * height)) ** 0.5
         image = page.render(scale=scale).to_pil()
         if image.mode != "RGB":
             image = image.convert("RGB")
@@ -142,29 +153,39 @@ def read_page(chapter: ComicChapter, index: int) -> tuple[bytes, str]:
 
 def _read_archive_entry(path: Path, name: str) -> bytes:
     suffix = path.suffix.lower()
-    if suffix in SEVEN_EXTS:
-        import io
+    # zip bomb 防护：读前先看声明的解压尺寸，超限拒绝。漫画页图片不可能
+    # 达到 256MB；不设上限的话一个几 MB 的 cbz 就能让翻页请求 OOM。
+    if suffix not in SEVEN_EXTS:
+        with _open_archive(path) as zf:
+            try:
+                info = zf.getinfo(name)
+            except Exception:
+                info = None
+            if info is not None and getattr(info, "file_size", 0) > MAX_ENTRY_BYTES:
+                raise BadRequestException("压缩包内单文件超出大小限制")
+            return zf.read(name)
+    import py7zr
 
-        import py7zr
-
-        with py7zr.SevenZipFile(path, mode="r") as zf:
-            extracted = zf.read([name])
-            target = extracted.get(name)
-            if target is None:
-                # 兼容路径键差异
-                for key, bio in extracted.items():
-                    if Path(key).name == Path(name).name:
-                        target = bio
-                        break
-            if target is None:
-                raise ResourceNotFoundException("ComicPage", "name", name)
-            if hasattr(target, "getvalue"):
-                return target.getvalue()
-            if isinstance(target, (bytes, bytearray)):
-                return bytes(target)
-            return Path(target).read_bytes()
-    with _open_archive(path) as zf:
-        return zf.read(name)
+    with py7zr.SevenZipFile(path, mode="r") as zf:
+        extracted = zf.read([name])
+        target = extracted.get(name)
+        if target is None:
+            # 兼容路径键差异
+            for key, bio in extracted.items():
+                if Path(key).name == Path(name).name:
+                    target = bio
+                    break
+        if target is None:
+            raise ResourceNotFoundException("ComicPage", "name", name)
+        if hasattr(target, "getvalue"):
+            data = target.getvalue()
+        elif isinstance(target, (bytes, bytearray)):
+            data = bytes(target)
+        else:
+            data = Path(target).read_bytes()
+        if len(data) > MAX_ENTRY_BYTES:
+            raise BadRequestException("压缩包内单文件超出大小限制")
+        return data
 
 
 def media_type_of(filename: str) -> str:

@@ -63,6 +63,8 @@ class MusicSong(TimestampMixin, Base):
     lyrics_path: Mapped[str | None] = mapped_column(String, nullable=True)
     lyrics_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     library_id: Mapped[int | None] = mapped_column("library_id", Integer, nullable=True, index=True)
+    # 扫描簿记：文件消失后先标记，宽限期满仍缺失才删行（与视频库同款保护）
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class MusicPlaylist(TimestampMixin, Base):

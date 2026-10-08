@@ -17,6 +17,7 @@ import pytest
 
 from fryfrog.core.deps import (
     ADMIN_ONLY_READS,
+    SIGNED_MEDIA_PATTERNS,
     STATIC_RESOURCE_PATTERNS,
     _matches_any,
     _requires_admin,
@@ -121,3 +122,35 @@ def test_admin_only_reads_still_guarded():
 def test_user_owned_mutations_stay_allowed_for_normal_users(path: str):
     """普通用户自己的数据写操作不能被收紧。"""
     assert _requires_admin("POST", path) is False
+
+
+def test_cover_options_is_not_swallowed_by_static_rules():
+    """回归：`.*/cover` 前缀匹配把 `cover-options` 当成静态图片放行，管理员也 403。
+
+    同源故障此前逼得 `/covers` 改名；`cover-options`（GET，管理员选图用）
+    一直没能用——中间件不写当前用户，路由里的 _require_admin 读到匿名身份。
+    """
+    path = "/api/v1/video/1/cover-options"
+    assert _matches_any(path, STATIC_RESOURCE_PATTERNS) is False, "不能再被前缀吃掉"
+    assert _matches_any(path, SIGNED_MEDIA_PATTERNS) is False, "也不是签名资源"
+    # 该路径确实是已注册的 GET 路由：走正常鉴权后，路由内的 _require_admin 才拿得到用户
+    registered = {p for _, p in _walk_routes(app.routes)}
+    assert any(p.endswith("/cover-options") for p in registered), registered
+
+
+def test_static_rules_are_anchored_at_the_end():
+    """静态资源规则必须锚定结尾，否则任何新端点只要以这些词开头就会被误吞。"""
+    for path in (
+        "/api/v1/video/1/cover",
+        "/api/v1/video/1/stream",
+        "/api/v1/video/1/subtitles/a.srt",
+        "/api/v1/music/songs/1/lyrics",
+    ):
+        assert _matches_any(path, STATIC_RESOURCE_PATTERNS), path
+    for path in (
+        "/api/v1/video/1/cover-options",
+        "/api/v1/video/1/cover-upload",
+        "/api/v1/video/1/covers",
+        "/api/v1/video/1/stream-info",
+    ):
+        assert not _matches_any(path, STATIC_RESOURCE_PATTERNS), path

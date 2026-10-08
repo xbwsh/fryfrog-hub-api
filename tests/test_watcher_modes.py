@@ -152,3 +152,25 @@ def test_polling_mode_detects_added_and_removed(tmp_path, monkeypatch):
     assert fired == [lib.path], "删除也要触发重扫（由扫描侧做延迟确认）"
     assert Path(tmp_path).is_dir()
     assert time.time() > 0
+
+
+def test_inotify_mode_still_fires_debounced_scan(tmp_path, monkeypatch):
+    """回归：inotify 分支原来直接 return，去抖队列永不触发（Linux 下热监听形同失效）。
+
+    Docker 部署就是 Linux + inotify，这条路径失效等于「改完文件不重扫」。
+    """
+    db, lib, fired = _setup(tmp_path, monkeypatch)
+    (tmp_path / "a.mp4").write_bytes(b"x")
+
+    worker = watcher.FileWatcher()
+    worker._event = (123, None)  # 假装 inotify 可用
+    worker._event_roots = {lib.path}
+    monkeypatch.setattr(worker, "_sync_event_roots", lambda roots: None)
+    worker._pending[lib.path] = 1000.0 + watcher.DEBOUNCE_SECONDS - 1
+
+    worker._tick()
+    assert fired == [], "去抖时间没到不能扫"
+
+    monkeypatch.setattr(watcher.time, "time", lambda: 1000.0 + watcher.DEBOUNCE_SECONDS + 1)
+    worker._tick()
+    assert fired == [lib.path], "inotify 模式下去抖事件也必须触发扫描"

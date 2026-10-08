@@ -112,17 +112,47 @@ def test_unavailable_mount_does_not_wipe_library(tmp_path, monkeypatch):
 
 
 def test_empty_library_is_never_auto_wiped(tmp_path, monkeypatch):
-    """文件全没了（挂载掉了）时护栏永久兜住：只剩空目录就不自动清库。"""
+    """文件全没了（挂载掉了）时护栏永久兜住：只剩空目录就不自动清库，基线冻结。"""
+    from fryfrog.models.library import SystemSetting
+
     db, lib, _ = _setup(tmp_path, monkeypatch, count=2)
     video_scan.scan_video_library(db, lib)
     db.commit()
 
     for i in range(2):
         (tmp_path / f"show-{i}" / f"show-{i}.mp4").unlink()
+
     for _ in range(3):
         video_scan.scan_video_library(db, lib)
         db.commit()
+        # 把标记挪到一年前：让宽限期不再是拦截原因，只剩护栏在兜（否则测试是假阳性）
+        for row in db.scalars(select(Video)).all():
+            if row.missing_since is not None:
+                row.missing_since = row.missing_since.replace(year=row.missing_since.year - 1)
+        db.flush()
+
     assert _count(db) == 2, "空库视为挂载异常，永不自动清空"
+    keys = {row.key: row.value for row in db.scalars(select(SystemSetting)).all()}
+    assert keys[f"video_scan.last_count.{lib.id}"] == "2", "拦截期间基线必须冻结，否则下一轮护栏失效"
+
+
+def test_guard_blocks_when_library_is_empty(tmp_path, monkeypatch):
+    """只剩空目录（seen == 0）也必须被护栏拦下——这是挂载掉线最典型的形态。"""
+    db, lib, _ = _setup(tmp_path, monkeypatch, count=2)
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+
+    for i in range(2):
+        (tmp_path / f"show-{i}" / f"show-{i}.mp4").unlink()
+    video_scan.scan_video_library(db, lib)  # 先跑一轮做缺失标记
+    db.commit()
+    for row in db.scalars(select(Video)).all():
+        row.missing_since = row.missing_since.replace(year=row.missing_since.year - 1)
+    db.flush()
+
+    removed = video_scan._resolve_missing(db, lib, [row.id for row in db.scalars(select(Video)).all()], seen=0)
+    assert removed == 0, "空目录 + 宽限期满也必须拦下"
+    assert _count(db) == 2
 
 
 def test_delete_resumes_when_library_still_has_content(tmp_path, monkeypatch):

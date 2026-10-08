@@ -6,15 +6,16 @@ import logging
 import re
 import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from fryfrog.core.natural_order import natural_key
 from fryfrog.models.comic import Comic, ComicChapter, ComicProgress
 from fryfrog.models.library import MediaLibrary
-from fryfrog.services import comic_pages
+from fryfrog.services import comic_pages, scan_guard
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,9 @@ def scan_comic_library(db: Session, library: MediaLibrary) -> dict:
     for draft in drafts.values():
         comic = existing.get(draft.book_path)
         if comic is None:
+            # book_path 全局唯一：孤儿行占着同一路径时复用（否则 INSERT 撞 UNIQUE）
+            comic = db.scalar(select(Comic).where(Comic.book_path == draft.book_path))
+        if comic is None:
             comic = Comic(book_path=draft.book_path, title=draft.title, metadata_source="scan")
             db.add(comic)
         # 扫描不覆盖已刮削字段
@@ -209,27 +213,52 @@ def scan_comic_library(db: Session, library: MediaLibrary) -> dict:
                 chapter.page_count = comic_pages.page_count(chapter)
             chapter_total += 1
 
+    # 本轮没见到的书：先标记，宽限期满且过护栏才删（与视频/音乐同款保护）。
+    # 章节清理只对「书本轮仍在盘上」的做——挂载掉线时书目录整体消失，
+    # 章节跟着书一起走宽限期，不单独提前删（免得半删半留）。
     scanned = set(drafts.keys())
-    removed = 0
+    now = datetime.now()
+    threshold = scan_guard.grace_threshold()
+    pending: list[Comic] = []
     for comic in existing.values():
-        for ch in db.scalars(
-            select(ComicChapter).where(ComicChapter.comic_id == comic.id)
-        ).all():
-            if not Path(ch.file_path).exists():
-                db.delete(ch)
-        if comic.book_path in scanned:
+        if comic.book_path in scanned or Path(comic.book_path).exists():
+            comic.missing_since = None
+            for ch in db.scalars(
+                select(ComicChapter).where(ComicChapter.comic_id == comic.id)
+            ).all():
+                if not Path(ch.file_path).exists():
+                    db.delete(ch)
             continue
-        if Path(comic.book_path).exists():
-            continue
-        for p in db.scalars(
-            select(ComicProgress).where(ComicProgress.comic_id == comic.id)
-        ).all():
-            db.delete(p)
-        for ch in db.scalars(
-            select(ComicChapter).where(ComicChapter.comic_id == comic.id)
-        ).all():
-            db.delete(ch)
-        db.delete(comic)
-        removed += 1
+        if comic.missing_since is None:
+            comic.missing_since = now
+        elif comic.missing_since < threshold:
+            pending.append(comic)
+
+    previous = scan_guard.read_last_count(db, "comic_scan", library.id or 0)
+    allowed = scan_guard.guard_allows(len(drafts), previous)
+    removed = 0
+    if pending:
+        if allowed:
+            for comic in pending:
+                # 子行用 core delete 立即执行（与 video/music 扫描同款）：
+                # ORM 混合 flush 里父行可能先删，撞 FOREIGN KEY constraint failed
+                db.execute(delete(ComicProgress).where(ComicProgress.comic_id == comic.id))
+                db.execute(delete(ComicChapter).where(ComicChapter.comic_id == comic.id))
+                db.delete(comic)
+                removed += 1
+        else:
+            logger.warning(
+                "漫画库疑似磁盘异常（本轮 %d 条 / 上轮 %s 条），暂缓删除 %d 条: %s；"
+                "如确认磁盘正常，可临时把 SCAN_GUARD_MIN_RATIO 设为 0 后重扫",
+                len(drafts),
+                previous,
+                len(pending),
+                library.name,
+            )
+    if allowed:
+        scan_guard.write_last_count(db, "comic_scan", library.id or 0, len(drafts))
+    else:
+        # 护栏拦截期间冻结基线：否则下一轮 previous 变小、护栏失效 → 整库被清空
+        logger.warning("漫画库扫描基线保持不变（疑似磁盘异常）: %s", library.name)
     db.flush()
     return {"series": len(drafts), "chapters": chapter_total, "removed": removed}

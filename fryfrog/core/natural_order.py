@@ -5,8 +5,17 @@ from functools import cmp_to_key
 
 
 def natural_key(s: str):
-    """生成自然排序 key：数字段按数值。"""
-    return [int(text) if text.isdigit() else text.lower() for text in re.split(r"(\d+)", s)]
+    """生成自然排序 key：数字段按数值。
+
+    数字段必须截断：文件名可能含超长连续数字，超过 Python 3.12 的
+    int 位数上限（默认 4300 位）时 `int()` 直接抛 ValueError，导致所有
+    走 natural_key 排序的接口 500。截到 15 位不影响实际排序结果
+    （15 位已远超任何文件序号范围），且与 natural_compare 语义一致。
+    """
+    return [
+        int(text[:15]) if text.isdigit() else text.lower()
+        for text in re.split(r"(\d+)", s)
+    ]
 
 
 def natural_compare(a: str, b: str) -> int:

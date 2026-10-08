@@ -31,6 +31,13 @@ def stream_video(db: DbSession, id: int, request: Request):
     content_type = _video_content_type(path.name)
     rng = _parse_range(request.headers.get("range"), file_size)
     headers = {"Accept-Ranges": "bytes"}
+    if rng == (-1, -1):
+        # 范围不可满足：显式回 416，不能静默把整文件当 200 吐给客户端
+        # （会破坏播放器/下载器的断点续传判断）
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
     if rng is None:
         headers["Content-Length"] = str(file_size)
         return StreamingResponse(
@@ -68,14 +75,16 @@ def stream_transcode(
     if subtitle:
         video_dir = path.parent.resolve()
         sub = (video_dir / subtitle).resolve()
-        if not str(sub).startswith(str(video_dir)) or not sub.is_file():
+        # 分隔符边界校验：裸 startswith 会放过 /data/shows-backup 这类同级
+        # 同前缀目录（经符号链接可达时读到目录外文件）
+        if not sub.is_relative_to(video_dir) or not sub.is_file():
             return Response(status_code=400, content=b"Invalid subtitle")
         subtitle_path = str(sub)
 
     height = {"1080p": 1080, "720p": 720, "480p": 480}.get(quality, 1080)
     vf = f"scale=-2:{height}"
     if subtitle_path:
-        vf = f"{vf},subtitles={subtitle_path}"
+        vf = f"{vf},subtitles={_escape_filter_path(subtitle_path)}"
     cmd = [
         runtime.ffmpeg_path,
         "-i",
@@ -108,6 +117,12 @@ def stream_transcode(
                 yield chunk
         finally:
             proc.kill()
+            # 只 kill 不 wait 会留僵尸进程；ffmpeg 可能派生子进程树，wait 主进程
+            # 至少保证不堆积（子进程交给进程组系统清理）。timeout 防 wait 阻塞。
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                pass
 
     return StreamingResponse(
         gen(),
@@ -173,7 +188,8 @@ def get_subtitle(db: DbSession, id: int, filename: str):
     video = vs.get_video(db, id)
     video_dir = Path(video.file_path).parent.resolve()
     sub = (video_dir / filename).resolve()
-    if not str(sub).startswith(str(video_dir)):
+    # is_relative_to 才有分隔符边界：startswith 会放过同前缀的同级目录
+    if not sub.is_relative_to(video_dir):
         raise BadRequestException("Invalid subtitle path")
     if not sub.exists():
         raise ResourceNotFoundException("Subtitle", "filename", filename)
@@ -203,6 +219,17 @@ def _video_content_type(name: str) -> str:
     return VIDEO_CONTENT_TYPES.get(Path(name).suffix.lower(), "application/octet-stream")
 
 
+def _escape_filter_path(path: str) -> str:
+    """把文件路径转义成 ffmpeg 滤镜参数的安全字面量。
+
+    滤镜参数以 `:` 分隔、`'` 为引号、反斜杠为转义符——字幕文件名含撇号
+    （Bob's Burgers.srt）、冒号或反斜杠时裸拼会让滤镜解析失败、ffmpeg
+    退出（客户端拿到空流）。包一层单引号并转义内部特殊字符。
+    """
+    escaped = path.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    return f"'{escaped}'"
+
+
 def _parse_range(range_header: str | None, file_size: int) -> tuple[int, int] | None:
     if not range_header or not range_header.startswith("bytes="):
         return None
@@ -221,7 +248,9 @@ def _parse_range(range_header: str | None, file_size: int) -> tuple[int, int] | 
     except ValueError:
         return None
     if start >= file_size or start > end:
-        return None
+        # 不可满足的范围（起点越界等）：HTTP 要求回 416 + Content-Range: bytes */size。
+        # 用 (-1,-1) 哨兵区分「没有 Range 头/格式错」与「范围不合法」，前者回 200 全量。
+        return (-1, -1)
     return start, min(end, file_size - 1)
 
 

@@ -44,6 +44,10 @@ ADMIN_ONLY_READS = [
     r"^/api/v1/media-libraries/browse$",
     r"^/api/v1/settings.*$",
     r"^/api/v1/logs.*$",
+    # 用户管理面只对 admin 开放。注意必须精确/数字锚定：
+    # `^/api/v1/users.*$` 会把 `/users/me`（普通用户取自己信息）也锁死。
+    r"^/api/v1/users$",
+    r"^/api/v1/users/\d+.*$",
 ]
 
 SIGNED_MEDIA_PATTERNS = [
@@ -63,21 +67,24 @@ SIGNED_MEDIA_PATTERNS = [
     r".*/file$",
 ]
 
+# 必须锚定结尾（`$`）：前缀匹配会让 `cover-options`/`cover-upload` 这类
+# 管理端点被当成静态图片资源提前放行——中间件不写当前用户，
+# 路由里的 _require_admin 永远判为匿名 → 管理员也 403。
 STATIC_RESOURCE_PATTERNS = [
-    r".*/cover",
-    r".*/fanart",
-    r".*/pages/\d+",
-    r".*/artist/image",
-    r".*/character/.*/image",
-    r".*/actor/.*/image",
-    r".*/image",
-    r".*/stream",
-    r".*/stream/transcode",
-    r".*/subtitles/.*",
-    r".*/subtitle/vtt",
-    r".*/lyrics",
-    r".*/file",
-    r".*/tmdb-image-proxy",
+    r".*/cover$",
+    r".*/fanart$",
+    r".*/pages/\d+$",
+    r".*/artist/image$",
+    r".*/character/.*/image$",
+    r".*/actor/.*/image$",
+    r".*/image$",
+    r".*/stream$",
+    r".*/stream/transcode$",
+    r".*/subtitles/.*$",
+    r".*/subtitle/vtt$",
+    r".*/lyrics$",
+    r".*/file$",
+    r".*/tmdb-image-proxy$",
 ]
 
 
@@ -102,6 +109,12 @@ async def auth_middleware(request: Request, call_next):
     ):
         return await call_next(request)
 
+    # /rest/* Subsonic 由自身路由鉴权。必须放在静态资源判断之前：
+    # `/rest/stream` 以 "stream" 结尾，会先撞上 `.*stream$` 的签名要求，
+    # 导致 Subsonic 客户端（用 u/p 鉴权、不带 sig）拿 401，音乐播放全挂。
+    if path.startswith("/rest/"):
+        return await call_next(request)
+
     if _matches_any(path, STATIC_RESOURCE_PATTERNS) and method in ("GET", "HEAD", "OPTIONS"):
         # 只有读请求按静态资源放行（再做签名校验）。写请求即便路径像图片资源
         # （如 POST /video/{id}/cover）也必须走正常鉴权，否则 current_user 不会
@@ -115,10 +128,6 @@ async def auth_middleware(request: Request, call_next):
                 exp_val = 0
             if not signer.verify(path, exp_val, sig):
                 return _reject(401, "Unauthorized")
-        return await call_next(request)
-
-    # /rest/* Subsonic 由自身路由鉴权
-    if path.startswith("/rest/"):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization") or ""
@@ -173,25 +182,32 @@ def _reject(status: int, message: str):
 def commit_with_retry(db, *, attempts: int = 5, max_sleep: float = 3.2) -> None:
     """提交，遇 SQLite 写锁争用则退避重试。
 
-    SQLite 单写者：后台扫描/刷新持锁期间，这里（每个请求都会走到）的 commit 会抛
-    `database is locked`，导致正常 API 变成 500——实测刷新大库时**登录直接 500**，
-    刷新跑几分钟就几分钟登不进去。
+    SQLite 单写者：后台扫描/刷新持锁期间，commit 会抛 `database is locked`。
+    单次 `db.commit()` 内部已有 SQLite 的 busy 等待（连接 `timeout=30`），
+    重试再叠加退避窗口，足以熬过「后台每处理一部剧提交一次」的短时争用。
 
-    重试预算刻意给足：单次 `db.commit()` 内部已有 SQLite 的 busy 等待
-    （连接 `timeout=30`，即最多等 30 秒），所以每多一次重试就多一个 30 秒窗口。
-    5 次 + 最深 3.2 秒退避，足以熬过「后台每处理一部剧提交一次」造成的短时争用，
-    把硬失败换成就绪前的短暂等待。
+    关键语义（防止"假成功"）：commit 失败后执行 rollback 会**丢弃本次事务的
+    全部写入**（新增对象退回 transient、更新被过期还原），此时再重试提交的
+    是空事务——必然"成功"，但数据已静默丢失。因此：
+    - 会话带有待写入状态（new/dirty/deleted）时，失败一次就如实抛错，
+      绝不重试——宁可让客户端看到失败，也不能把丢数据伪装成成功；
+    - 只读会话（GET 请求的中间件路径）没有可丢失状态，重试是安全的，
+      保留退避重试以熬过短时争用。
+    长时间持锁的根治手段是缩短后台事务（分批提交），不是加长这里的重试。
     """
     import time
 
     from sqlalchemy.exc import OperationalError
 
     for attempt in range(attempts):
+        had_writes = bool(getattr(db, "new", None) or getattr(db, "dirty", None) or getattr(db, "deleted", None))
         try:
             db.commit()
             return
         except OperationalError:
             db.rollback()
+            if had_writes:
+                raise
             if attempt == attempts - 1:
                 raise
             time.sleep(min(0.4 * (2**attempt), max_sleep))

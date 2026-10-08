@@ -321,8 +321,8 @@ def refresh_all_season_covers(db: DbSession):
         for lib in mls.get_enabled_libraries(db)
         if lib.enable_scraping and lib.is_video_type()
     }
-    series_list = [
-        s
+    series_ids = [
+        s.id
         for s in db.scalars(select(VideoSeries)).all()
         if s.tmdb_id is not None
         and any(v.library_id in scrape_libs for v in vs.series_videos(db, s.id))
@@ -331,7 +331,10 @@ def refresh_all_season_covers(db: DbSession):
 
     def work(session):
         completed = 0
-        for s in series_list:
+        # 按 id 在任务 session 里重新取：detached 对象上写的 poster 路径会静默丢失
+        for s in [session.get(VideoSeries, sid) for sid in series_ids]:
+            if s is None:
+                continue
             try:
                 eps = vs.series_videos(session, s.id)
                 # 总封面/总横屏落地到剧名根目录
@@ -343,10 +346,10 @@ def refresh_all_season_covers(db: DbSession):
             except Exception:
                 pass
 
-    submit_job(module, "season-covers", len(series_list), work)
+    submit_job(module, "season-covers", len(series_ids), work)
     return ApiResponse.ok(
         {
-            "totalSeries": len(series_list),
+            "totalSeries": len(series_ids),
             "status": "submitted",
             "message": "批量刷新任务已提交，正在后台执行",
             "module": module,
