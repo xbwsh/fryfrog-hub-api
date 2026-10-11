@@ -12,6 +12,7 @@ __pycache__/
 .herdr/
 .mimocode/
 .agnes/
+.workbuddy/
 
 # Maven
 target/

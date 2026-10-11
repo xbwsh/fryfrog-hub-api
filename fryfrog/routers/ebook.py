@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -194,8 +194,8 @@ def scan(
 def list_books(
     db: DbSession,
     q: str | None = None,
-    page: int = 0,
-    size: int = 20,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
     media_lib: MediaLibraryService = Depends(get_media_library_service),
 ):
     allowed = media_lib.get_allowable_library_ids(db)
@@ -222,8 +222,8 @@ def list_books(
 @router.get("/authors")
 def authors(
     db: DbSession,
-    page: int = 0,
-    size: int = 20,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
     media_lib: MediaLibraryService = Depends(get_media_library_service),
 ):
     allowed = media_lib.get_allowable_library_ids(db)
@@ -266,8 +266,9 @@ def list_chapters(
     book_id: int,
     db: DbSession,
     media_lib: MediaLibraryService = Depends(get_media_library_service),
-    page: int = 0,
-    size: int = 0,
+    page: int = Query(0, ge=0),
+    # 0 = 全量返回（兼容旧客户端，见 docstring），这里只挡上界防 -1 全表扫描
+    size: int = Query(0, ge=0, le=5000),
 ):
     """TXT 在线阅读：章节目录（字符偏移供前端定位）。
 

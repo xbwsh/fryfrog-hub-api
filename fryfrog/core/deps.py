@@ -50,9 +50,13 @@ ADMIN_ONLY_READS = [
     r"^/api/v1/users/\d+.*$",
 ]
 
+#需要签名访问的媒体资源（校验 exp+sig，不走 Bearer）。
+# 注意每条都带 $ 锚点：`.*/cover` 会误命中 `/cover-options` 这类管理接口，
+# 使其跳过 Bearer 鉴权、current_user_id() 停在 None(-1)，导致 admin 接口恒 403。
 SIGNED_MEDIA_PATTERNS = [
     r".*/cover$",
     r".*/fanart$",
+    r".*/logo$",
     r".*/stream$",
     r".*/stream/transcode$",
     r".*/season/\d+/cover$",
@@ -73,6 +77,8 @@ SIGNED_MEDIA_PATTERNS = [
 STATIC_RESOURCE_PATTERNS = [
     r".*/cover$",
     r".*/fanart$",
+    r".*/logo$",
+    r".*/season/\d+/cover$",
     r".*/pages/\d+$",
     r".*/artist/image$",
     r".*/character/.*/image$",
@@ -80,8 +86,7 @@ STATIC_RESOURCE_PATTERNS = [
     r".*/image$",
     r".*/stream$",
     r".*/stream/transcode$",
-    r".*/subtitles/.*$",
-    r".*/subtitle/vtt$",
+    r".*/subtitles/.*",
     r".*/lyrics$",
     r".*/file$",
     r".*/tmdb-image-proxy$",

@@ -6,7 +6,7 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -361,8 +361,8 @@ def organize(
 def list_books(
     db: DbSession,
     q: str | None = None,
-    page: int = 0,
-    size: int = 20,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
     media_lib: MediaLibraryService = Depends(get_media_library_service),
 ):
     allowed = media_lib.get_allowable_library_ids(db)
@@ -389,7 +389,7 @@ def list_books(
 
 
 @router.get("/authors")
-def authors(db: DbSession, page: int = 0, size: int = 20,
+def authors(db: DbSession, page: int = Query(0, ge=0), size: int = Query(20, ge=1, le=200),
             media_lib: MediaLibraryService = Depends(get_media_library_service)):
     allowed = media_lib.get_allowable_library_ids(db)
     if not allowed:

@@ -175,16 +175,16 @@ def rename_show_dir(db: Session, video: Video) -> bool:
             elif row.title != video.title:
                 return False
         os.rename(str(root), str(new_root))
-        old_prefix = str(root.resolve())
+        # 必须带上结尾的分隔符，否则「剧名2/xxx」也会以「剧名」开头而被当成子路径，
+        # 连带把兄弟目录的 file_path 改写成本不存在的路径 —— 那些行随后会被扫描
+        # 当成「文件已删除」清理掉，连带丢失观看进度。
+        old_prefix = str(root.resolve()) + os.sep
+        new_prefix = str(new_root.resolve()) + os.sep
         for row in db.scalars(select(Video)).all():
-            if not row.file_path or not row.file_path.startswith(old_prefix):
-                continue
-            # 必须校验分隔符边界：/data/Show 改名不能连带 /data/Show2024——
-            # 否则那批记录指向不存在的路径，下轮扫描判缺失、宽限期满删行
-            # （连带进度/收藏一起丢）。
-            rest = row.file_path[len(old_prefix):]
-            if rest == "" or rest.startswith("/"):
-                row.file_path = str(new_root.resolve()) + rest
+            # old_prefix 已含结尾分隔符，`/data/Show2/x` 不会以 `Show\` 开头，
+            # 因此这里天然只命中真实子目录，不会连带改写兄弟目录。
+            if row.file_path and row.file_path.startswith(old_prefix):
+                row.file_path = new_prefix + row.file_path[len(old_prefix) :]
         db.flush()
         logger.info("剧名级目录重命名: %s → %s", root, new_root)
         return True

@@ -16,11 +16,18 @@ class SubsonicPasswordEncryptor:
     def __init__(self, base64_key: str | None):
         self.key: bytes | None = None
         if base64_key:
+            key: bytes | None = None
             try:
-                key = base64.b64decode(base64_key, validate=True)
+                try:
+                    key = base64.b64decode(base64_key, validate=True)
+                except Exception:
+                    # 回退分支自己也可能抛（长度对不上 base64 分组），必须包在同
+                    # 一个 try 里；否则异常穿出 __init__，启动直接失败。
+                    key = base64.b64decode(base64_key + "=" * (-len(base64_key) % 4))
             except Exception:
-                key = base64.b64decode(base64_key + "=" * (-len(base64_key) % 4))
-            if len(key) != 32:
+                logger.exception("SUBSONIC_ENCRYPT_KEY 解析失败，回退明文存储")
+                key = None
+            if key is None or len(key) != 32:
                 logger.error(
                     "SUBSONIC_ENCRYPT_KEY 必须是 Base64 编码的 32 字节密钥，当前无效，已回退明文存储"
                 )

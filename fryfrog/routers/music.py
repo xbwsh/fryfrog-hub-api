@@ -472,7 +472,11 @@ def music_home(db: DbSession):
 
 
 @router.get("/artists")
-def list_artists(db: DbSession, page: int = 0, size: int = 20):
+def list_artists(
+    db: DbSession,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
+):
     uid = current_user_id()
     allowed = _allowed_ids(db)
     total = int(
@@ -503,7 +507,11 @@ def get_artist(artist_id: int, db: DbSession):
 
 
 @router.get("/albums")
-def list_albums(db: DbSession, page: int = 0, size: int = 20):
+def list_albums(
+    db: DbSession,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
+):
     uid = current_user_id()
     allowed = _allowed_ids(db)
     total = int(
@@ -546,8 +554,8 @@ def search_songs(
     genre: str | None = None,
     albumId: int | None = None,
     artistId: int | None = None,
-    page: int = 0,
-    size: int = 20,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
 ):
     uid = current_user_id()
     allowed = _allowed_ids(db)
@@ -790,7 +798,11 @@ def update_playlist(playlist_id: int, db: DbSession, body: dict = Body(...)):
     if body.get("songIds") is not None:
         _replace_playlist_songs(db, playlist_id, [int(x) for x in body["songIds"]])
     if body.get("songIdsToAdd"):
-        pos = int(db.scalar(select(func.coalesce(func.max(MusicPlaylistEntry.position), -1)).where(MusicPlaylistEntry.playlist_id == playlist_id)) or -1) + 1
+        # 注意：不能用 `int(x or -1)` —— 歌单只有一首歌时 max(position)=0，
+        # 而 0 在 Python 里是 falsy，会被当成「空歌单」误算回 -1，导致新条目
+        # position=0 撞 UNIQUE(playlist_id, position) 约束。
+        _max_pos = db.scalar(select(func.coalesce(func.max(MusicPlaylistEntry.position), -1)).where(MusicPlaylistEntry.playlist_id == playlist_id))
+        pos = (_max_pos if _max_pos is not None else -1) + 1
         for sid in body["songIdsToAdd"]:
             db.add(MusicPlaylistEntry(playlist_id=playlist_id, song_id=int(sid), position=pos))
             pos += 1
@@ -1773,7 +1785,9 @@ def _ss_update_playlist(db: Session, params: dict, uid: int) -> None:
         sid = _ss_parse_song(str(raw))
         if sid is None:
             continue
-        pos = int(db.scalar(select(func.coalesce(func.max(MusicPlaylistEntry.position), -1)).where(MusicPlaylistEntry.playlist_id == pid)) or -1) + 1
+        # 同上：不能用 `or -1`，max=0 是合法的已有条目
+        _max_pos = db.scalar(select(func.coalesce(func.max(MusicPlaylistEntry.position), -1)).where(MusicPlaylistEntry.playlist_id == pid))
+        pos = (_max_pos if _max_pos is not None else -1) + 1
         db.add(MusicPlaylistEntry(playlist_id=pid, song_id=sid, position=pos))
         db.flush()
     to_remove = params.get_all("songIndexToRemove") if hasattr(params, "get_all") else []
@@ -1906,7 +1920,12 @@ def _ss_lyrics(db: Session, params: dict) -> dict:
     lyrics: dict = {}
     sid = _ss_parse_song(_q(params, "id"))
     song = db.get(MusicSong, sid) if sid else None
-    if song is None or not _is_visible_library(db, song.library_id):
+    if song is not None and not _is_visible_library(db, song.library_id):
+        # 必须显式置空：原实现只在 artist+title 都不为空时才重新赋值 song，
+        # 于是 getLyrics?id=tr-N（最常见用法）会把未授权歌曲的歌词原样返回。
+        song = None
+    if song is None:
+        # 按 artist/title 兜底匹配，只在授权库范围内找
         artist = _q(params, "artist")
         title = _q(params, "title")
         if artist and title:
@@ -1970,6 +1989,10 @@ def _ss_binary(db: Session, method: str, params: dict, request: Request):
                 if album.cover_art_path and Path(album.cover_art_path).is_file():
                     return _image_response(album.cover_art_path)
                 for song in _songs_of_album(db, num):
+                    # album 已授权，但其下仍可能存在跨库脏数据；再按歌曲自己的库
+                    # 过滤一次，避免 _embedded_cover 用 ffmpeg 打开未授权库音频。
+                    if not _is_visible_library(db, song.library_id):
+                        continue
                     embedded = _embedded_cover(song.file_path)
                     if embedded:
                         return Response(content=embedded[0], media_type=embedded[1])

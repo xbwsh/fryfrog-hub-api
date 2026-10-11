@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -228,8 +228,8 @@ def organize(
 def list_comics(
     db: DbSession,
     q: str | None = None,
-    page: int = 0,
-    size: int = 20,
+    page: int = Query(0, ge=0),
+    size: int = Query(20, ge=1, le=200),
     media_lib: MediaLibraryService = Depends(get_media_library_service),
 ):
     allowed = media_lib.get_allowable_library_ids(db)

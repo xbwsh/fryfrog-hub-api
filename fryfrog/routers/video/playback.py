@@ -75,8 +75,6 @@ def stream_transcode(
     if subtitle:
         video_dir = path.parent.resolve()
         sub = (video_dir / subtitle).resolve()
-        # 分隔符边界校验：裸 startswith 会放过 /data/shows-backup 这类同级
-        # 同前缀目录（经符号链接可达时读到目录外文件）
         if not sub.is_relative_to(video_dir) or not sub.is_file():
             return Response(status_code=400, content=b"Invalid subtitle")
         subtitle_path = str(sub)
@@ -188,7 +186,6 @@ def get_subtitle(db: DbSession, id: int, filename: str):
     video = vs.get_video(db, id)
     video_dir = Path(video.file_path).parent.resolve()
     sub = (video_dir / filename).resolve()
-    # is_relative_to 才有分隔符边界：startswith 会放过同前缀的同级目录
     if not sub.is_relative_to(video_dir):
         raise BadRequestException("Invalid subtitle path")
     if not sub.exists():
