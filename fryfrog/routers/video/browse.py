@@ -264,15 +264,24 @@ def update_metadata(db: DbSession, id: int, body: VideoMetadataUpdateRequest):
 
 @router.get("/{id:int}/actors")
 def get_video_actors(db: DbSession, id: int):
+    # vs.get_video 与 vs.get_series 在 service 层都已做可见性校验
+    # （video_service._require_visible_library），不可见时抛 404，与「不存在」同构。
+    #
+    # 旧实现用 `except ResourceNotFoundException: pass` 兜底想回退到「剧集」解释，
+    # 但权限拒绝与「不存在」抛同一个异常，于是不可见库的请求被当成「这不是视频」
+    # 而继续走进 series 分支，把他人剧集的演职员读了出来。这里两个都包起来，
+    # 两者都拿不到才抛 404。
     try:
         video = vs.get_video(db, id)
-        _require_visible(db, video.library_id, "Video", id)
-        actors = vs.get_actors_for_video(db, id)
-        if actors:
-            return ApiResponse.ok([_actor_dict(a) for a in actors])
     except ResourceNotFoundException:
-        pass
-    series = vs.get_series(db, id)
+        video = None
+    if video is not None:
+        return ApiResponse.ok([_actor_dict(a) for a in vs.get_actors_for_video(db, id)])
+
+    try:
+        series = vs.get_series(db, id)
+    except ResourceNotFoundException:
+        series = None
     if series is not None:
         rows = list(
             db.scalars(
@@ -282,9 +291,8 @@ def get_video_actors(db: DbSession, id: int):
             ).all()
         )
         return ApiResponse.ok([_actor_dict(a) for a in vs.dedup_actors(rows)])
-    video = vs.get_video(db, id)
-    _require_visible(db, video.library_id, "Video", id)
-    return ApiResponse.ok([_actor_dict(a) for a in vs.get_actors_for_video(db, id)])
+
+    raise ResourceNotFoundException("Video", "id", id)
 
 
 @router.get("/{id:int}/progress")

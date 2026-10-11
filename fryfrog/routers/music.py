@@ -173,6 +173,18 @@ def _require_song(db: Session, song_id: int) -> MusicSong:
     return song
 
 
+def _require_songs(db: Session, song_ids: list[int]) -> list[MusicSong]:
+    """批量校验歌单条目里的 song_id：存在且对当前用户可见。
+
+    歌单的 songIds / songIdsToAdd / Subsonic addSongToPlaylist 全来自请求体，
+    之前一路直达 `db.add(MusicPlaylistEntry(song_id=...))`：
+      · id 不存在 → FK IntegrityError → 500（PRAGMA foreign_keys=ON）；
+      · id 属于未授权库 → 越权写入，且可探测任意 song_id 是否存在。
+    逐个复用 _require_song，不存在与不可见都抛 404（不泄露存在性）。
+    """
+    return [_require_song(db, int(sid)) for sid in song_ids]
+
+
 def _require_album(db: Session, album_id: int) -> MusicAlbum:
     album = db.get(MusicAlbum, album_id)
     if album is None or not _is_visible_library(db, album.library_id):
@@ -735,6 +747,8 @@ def _replace_playlist_songs(db: Session, playlist_id: int, song_ids: list[int]) 
     for entry in db.scalars(select(MusicPlaylistEntry).where(MusicPlaylistEntry.playlist_id == playlist_id)).all():
         db.delete(entry)
     db.flush()
+    # 先校验再入库：非法 id 会撞 FK 变成 500，未授权 id 则是越权写入
+    _require_songs(db, song_ids)
     for pos, sid in enumerate(song_ids):
         db.add(MusicPlaylistEntry(playlist_id=playlist_id, song_id=sid, position=pos))
     db.flush()
@@ -798,6 +812,7 @@ def update_playlist(playlist_id: int, db: DbSession, body: dict = Body(...)):
     if body.get("songIds") is not None:
         _replace_playlist_songs(db, playlist_id, [int(x) for x in body["songIds"]])
     if body.get("songIdsToAdd"):
+        _require_songs(db, [int(x) for x in body["songIdsToAdd"]])
         # 注意：不能用 `int(x or -1)` —— 歌单只有一首歌时 max(position)=0，
         # 而 0 在 Python 里是 falsy，会被当成「空歌单」误算回 -1，导致新条目
         # position=0 撞 UNIQUE(playlist_id, position) 约束。
@@ -879,8 +894,15 @@ def get_play_queue(db: DbSession):
 @router.put("/play-queue")
 def save_play_queue(db: DbSession, body: dict = Body(...)):
     uid = current_user_id()
-    song_ids = body.get("songIds") or []
-    entry_ids = ",".join(str(int(x)) for x in song_ids)
+    song_ids = [int(x) for x in (body.get("songIds") or [])]
+    # entry_ids / current_song_id 全来自请求体，不校验的话未授权 song_id 会被
+    # 原样写进播放队列，getPlayQueue 再原样读出——既泄漏他人库的存在性，
+    # 也让前端拿到不可播放的 id。
+    _require_songs(db, song_ids)
+    cur = body.get("currentSongId")
+    if cur is not None:
+        _require_songs(db, [int(cur)])
+    entry_ids = ",".join(str(x) for x in song_ids)
     queue = db.scalar(select(MusicPlayQueue).where(MusicPlayQueue.user_id == uid))
     if queue is None:
         queue = MusicPlayQueue(user_id=uid)
@@ -1785,6 +1807,10 @@ def _ss_update_playlist(db: Session, params: dict, uid: int) -> None:
         sid = _ss_parse_song(str(raw))
         if sid is None:
             continue
+        # 同 REST 侧：不存在的 id 会撞 FK 变 500，未授权 id 则是越权写入
+        song = db.get(MusicSong, sid)
+        if song is None or not _is_visible_library(db, song.library_id):
+            raise SubsonicApiError(ERROR_NOT_FOUND, "Song not found")
         # 同上：不能用 `or -1`，max=0 是合法的已有条目
         _max_pos = db.scalar(select(func.coalesce(func.max(MusicPlaylistEntry.position), -1)).where(MusicPlaylistEntry.playlist_id == pid))
         pos = (_max_pos if _max_pos is not None else -1) + 1
