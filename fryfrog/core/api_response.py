@@ -12,6 +12,12 @@ class ApiResponse(BaseModel, Generic[T]):
     message: str | None = None
     data: T | None = None
 
+    # 注意：`exclude_none` **不是** pydantic v2 的合法 ConfigDict 键，写在这里
+    # 完全不生效（不会报错，也不会有任何效果）—— 它是序列化参数
+    # `model_dump(exclude_none=True)` / FastAPI 的 `response_model_exclude_none=True`。
+    # 保留这行只为记录原意图；实际响应始终带 message/data 两个字段（为 null）。
+    # 若要真的省略 null 字段，需在各路由上加 response_model_exclude_none=True，
+    # 那会改变所有响应的 JSON 结构，需同步确认前端。
     model_config = {"exclude_none": True}
 
     @classmethod

@@ -46,13 +46,21 @@ _CJK = re.compile(r"[\u3400-\u9fff\u3040-\u30ff]")
 
 
 def title_head(name: str) -> str:
-    """取发布名里集号标记之前的标题部分，并去掉末尾的发布年份。
+    """取发布名里集号标记之前的标题部分，并尽量去掉末尾的发布年份。
 
     入参是文件名（含扩展名）或已去扩展名的名字，二者皆可。
+
+    关于年份（实测结论，勿凭注释想当然）：
+    `_RELEASE_YEAR` 的前瞻要求年份**后面还跟一段发行信息**，因此结尾年份
+    不匹配（`Movie.2025` / `Title.1999` 保持原样），只有年份在中部才截断
+    （`Movie.2025.1080p` → `Movie`）。
+    而中部年份恰恰常是标题的一部分 —— `Blade.Runner.2049.1080p` 会被截成
+    `Blade.Runner`，而 2049 是片名不是年份。要真正修好需要额外启发式
+    （如年份前词段是否像片名），风险是误伤真实的 `Movie.2025.1080p`，
+    暂保持原行为，在此记录以免后人重复踩。
     """
     stem = Path(name).stem
     years = list(_RELEASE_YEAR.finditer(stem))
-    # 只截最后一处年份，保留标题里自带的年份（如《Blade Runner 2049》）
     head = stem[: years[-1].start()] if years else stem
     return _EPISODE_MARK.split(head)[0]
 

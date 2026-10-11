@@ -84,7 +84,17 @@ class Settings(BaseSettings):
 
     @property
     def data_dir(self) -> Path:
-        return Path("data")
+        """应用数据目录：跟随 sqlite_path 所在位置。
+
+        原先硬编码 `Path("data")`，与可配置的 sqlite_path 脱节——用
+        SQLITE_PATH=/data/fryfrog.db 部署时数据库在 /data，这里却仍指向
+        ./data。现改为从 sqlite_path 派生，默认（data/fryfrog.db）下
+        解析结果仍是 data/，行为兼容。
+
+        注意：当前全项目无调用点（comic_cover_path 等封面路径是各自
+        写死 `Path("data")/covers/...`），保留仅为向后兼容。
+        """
+        return Path(self.sqlite_path).parent
 
 
 @lru_cache

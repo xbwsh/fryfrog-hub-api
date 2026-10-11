@@ -294,6 +294,16 @@ def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
                     referenced.add(str(Path(p).resolve()))
                 except OSError:
                     pass
+    #剧集行也持有本地素材路径（总海报/总背景/剧徽，写在剧名根目录），
+    # 漏掉会让「分集都移走但季海报还在」的目录被当成空壳 rmtree —— 用户
+    # 手工放进来的季海报就这么没了，且删除只走 ignore_errors 不留日志。
+    for s in db.scalars(select(VideoSeries)).all():
+        for p in (s.poster_local_path, s.backdrop_local_path, s.logo_local_path):
+            if p:
+                try:
+                    referenced.add(str(Path(p).resolve()))
+                except OSError:
+                    pass
     removed = 0
     try:
         for d in root.rglob("*"):
@@ -304,6 +314,9 @@ def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
                 continue
             # 目录内文件全为素材类且未被引用 → 删除（rmtree 空壳）
             if _is_orphan_asset_dir(d) and not _dir_references_media(d, referenced):
+                # ignore_errors 会吞掉一切失败，而这是不可逆删除：至少 info
+                # 记下删了哪个目录，否则误删后无从排查。
+                logger.info("清理空壳素材目录: %s", d)
                 shutil.rmtree(d, ignore_errors=True)
                 removed += 1
     except OSError:

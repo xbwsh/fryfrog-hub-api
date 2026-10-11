@@ -192,11 +192,21 @@ def get_playlist(db: DbSession, id: int, request: Request):
         lines.append(f"#EXTINF:-1,{title}")
         lines.append(f"{base_url}{sign(f'/api/v1/video/{v.id}/stream')}")
     content = ("\n".join(lines) + "\n").encode("utf-8")
+    # series_title 来自刮削元数据，可能含 " 或 CR/LF；直接拼进 header 会让
+    # h11 抛协议错误（500），最坏情况是响应拆分。用 RFC 6266 的 filename*
+    # 形式，非 ASCII 走 UTF-8 百分号编码，ASCII 则回退到 filename 并转义引号。
+    safe_name = series_title.replace("\r", " ").replace("\n", " ")
+    if safe_name.isascii():
+        filename = f'attachment; filename="{safe_name.replace(chr(34), "_")}.m3u"'
+    else:
+        from urllib.parse import quote
+
+        filename = f"attachment; filename*=UTF-8''{quote(f'{safe_name}.m3u', safe='')}"
     return Response(
         content=content,
         media_type="audio/x-mpegurl; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{series_title}.m3u"',
+            "Content-Disposition": filename,
             "Content-Length": str(len(content)),
         },
     )
