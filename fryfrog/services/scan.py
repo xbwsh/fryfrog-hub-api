@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Any
@@ -59,6 +60,26 @@ def report_scan_progress(library: MediaLibrary, **fields: Any) -> None:
     )
 
 
+def _path_readable(path_str: str) -> bool:
+    """库路径是否可用于扫描。
+
+    用 `os.scandir` 而不是 `Path.exists()`：exists 只判断「在不在」，挂载掉了
+    但目录项还在、或权限不足时它都返回 True，扫描随后静默扫不到文件。
+    这里实际列一次目录，把「路径不可用」在扫描开始前就暴露出来。
+    """
+    from pathlib import Path
+
+    try:
+        with os.scandir(Path(path_str)) as it:
+            next(iter(it), None)
+        return True
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:  # 权限拒绝、挂载掉线、超长路径等
+        logger.warning("库路径不可访问: %s (%s)", path_str, exc)
+        return False
+
+
 def scan_library(db: Session, library: MediaLibrary) -> None:
     if not _claim_library_scan(library):
         logger.info("该库正在扫描中，跳过重复触发: %s", library.name)
@@ -80,6 +101,26 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
         return
     report_scan_progress(library, stage="scan", running=True, total=1, completed=0, failed=0)
     failed = 0
+    # 路径预检：各域的 scan_*_library 在路径不存在时都是「记一条 warning 后
+    # return 0」，前端完全无感知 —— 用户建了库、扫描跑完、界面却空空如也，
+    # 无从判断是扫描失败还是本来就没内容（实测踩过：重新扫描一次就好了）。
+    # 这里前置检查并写 error 终态，让前端能直接显示原因与「重新扫描」入口。
+    if library.path and not _path_readable(library.path):
+        logger.error("媒体库路径不可访问，跳过扫描: %s (%s)", library.name, library.path)
+        report_scan_progress(
+            library,
+            stage="error",
+            running=False,
+            total=1,
+            completed=0,
+            failed=1,
+            currentItem=None,
+            message=f"路径不可访问: {library.path}",
+        )
+        if library.id is not None:
+            with _scan_lock:
+                _running_scans.pop(library.id, None)
+        return
     try:
         _scan_library(db, library)
     except Exception:
