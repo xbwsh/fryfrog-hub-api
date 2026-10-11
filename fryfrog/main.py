@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,6 +26,12 @@ from fryfrog.db import get_session_factory, init_db
 from fryfrog.models.user import User
 
 logger = logging.getLogger("fryfrog")
+
+# 调度线程（token 清理 / 周期扫描）的停机信号。原先两个循环都是裸
+# `while True` + `time.sleep`，没有停止途径：反复用 TestClient 启动、或将来加
+# --reload 时会不断累积后台线程，多线程同时 tick 抢库。改成 Event 后停机可立即
+# 唤醒退出，不需要干等一个完整周期。
+_stop_schedulers = threading.Event()
 
 
 def _setup_logging() -> None:
@@ -74,9 +81,17 @@ async def lifespan(app: FastAPI):
             stop_watcher = stop_file_watcher
         except Exception:
             logger.exception("文件热监听启动失败，退回周期扫描")
-    yield
-    if stop_watcher is not None:
-        stop_watcher()
+    # 必须用 try/finally：yield 之后若再抛异常（例如响应收尾出错），裸写法
+    # 会跳过下面的停机动作，热监听线程随进程泄漏。
+    try:
+        yield
+    finally:
+        _stop_schedulers.set()  # 通知调度线程退出（幂等）
+        if stop_watcher is not None:
+            try:
+                stop_watcher()
+            except Exception:
+                logger.exception("文件热监听停止失败")
 
 
 def _bootstrap_admin() -> None:
@@ -132,12 +147,14 @@ def _migrate_legacy() -> None:
 
 def _start_schedulers() -> None:
     import threading
-    import time
 
     def _token_cleanup_loop():
-        while True:
+        # Event.wait(timeout) 而非 time.sleep：既保持定时语义，又能在停机时
+        # 被_set() 立即唤醒退出，不用干等满24 小时。
+        while not _stop_schedulers.is_set():
             try:
-                time.sleep(24 * 3600)
+                if _stop_schedulers.wait(24 * 3600):
+                    break  # 停机唤醒
                 session = get_session_factory()()
                 try:
                     from fryfrog.services.legacy import cleanup_expired_tokens
@@ -155,7 +172,7 @@ def _start_schedulers() -> None:
         settings = get_settings()
         interval_minutes = max(settings.periodic_scan_interval, 1)
         interval = interval_minutes * 60
-        while True:
+        while not _stop_schedulers.is_set():
             try:
                 if settings.watcher_periodic_scan:
                     session = get_session_factory()()
@@ -165,11 +182,16 @@ def _start_schedulers() -> None:
                         scan_all_enabled(session)
                     finally:
                         session.close()
-                time.sleep(interval)
+                if _stop_schedulers.wait(interval):
+                    break  # 停机唤醒
             except Exception:
                 logger.exception("Periodic scan failed")
-                time.sleep(interval)
+                # 失败退避原本是「睡满整个周期」，一次网络抖动就要等半小时；
+                # 这里保持原周期以免异常时疯狂重试，但停机可立即中断。
+                if _stop_schedulers.wait(interval):
+                    break
 
+    _stop_schedulers.clear()
     threading.Thread(target=_token_cleanup_loop, daemon=True, name="token-cleanup").start()
     threading.Thread(target=_periodic_scan_loop, daemon=True, name="periodic-scan").start()
 

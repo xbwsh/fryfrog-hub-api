@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 # 常见噪声 token（扩展名外）。两侧用 ASCII 字母/数字边界夹住：
@@ -109,8 +110,40 @@ def normalize_path(path: str | None) -> str | None:
         return path
 
 
+# 占位图标签要能显示中文。PIL 默认位图字体不含 CJK，中文会渲染成方块/空白，
+# 而占位图常被用来显示中文片名。这里按优先级找一个可用的系统字体。
+_FONT_CANDIDATES = (
+    "C:/Windows/Fonts/msyh.ttc",  # 微软雅黑
+    "C:/Windows/Fonts/msyh.ttf",
+    "C:/Windows/Fonts/simhei.ttf",  # 黑体
+    "C:/Windows/Fonts/simsun.ttc",  # 宋体
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",  # Linux 常见中文字体
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/System/Library/Fonts/PingFang.ttc",  # macOS
+)
+
+
+@lru_cache(maxsize=8)
+def _load_font(size: int):
+    """取一个能显示中文的字体；找不到就回退 PIL 默认字体。"""
+    from PIL import ImageFont
+
+    for path in _FONT_CANDIDATES:
+        try:
+            if Path(path).is_file():
+                return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+@lru_cache(maxsize=64)
 def placeholder_jpeg(width: int = 400, height: int = 600, label: str = "") -> bytes:
-    """生成灰底占位图 JPEG。"""
+    """生成灰底占位图 JPEG（按尺寸+标签缓存，避免每次请求重建与编码）。
+
+    缓存是必要的：这个函数被无签名/匿名路径高频调用，而每次都新建 Image
+    + 编码 JPEG 是纯 CPU 开销，容易被反复请求打满。
+    """
     from io import BytesIO
 
     from PIL import Image, ImageDraw
@@ -119,7 +152,10 @@ def placeholder_jpeg(width: int = 400, height: int = 600, label: str = "") -> by
     draw = ImageDraw.Draw(img)
     draw.rectangle([8, 8, width - 9, height - 9], outline=(90, 90, 96), width=2)
     if label:
-        draw.text((20, height // 2), label[:40], fill=(160, 160, 168))
+        # 截到能放下的长度：默认字体在宽图上排不下 40 字
+        draw.text(
+            (20, height // 2), label[:40], fill=(160, 160, 168), font=_load_font(16)
+        )
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=85)
     return buf.getvalue()
