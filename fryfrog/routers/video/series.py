@@ -145,7 +145,7 @@ def list_series(db: DbSession, page: int = 0, size: int = 20):
     if standalone_end > 0:
         rows = list(
             db.scalars(
-                standalone_q.order_by(Video.title.asc())
+                standalone_q.order_by(Video.title.asc(), Video.id.asc())
                 .offset(standalone_start)
                 .limit(standalone_end - standalone_start)
             ).all()
@@ -413,7 +413,8 @@ def update_series_metadata(db: DbSession, id: int, body: SeriesMetadataUpdateReq
     }
     updated = False
     for key, attr in fields.items():
-        if key in data and data[key] is not None:
+        # 同 browse 侧：key in data 才算「本次要改」，允许显式 null 清空字段
+        if key in data:
             setattr(series, attr, data[key])
             updated = True
     if updated:

@@ -44,7 +44,7 @@ def search_by_title(db: DbSession, q: str, page: int = 0, size: int = 20):
     allowed = _allowed_ids(db)
     base = select(Video).where(Video.library_id.in_(allowed), Video.title.ilike(f"%{q}%"))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = list(db.scalars(base.order_by(Video.title.asc()).offset(page * size).limit(size)).all())
+    rows = list(db.scalars(base.order_by(Video.title.asc(), Video.id.asc()).offset(page * size).limit(size)).all())
     return ApiResponse.ok(_page_videos(db, rows, page, size, total))
 
 
@@ -54,7 +54,7 @@ def search_by_director(db: DbSession, q: str, page: int = 0, size: int = 20):
     allowed = _allowed_ids(db)
     base = select(Video).where(Video.library_id.in_(allowed), Video.director.ilike(f"%{q}%"))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = list(db.scalars(base.order_by(Video.title.asc()).offset(page * size).limit(size)).all())
+    rows = list(db.scalars(base.order_by(Video.title.asc(), Video.id.asc()).offset(page * size).limit(size)).all())
     return ApiResponse.ok(_page_videos(db, rows, page, size, total))
 
 
@@ -143,7 +143,7 @@ def search_by_library(
         db.scalars(
             select(Video)
             .where(*standalone_where)
-            .order_by(Video.title.asc())
+            .order_by(Video.title.asc(), Video.id.asc())
             .offset(page * size)
             .limit(size)
         ).all()
@@ -190,7 +190,7 @@ def get_favorites(db: DbSession, page: int = 0, size: int = 20):
         return ApiResponse.ok(PageResponse.of([], page, size, 0).model_dump())
     base = select(Video).where(Video.id.in_(fav_ids), Video.library_id.in_(allowed))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = list(db.scalars(base.order_by(Video.title.asc()).offset(page * size).limit(size)).all())
+    rows = list(db.scalars(base.order_by(Video.title.asc(), Video.id.asc()).offset(page * size).limit(size)).all())
     return ApiResponse.ok(_page_videos(db, rows, page, size, total))
 
 
@@ -215,7 +215,7 @@ def list_unscraped(
     if libraryId is not None:
         base = base.where(Video.library_id == libraryId)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = list(db.scalars(base.order_by(Video.title.asc()).offset(page * size).limit(size)).all())
+    rows = list(db.scalars(base.order_by(Video.title.asc(), Video.id.asc()).offset(page * size).limit(size)).all())
     return ApiResponse.ok(_page_videos(db, rows, page, size, total))
 
 
@@ -249,7 +249,11 @@ def update_metadata(db: DbSession, id: int, body: VideoMetadataUpdateRequest):
     }
     data = body.model_dump(exclude_unset=True)
     for key, attr in fields.items():
-        if key in data and data[key] is not None:
+        # 用 `key in data` 而非 `data[key] is not None`：model_dump(exclude_unset=True)
+        # 会把「显式传入的 null」保留在 data 里，跳过 is-not-None 判断才能让用户
+        # 真正清空误刮削来的字段（如 overview/genre）。未传该字段时 key 不在 data 里，
+        # 保持原值不变。
+        if key in data:
             setattr(video, attr, data[key])
             updated = True
     if updated:

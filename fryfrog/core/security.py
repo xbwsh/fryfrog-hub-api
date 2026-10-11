@@ -20,6 +20,36 @@ from fryfrog.models.user import User, UserRole
 
 ANONYMOUS_ID = -1
 MIN_PASSWORD_LENGTH = 8
+# bcrypt 只吃前 72 字节，超出直接抛 ValueError（5.0 起行为）。按字节算而不是
+# 字符数：中文一字 3 字节，24 个汉字就到顶了。
+BCRYPT_MAX_BYTES = 72
+
+
+def _encode_password(raw: str) -> bytes | None:
+    """密码编码为 bcrypt 可接受的字节；超长返回 None。"""
+    data = raw.encode("utf-8")
+    return data if len(data) <= BCRYPT_MAX_BYTES else None
+
+
+def hash_password(raw: str) -> str:
+    data = _encode_password(raw)
+    if data is None:
+        raise ValueError(f"密码不能超过 {BCRYPT_MAX_BYTES} 字节（UTF-8 编码后）")
+    return bcrypt.hashpw(data, bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(raw: str, password_hash: str) -> bool:
+    if not raw or not password_hash:
+        return False
+    data = _encode_password(raw)
+    if data is None:
+        # 超长密码在库里根本不可能有（建号时就该被拒）；返回 False 让它
+        # 表现为「密码错误」，而不是抛异常把登录接口打成 500。
+        return False
+    try:
+        return bcrypt.checkpw(data, password_hash.encode("utf-8"))
+    except Exception:
+        return False
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]{3,64}$")
 
 # 当前请求用户（由中间件写入）。用 ContextVar，便于 FastAPI 线程池传播
@@ -39,19 +69,6 @@ def current_user_id_or_none() -> int | None:
 def current_user_id() -> int:
     uid = current_user_id_or_none()
     return ANONYMOUS_ID if uid is None else uid
-
-
-def hash_password(raw: str) -> str:
-    return bcrypt.hashpw(raw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def verify_password(raw: str, password_hash: str) -> bool:
-    if not raw or not password_hash:
-        return False
-    try:
-        return bcrypt.checkpw(raw.encode("utf-8"), password_hash.encode("utf-8"))
-    except Exception:
-        return False
 
 
 @dataclass
@@ -378,3 +395,8 @@ class UserService:
     def _validate_password(self, password: str) -> None:
         if not password or len(password) < MIN_PASSWORD_LENGTH:
             raise BadRequestException(f"密码至少 {MIN_PASSWORD_LENGTH} 位")
+        # bcrypt 只吃前 72 字节，超出会抛 ValueError 变成 500；按UTF-8 字节数
+        # 校验（中文一字 3 字节），提前给出可读提示。
+        nbytes = len(password.encode("utf-8"))
+        if nbytes > BCRYPT_MAX_BYTES:
+            raise BadRequestException(f"密码过长（UTF-8 编码后 {nbytes} 字节），上限 {BCRYPT_MAX_BYTES} 字节")

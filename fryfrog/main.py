@@ -19,7 +19,7 @@ from fryfrog.core.exceptions import (
     ForbiddenException,
     ResourceNotFoundException,
 )
-from fryfrog.core.security import UserService
+from fryfrog.core.security import BCRYPT_MAX_BYTES, UserService
 from fryfrog.core.crypto import SubsonicPasswordEncryptor
 from fryfrog.db import get_session_factory, init_db
 from fryfrog.models.user import User
@@ -88,6 +88,13 @@ def _bootstrap_admin() -> None:
         )
         if not session.scalar(select(User.id).limit(1)):
             password = settings.auth_password or secrets.token_urlsafe(12)
+            # bcrypt 只吃前 72 字节（UTF-8），超长会抛 ValueError 让整个容器
+            # 起不来；这里提前拦并给出可读提示。
+            if len(password.encode("utf-8")) > BCRYPT_MAX_BYTES:
+                raise RuntimeError(
+                    f"AUTH_PASSWORD 过长（UTF-8 编码后 {len(password.encode('utf-8'))} 字节），"
+                    f"上限 {BCRYPT_MAX_BYTES} 字节"
+                )
             user_service.create_initial_admin(session, password)
             session.commit()
             if not settings.auth_password:
