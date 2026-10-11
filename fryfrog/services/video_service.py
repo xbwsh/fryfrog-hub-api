@@ -249,13 +249,58 @@ def get_nfo_path(db: Session, video: Video) -> Path:
     return get_video_assets_dir(video) / f"{get_base_name(video.file_name)}.nfo"
 
 
+def _dir_has_multiple_videos(db: Session, video: Video) -> bool:
+    """同目录下是否有多个「独立条目」视频（分集不计）。
+
+    平铺布局（视频直接躺在库根或合集目录下，如 `jav/素人/` 里 8 个散片、
+    `Asia-Lynn/` 里 19 条同来源视频）下，固定命名 poster.jpg / fanart.jpg
+    会被同目录所有视频共用 —— 给 A 截帧就覆盖 B 的封面，最后设置的赢，
+    其余全部变成同一张。实测一个 `jav` 库约 60 个视频处于这种状态。
+
+    分集（series_id 非空）不算：分集竖封面**本就设计为共用季海报**
+    （见 get_poster_path 的原注释与 test_episode_vertical_cover）。
+
+    实现上按 file_path 前缀在 Python 侧比对，不用 SQL LIKE：Windows 上
+    `Path` 渲染成反斜杠而库里的路径是正斜杠，LIKE 会永远匹配不上；
+    这里统一 `as_posix()` 后两端都可比较。
+    查不到 / 无库 id 时保守返回 False，维持既有 Emby 命名。
+    """
+    if db is None or video.library_id is None or video.id is None:
+        return False
+    try:
+        parent = Path(video.file_path).parent.as_posix()
+        prefix = parent + "/"
+        rows = db.scalars(
+            select(Video.file_path).where(
+                Video.library_id == video.library_id,
+                Video.series_id.is_(None),
+                Video.id != video.id,
+            )
+        ).all()
+        return sum(1 for p in rows if p and Path(p).parent.as_posix() == parent) > 1
+    except Exception:
+        # 查询失败不该阻断封面写入，退回固定命名
+        return False
+
+
 def get_poster_path(db: Session, video: Video) -> Path:
-    """固定命名 poster.jpg（电影/独立条目）；分集竖屏共用季海报。"""
-    return get_video_assets_dir(video) / "poster.jpg"
+    """竖封面路径：常规用固定 poster.jpg，同目录多个独立条目时降级为 {base}-poster.jpg。
+
+    固定命名是 Emby/Kodi 约定，读取端 local_poster_candidates 本就同时接受
+    两种命名，故降级不会破坏兼容性（单视频目录维持 poster.jpg 不变）。
+    """
+    video_dir = get_video_assets_dir(video)
+    if _dir_has_multiple_videos(db, video):
+        return video_dir / f"{get_base_name(video.file_name)}-poster.jpg"
+    return video_dir / "poster.jpg"
 
 
 def get_fanart_path(db: Session, video: Video) -> Path:
-    return get_video_assets_dir(video) / "fanart.jpg"
+    """横屏背景图路径；同目录多个独立条目时同样降级为 {base}-fanart.jpg。"""
+    video_dir = get_video_assets_dir(video)
+    if _dir_has_multiple_videos(db, video):
+        return video_dir / f"{get_base_name(video.file_name)}-fanart.jpg"
+    return video_dir / "fanart.jpg"
 
 
 def local_poster_candidates(db: Session, video: Video) -> list[Path]:
