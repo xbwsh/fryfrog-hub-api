@@ -132,17 +132,31 @@ def stale_video_ids(db: Session, library: MediaLibrary) -> list[int]:
 
     与扫描的增量判定不同：这里直接核对 file_path，所以不依赖先跑过一次扫描，
     手动清理和体检报告都靠它。
+
+    **只把「确实不存在」算进删除候选**：`Path.exists()` 只吞 FileNotFoundError，
+    权限拒绝、I/O 错误、坏符号链接都会抛 OSError —— 那是「判断不了」，不是「已删除」。
+    挂载掉线或权限异常时若把整库都当缺失，purge_missing_videos 会一次删光。
+    读不到的记录这里直接跳过，另计一条日志，便于运维发现挂载问题。
     """
     root = Path(library.path)
     if not root.exists():
         return []
     stale: list[int] = []
+    unreadable = 0
     for video in db.scalars(select(Video).where(Video.library_id == library.id)).all():
         try:
             if not Path(video.file_path).exists():
                 stale.append(video.id)
         except OSError:
-            stale.append(video.id)
+            # 不可访问 ≠ 不存在，绝不能进删除候选
+            unreadable += 1
+    if unreadable:
+        logger.warning(
+            "媒体库 %s 有 %d 个文件的路径无法访问（权限/IO 异常），已跳过不做删除判定: %s",
+            library.name,
+            unreadable,
+            library.path,
+        )
     return [vid for vid in stale if vid is not None]
 
 

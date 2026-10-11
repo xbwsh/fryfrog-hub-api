@@ -1696,21 +1696,29 @@ def organize_videos(db: Session, videos: list[Video]) -> dict:
                         continue
                     s_base = get_base_name(sibling.name)
                     fixed = sibling.name in {"poster.jpg", "fanart.jpg", "folder.jpg", "thumb.jpg"}
-                    if (
+                    is_subtitle = sibling.suffix.lower() in SUBTITLE_EXTS
+                    if is_subtitle:
+                        # 字幕必须按 base 归属筛选：同目录可能放着其他分集的字幕
+                        # （CD1/CD2、多片同目录）。无条件搬走会让第一个视频把
+                        # 兄弟分集的字幕全拖走，后面那些视频再也找不到字幕
+                        # （shutil.move 不可逆）。
+                        if not (base and s_base and (s_base.startswith(base) or base.startswith(s_base))):
+                            continue
+                    elif not (
                         s_base == base
                         or (base and s_base.startswith(base))
                         or fixed
-                        or sibling.suffix.lower() in {".srt", ".ass", ".ssa", ".vtt"}
                     ):
-                        if sibling.suffix.lower() in SUBTITLE_EXTS or sibling.suffix.lower() in {
-                            ".nfo",
-                            ".jpg",
-                            ".jpeg",
-                            ".png",
-                        }:
-                            dest = target_dir / sibling.name.replace(get_base_name(old_path.name), base)
-                            if sibling.resolve() != dest.resolve():
-                                shutil.move(str(sibling), str(dest))
+                        continue
+                    if is_subtitle or sibling.suffix.lower() in {
+                        ".nfo",
+                        ".jpg",
+                        ".jpeg",
+                        ".png",
+                    }:
+                        dest = target_dir / sibling.name.replace(get_base_name(old_path.name), base)
+                        if sibling.resolve() != dest.resolve():
+                            shutil.move(str(sibling), str(dest))
                 shutil.move(str(old_path), str(new_path))
                 video.file_path = str(new_path)
                 video.file_name = new_path.name

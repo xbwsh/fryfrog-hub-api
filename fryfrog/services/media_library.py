@@ -179,8 +179,24 @@ class MediaLibraryService:
         return any(file_path.startswith(p) for p in self.get_enabled_paths(db))
 
     def find_by_path(self, db: Session, path: str) -> MediaLibrary | None:
+        """按路径找出所属媒体库：库根等于该路径，或该路径在库根之下。
+
+        必须比较**路径分量**而非裸字符串前缀：`/data/music2/x.mp3` 在字符串上
+        也以 `/data/music` 开头，直接 startswith 会把它判给 music 库
+        （两个库同前缀时先遍历到的赢）。反方向同理，且需先规范化 `..`。
+        """
+        try:
+            target = Path(path).resolve()
+        except OSError:
+            return None
         for lib in self.get_all_libraries(db):
-            if path.startswith(lib.path) or lib.path.startswith(path):
+            if not lib.path:
+                continue
+            try:
+                root = Path(lib.path).resolve()
+            except OSError:
+                continue
+            if target == root or root in target.parents:
                 return lib
         return None
 

@@ -61,25 +61,42 @@ def split_chapters(text: str) -> list[dict]:
     return chapters
 
 
-@lru_cache(maxsize=8)
-def _load(path_str: str, mtime: int) -> tuple[str, tuple[dict, ...]]:
+@lru_cache(maxsize=64)
+def _chapters_of_file(path_str: str, mtime: int, size: int) -> tuple[dict, ...]:
+    """只缓存章节索引（几十 KB 级），不缓存全文。
+
+    原实现把整本书的文本和索引一起lru_cache(maxsize=8)：一本 20MB 的中文
+    TXT 解码后str 约 20-60MB（取决于编码），8 本常驻即数百 MB，且只要文件
+    未变就永不换出。实测项目里确实有几千章的大书，扫描时会连续读多本。
+    索引本身很小且几乎所有调用（章节目录/分页/计数）都只需要它。
+    """
     path = Path(path_str)
     if not path.is_file():
         raise ResourceNotFoundException("File", "path", path_str)
     text = decode_text(path.read_bytes())
-    return text, tuple(split_chapters(text))
+    return split_chapters(text)
 
 
-def _snapshot(path: Path) -> tuple[str, int]:
+@lru_cache(maxsize=2)
+def _full_text(path_str: str, mtime: int, size: int) -> str:
+    """全文只给真正要读章节正文的调用用（chapter_content），缓存压到 2 本。"""
+    path = Path(path_str)
+    if not path.is_file():
+        raise ResourceNotFoundException("File", "path", path_str)
+    return decode_text(path.read_bytes())
+
+
+def _snapshot(path: Path) -> tuple[str, int, int]:
     try:
-        return str(path), int(path.stat().st_mtime)
+        st = path.stat()
+        return str(path), int(st.st_mtime), int(st.st_size)
     except OSError:
         raise ResourceNotFoundException("File", "path", str(path))
 
 
 def chapters_of(path: Path) -> list[dict]:
-    path_str, mtime = _snapshot(path)
-    return list(_load(path_str, mtime)[1])
+    path_str, mtime, size = _snapshot(path)
+    return [dict(c) for c in _chapters_of_file(path_str, mtime, size)]
 
 
 def chapter_page(path: Path, page: int, size: int) -> dict:
@@ -87,8 +104,9 @@ def chapter_page(path: Path, page: int, size: int) -> dict:
 
     返回 {content, page, size, totalElements, totalPages}，与 PageResponse 对齐。
     """
-    path_str, mtime = _snapshot(path)
-    text, chapters = _load(path_str, mtime)
+    path_str, mtime, fsize = _snapshot(path)
+    chapters = _chapters_of_file(path_str, mtime, fsize)
+
     total = len(chapters)
     size = max(1, size)
     start = max(0, page) * size
@@ -108,11 +126,13 @@ def chapter_count(path: Path) -> int:
 
 
 def chapter_content(path: Path, index: int) -> dict:
-    path_str, mtime = _snapshot(path)
-    text, chapters = _load(path_str, mtime)
+    path_str, mtime, size = _snapshot(path)
+    chapters = _chapters_of_file(path_str, mtime, size)
     if index < 0 or index >= len(chapters):
         raise ResourceNotFoundException("EbookChapter", "index", index)
     ch = chapters[index]
+    # 正文只在这一处需要全文，走独立的低容量缓存
+    text = _full_text(path_str, mtime, size)
     return {
         "index": ch["index"],
         "title": ch["title"],

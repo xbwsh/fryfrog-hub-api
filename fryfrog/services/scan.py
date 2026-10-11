@@ -62,6 +62,21 @@ def report_scan_progress(library: MediaLibrary, **fields: Any) -> None:
 def scan_library(db: Session, library: MediaLibrary) -> None:
     if not _claim_library_scan(library):
         logger.info("该库正在扫描中，跳过重复触发: %s", library.name)
+        # 必须写终态：调用方（submit_scan_job）已先把 pipeline 标成 running，
+        # 这里直接 return 会让 /pipeline-progress 永远停在「扫描中」，前端进度条卡死。
+        # 已有一次真实扫描在跑，本次只是没抢到执行权。
+        if library.id is not None:
+            with _scan_lock:
+                still_running = library.id in _running_scans
+        report_scan_progress(
+            library,
+            stage="scan" if still_running else "done",
+            running=still_running,
+            total=1,
+            completed=0 if still_running else 1,
+            failed=0,
+            currentItem=None,
+        )
         return
     report_scan_progress(library, stage="scan", running=True, total=1, completed=0, failed=0)
     failed = 0
@@ -74,13 +89,14 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
         if library.id is not None:
             with _scan_lock:
                 _running_scans.pop(library.id, None)
-        # 写终态：客户端以 running/percent 判断扫描结束，不写会一直停在"扫描中"
+        # 写终态：客户端以 running/percent 判断扫描结束，不写会一直停在「扫描中」。
+        # 失败时用 stage="error"，否则只判断 stage=="done" 的客户端会误判成功。
         report_scan_progress(
             library,
-            stage="done",
+            stage="error" if failed else "done",
             running=False,
             total=1,
-            completed=1,
+            completed=0 if failed else 1,
             failed=failed,
             currentItem=None,
         )
