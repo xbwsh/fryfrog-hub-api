@@ -28,7 +28,15 @@ class FFmpegRuntime:
         configured = settings.ffmpeg_path
         if configured:
             self.ffmpeg_path = configured
-            self.ffprobe_path = configured.replace("ffmpeg", "ffprobe")
+            # 只替换文件名，不能用 str.replace —— 它会把目录名里出现的
+            # ffmpeg 一并换掉：'/opt/ffmpeg/bin/ffmpeg' 会变成
+            # '/opt/ffprobe/bin/ffprobe'，而自建 ffmpeg 包常放在这类目录下。
+            # 派生的 ffprobe 找不到时 ffprobe 抛 FileNotFoundError 被上层吞掉，
+            # 表现为所有视频时长/分辨率永久为空且日志只有一条 debug。
+            name = Path(configured).name
+            self.ffprobe_path = str(
+                Path(configured).with_name(name.replace("ffmpeg", "ffprobe", 1))
+            )
             logger.info("Using configured FFmpeg: %s", self.ffmpeg_path)
         else:
             system_ffmpeg = shutil.which("ffmpeg")

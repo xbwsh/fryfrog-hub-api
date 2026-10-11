@@ -7,6 +7,25 @@ from typing import Any
 from pydantic import BaseModel
 
 
+def _path_exists(path: Path | str | None) -> bool:
+    """`Path.exists()` 的安全版，异常时按「不存在」处理。
+
+    `Path.exists()` 只吞 FileNotFoundError 一类，**不吞** OSError
+    (ENAMETOOLONG: File name too long)、权限错误、坏符号链接。媒体库里
+    这些都属于「正常脏数据」——单层文件名上限是 255 **字节**（中文一字 3 字节），
+    超长文件名在库里真实存在，直接抛会让整个列表接口 500，而不是单条降级。
+
+    与 services.video_service._safe_exists 同款实现；这里不跨模块引用以保持
+    schemas 不依赖 services 的单向依赖。
+    """
+    if not path:
+        return False
+    try:
+        return Path(path).exists()
+    except OSError:
+        return False
+
+
 def resolution_label(resolution: str | None) -> str | None:
     if not resolution:
         return None
@@ -241,7 +260,7 @@ class VideoDTO(BaseModel):
             hasFanart=has_fanart,
             scraped=video.tmdb_id is not None,
             nfoBackfilledAt=video.nfo_backfilled_at,
-            fileMissing=not Path(video.file_path).exists(),
+            fileMissing=not _path_exists(video.file_path),
             isSeries=video.is_series,
             isAdult=video.is_adult,
             libraryId=video.library_id,
@@ -410,7 +429,7 @@ class SeriesListDTO(BaseModel):
         sid = series.id
         labels = [resolution_label(getattr(v, "resolution", None)) for v in episodes]
         # 全部（有分集时）文件都缺失才算这张剧卡失效
-        missing_flags = [not Path(v.file_path).exists() for v in episodes]
+        missing_flags = [not _path_exists(v.file_path) for v in episodes]
         file_missing = bool(missing_flags) and all(missing_flags)
         # 剧级标记：剧行没有时，看任一「分集自身」是 NFO 回填的（分集 NFO 也会回填）
         series_nfo = getattr(series, "nfo_backfilled_at", None) or next(
@@ -465,7 +484,7 @@ class SeriesListDTO(BaseModel):
             favorite=favorite,
             hasAdultEpisodes=bool(video.is_adult),
             nfoBackfilledAt=video.nfo_backfilled_at,
-            fileMissing=not Path(video.file_path).exists(),
+            fileMissing=not _path_exists(video.file_path),
             resolutions=[label] if label else [],
         )
 
@@ -559,7 +578,7 @@ def _video_logo_url(video) -> str | None:
     from fryfrog.core.signer import sign
     from fryfrog.services.video_assets import find_local_video_logo
 
-    if video.logo_local_path and Path(video.logo_local_path).exists():
+    if _path_exists(video.logo_local_path):
         return sign(f"/api/v1/video/{video.id}/logo")
     # movie-logo.png next to media — still expose the endpoint URL.
     if find_local_video_logo(video) is not None:
@@ -585,7 +604,7 @@ def _series_logo_url(series, episodes=None) -> str | None:
     from fryfrog.core.signer import sign
     from fryfrog.services.video_assets import SERIES_LOGO_FILENAMES, _iter_logo_files
 
-    if series.logo_local_path and Path(series.logo_local_path).exists():
+    if _path_exists(series.logo_local_path):
         return sign(f"/api/v1/video/series/{series.id}/logo")
 
     paths = []

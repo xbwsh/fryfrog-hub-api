@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, Response
 
 from fryfrog.core.api_response import ApiResponse
 from fryfrog.core.deps import DbSession
-from fryfrog.core.exceptions import ResourceNotFoundException
+from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
 from fryfrog.core.utils import placeholder_jpeg
 from fryfrog.media_core import get_media_probe
 from fryfrog.models.video import VideoSeries
@@ -479,7 +479,12 @@ async def upload_video_cover(
     _require_admin(db)
     video = vs.get_video(db, id)
     _require_visible(db, video.library_id, "Video", id)
-    data = await file.read()
+    # 只读上限+1 字节：让超大上传在读取阶段就被截断，而不是先全量进内存
+    # 再由 save_uploaded_cover 校验（那是「落盘后太大」的校验，防不住传输中占用）。
+    _limit = assets.UPLOAD_MAX_BYTES
+    data = await file.read(_limit + 1)
+    if len(data) > _limit:
+        raise BadRequestException(f"图片过大，上限 {_limit // 1024 // 1024}MB")
     # PIL 解码/规范化/编码是同步重 CPU 活，放在 async 入口里会冻结事件循环
     # （大图上传瞬间全服务其他请求停摆）。挪去线程池，与 Subsonic 入口同一策略。
     from starlette.concurrency import run_in_threadpool

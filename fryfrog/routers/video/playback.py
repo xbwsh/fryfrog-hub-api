@@ -29,7 +29,10 @@ def stream_video(db: DbSession, id: int, request: Request):
     path = Path(video.file_path)
     if not path.exists():
         raise ResourceNotFoundException("VideoFile", "id", id)
-    file_size = path.stat().st_size
+    try:
+        file_size = path.stat().st_size
+    except OSError as exc:  # 权限/IO 错误不该变成 500
+        raise ResourceNotFoundException("VideoFile", "id", id) from exc
     content_type = _video_content_type(path.name)
     rng = _parse_range(request.headers.get("range"), file_size)
     headers = {"Accept-Ranges": "bytes"}

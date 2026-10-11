@@ -17,6 +17,7 @@ from fryfrog.services import progress as progress_svc
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_scrape as scrape
 from fryfrog.services import video_service as vs
+from fryfrog.services.video_service import _safe_exists
 from fryfrog.services.media_library import MediaLibraryService
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def get_visible_video(db: Session, video_id: int) -> Video:
 
 def _video_logo_url(video: Video) -> str | None:
     # Local file next to media (movie-logo.png) wins if logo_local_path empty.
-    if not (video.logo_local_path and Path(video.logo_local_path).exists()):
+    if not (video.logo_local_path and _safe_exists(Path(video.logo_local_path))):
         local = assets.find_local_video_logo(video)
         if local is not None:
             try:

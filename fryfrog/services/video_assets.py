@@ -15,6 +15,7 @@ from fryfrog.core.utils import placeholder_jpeg
 from fryfrog.media_core import get_ffmpeg_runtime, get_media_probe
 from fryfrog.models.video import Video, VideoSeries
 from fryfrog.services.video_service import (
+    _safe_exists,
     get_base_name,
     get_fanart_path,
     get_metadata_dir,
@@ -87,7 +88,7 @@ def download_url_bytes(url: str) -> bytes | None:
 
 
 def logo_file_url(local_path: str | None, api_path: str) -> str | None:
-    if local_path and Path(local_path).exists():
+    if local_path and _safe_exists(Path(local_path)):
         return sign(api_path)
     return None
 
@@ -1094,7 +1095,7 @@ def fetch_tmdb_image(path_or_url: str | None) -> bytes | None:
 def download_movie_logo(db: Session, video: Video, file_path: str | None = None, force: bool = False) -> bool:
     from fryfrog.services.tmdb import TmdbClient
 
-    if video.logo_local_path and Path(video.logo_local_path).exists() and not force and not file_path:
+    if _safe_exists(Path(video.logo_local_path or "")) and not force and not file_path:
         return True
     target_path = file_path or video.logo_url
     if not target_path and video.tmdb_id:
