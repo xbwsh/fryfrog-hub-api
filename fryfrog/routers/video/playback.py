@@ -20,10 +20,12 @@ from fryfrog.models.video import Video
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_service as vs
 
+from ._common import _visible_to_user, get_visible_video
+
 router = APIRouter()
 @router.get("/{id:int}/stream")
 def stream_video(db: DbSession, id: int, request: Request):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     path = Path(video.file_path)
     if not path.exists():
         raise ResourceNotFoundException("VideoFile", "id", id)
@@ -66,7 +68,7 @@ def stream_transcode(
     runtime = get_ffmpeg_runtime()
     if not runtime.is_available():
         return Response(status_code=503, content=b"Transcoding not available")
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     path = Path(video.file_path)
     if not path.exists():
         raise ResourceNotFoundException("VideoFile", "id", id)
@@ -131,7 +133,8 @@ def stream_transcode(
 
 @router.get("/{id:int}/playlist.m3u")
 def get_playlist(db: DbSession, id: int, request: Request):
-    video = vs.get_video(db, id)
+    # playlist 会把同剧全部分集的已签名流地址打包返回，越权面比单视频大得多
+    video = get_visible_video(db, id)
     if video.series_id:
         siblings = vs.series_videos(db, video.series_id)
     elif video.tmdb_id:
@@ -139,6 +142,10 @@ def get_playlist(db: DbSession, id: int, request: Request):
         siblings.sort(key=lambda v: (vs.season_of(v), vs.episode_of(v)))
     else:
         siblings = [video]
+
+    # 同剧分集可能分属不同库（跨库剧集），逐个过滤：只播可见分集，
+    # 否则受限用户能从一部可见剧的 playlist 拿到隐藏库的已签名流地址。
+    siblings = [v for v in siblings if _visible_to_user(db, v)]
 
     base_url = _server_base_url(request)
     lines = ["#EXTM3U"]
@@ -162,7 +169,7 @@ def get_playlist(db: DbSession, id: int, request: Request):
 
 @router.get("/{id:int}/subtitles")
 def list_subtitles(db: DbSession, id: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     video_dir = Path(video.file_path).parent
     subtitles = []
     if video_dir.is_dir():
@@ -183,7 +190,7 @@ def list_subtitles(db: DbSession, id: int):
 
 @router.get("/{id:int}/subtitles/{filename}")
 def get_subtitle(db: DbSession, id: int, filename: str):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     video_dir = Path(video.file_path).parent.resolve()
     sub = (video_dir / filename).resolve()
     if not sub.is_relative_to(video_dir):

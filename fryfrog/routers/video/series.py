@@ -40,6 +40,7 @@ from ._common import (
     _to_video_dto,
     _to_video_dto_with,
     clamp_paging,
+    get_visible_video,
     submit_job,
 )
 from .assets import get_cover, get_fanart
@@ -57,6 +58,21 @@ def _series_visible(db: Session, series: VideoSeries) -> bool:
         return True
     vids = vs.series_videos(db, series.id)
     return any(mls.is_visible_to_current_user(db, v.library_id) for v in vids)
+
+
+def _get_visible_series(db: Session, series_id: int) -> VideoSeries:
+    """取剧集并校验可见性——按 id 读单个剧集的端点都必须走这里。
+
+    VideoSeries 本身没有 library_id，可见性由「其下是否有可见分集」判定
+    （与 _series_visible 同源）。不可见时抛 404，与「不存在」同构。
+    之前 cover/fanart/logo/actors/detail 等端点都没做这层校验。
+    """
+    series = vs.get_series(db, series_id)
+    if series is None:
+        raise ResourceNotFoundException("VideoSeries", "id", series_id)
+    if not _series_visible(db, series):
+        raise ResourceNotFoundException("VideoSeries", "id", series_id)
+    return series
 
 
 def _load_series_detail(db: Session, series: VideoSeries, favorite: bool) -> dict:
@@ -441,7 +457,7 @@ def select_series_fanart(db: DbSession, id: int, body: SeriesFrameSelectRequest)
 
 @series_router.get("/{id:int}/actors")
 def get_series_actors(db: DbSession, id: int):
-    series = vs.get_series(db, id)
+    series = _get_visible_series(db, id)
     if series is None:
         raise ResourceNotFoundException("Series", "id", id)
     rows = list(
@@ -644,7 +660,7 @@ def set_series_logo(db: DbSession, id: int, body: LogoSelectRequest):
 
 @series_router.get("/{id:int}/cover")
 def get_series_cover(db: DbSession, id: int):
-    series = vs.get_series(db, id)
+    series = _get_visible_series(db, id)
     title = "Unknown"
     poster_url = None
     if series is not None:
@@ -669,7 +685,8 @@ def get_series_cover(db: DbSession, id: int):
         if not poster_url and episodes:
             return get_cover(db, episodes[0].id)
     else:
-        video = vs.get_video(db, id)
+        # series id 查不到时回退按视频处理，同样要校验可见性
+        video = get_visible_video(db, id)
         title = video.title
         if video.cover_art_path and Path(video.cover_art_path).exists():
             return FileResponse(video.cover_art_path, media_type="image/jpeg")
@@ -691,7 +708,7 @@ def get_series_cover(db: DbSession, id: int):
 
 @series_router.get("/{id:int}/season/{season_number:int}/cover")
 def get_season_cover(db: DbSession, id: int, season_number: int):
-    series = vs.get_series(db, id)
+    series = _get_visible_series(db, id)
     if series is None:
         return Response(content=placeholder_jpeg(300, 450, "Unknown"), media_type="image/jpeg")
     season_video = next(
@@ -716,7 +733,7 @@ def get_season_cover(db: DbSession, id: int, season_number: int):
 
 @series_router.get("/{id:int}/fanart")
 def get_series_fanart(db: DbSession, id: int):
-    series = vs.get_series(db, id)
+    series = _get_visible_series(db, id)
     title = "Unknown"
     backdrop_url = None
     if series is not None:
@@ -755,7 +772,8 @@ def get_series_fanart(db: DbSession, id: int):
             return get_fanart(db, episodes[0].id)
         backdrop_url = series.backdrop_url
     else:
-        video = vs.get_video(db, id)
+        # series id 查不到时回退按视频处理，同样要校验可见性
+        video = get_visible_video(db, id)
         title = video.title
         if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
             return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
@@ -820,7 +838,7 @@ def _find_local_series_fanart(db: DbSession, episodes: list) -> Path | None:
 
 @series_router.get("/{id:int}/logo")
 def get_series_logo(db: DbSession, id: int):
-    series = vs.get_series(db, id)
+    series = _get_visible_series(db, id)
     if series is None:
         raise ResourceNotFoundException("Series", "id", id)
     if series.logo_local_path and Path(series.logo_local_path).exists():

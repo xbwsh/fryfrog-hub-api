@@ -23,7 +23,7 @@ from fryfrog.schemas.video import (
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_service as vs
 
-from ._common import _require_admin, _require_visible, _video_logo_url
+from ._common import _require_admin, _require_visible, _video_logo_url, get_visible_video
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def tmdb_image_proxy(path: str, size: str = "w500"):
 
 @router.get("/{id:int}/nfo")
 def get_nfo(db: DbSession, id: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     nfo_path = vs.get_nfo_path(db, video)
     if not nfo_path.exists():
         alt = Path(video.file_path).parent / f"{vs.get_base_name(video.file_name)}.nfo"
@@ -57,7 +57,7 @@ def get_nfo(db: DbSession, id: int):
 
 @router.get("/{id:int}/cover")
 def get_cover(db: DbSession, id: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     # 分集竖屏封面共用季海报，避免每集各存一张（季海报缺失时回退剧根
     # 目录总海报，最后才落到分集私有图）
     if video.is_episode:
@@ -118,7 +118,7 @@ def get_cover(db: DbSession, id: int):
 
 @router.get("/{id:int}/fanart")
 def get_fanart(db: DbSession, id: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     base = vs.get_base_name(video.file_name)
     video_dir = Path(video.file_path).parent
     # 分集横屏：本地单集 still 优先，缺失回退总横屏；不再生成 -fanart-frame-v3 截帧
@@ -181,7 +181,7 @@ def get_fanart(db: DbSession, id: int):
 
 @router.get("/{id:int}/logo")
 def get_logo(db: DbSession, id: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     if video.logo_local_path and Path(video.logo_local_path).exists():
         return FileResponse(
             video.logo_local_path, media_type=assets.media_type_of(video.logo_local_path)
@@ -206,7 +206,7 @@ def get_logo(db: DbSession, id: int):
 
 @router.get("/{id:int}/logo-options")
 def get_logo_options(db: DbSession, id: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     if not video.tmdb_id:
         assets.parse_nfo(db, video)
     if not video.tmdb_id:
@@ -245,7 +245,7 @@ def generate_frames(db: DbSession, id: int):
 
 @router.get("/{id:int}/frames/{index:int}")
 def get_frame(db: DbSession, id: int, index: int):
-    video = vs.get_video(db, id)
+    video = get_visible_video(db, id)
     frame_path = assets.frames_cache_dir(video) / f"frame-{index}.jpg"
     if not frame_path.exists():
         raise ResourceNotFoundException("Frame", "index", index)

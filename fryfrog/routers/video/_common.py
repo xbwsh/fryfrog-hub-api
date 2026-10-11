@@ -43,6 +43,24 @@ def _require_visible(db: Session, library_id: int | None, resource: str, rid: in
         raise ResourceNotFoundException(resource, "id", rid)
 
 
+def _visible_to_user(db: Session, video: Video) -> bool:
+    """单个视频对当前用户是否可见（playlist 批量过滤分集时用）。"""
+    return _mls(db).is_visible_to_current_user(db, video.library_id)
+
+
+def get_visible_video(db: Session, video_id: int) -> Video:
+    """取视频并校验库可见性——所有按 id 读单个视频的端点都必须走这里。
+
+    之前只有 browse.py 的部分端点调 `_require_visible`，assets/playback/series
+    下的 nfo、cover、fanart、logo、frames、subtitles、playlist 等读端点一个都没
+    校验：受限用户只要知道 id 就能读到自己无权访问的库，甚至通过 playlist.m3u
+    拿到已签名的可直接播放地址。不可见时抛 404（与「不存在」同构，不泄露存在性）。
+    """
+    video = vs.get_video(db, video_id)
+    _require_visible(db, video.library_id, "Video", video_id)
+    return video
+
+
 def _video_logo_url(video: Video) -> str | None:
     # Local file next to media (movie-logo.png) wins if logo_local_path empty.
     if not (video.logo_local_path and Path(video.logo_local_path).exists()):
