@@ -13,7 +13,10 @@ def natural_key(s: str):
     （15 位已远超任何文件序号范围），且与 natural_compare 语义一致。
     """
     return [
-        int(text[:15]) if text.isdigit() else text.lower()
+        # isdecimal() 而非 isdigit()：后者对 '²' '①' 等上标/带圈数字为 True，
+        # 但 int() 对它们抛 ValueError —— 文件名里出现这类字符就会让整轮排序
+        # 抛异常，扫描被上层 except 吞成一条日志。isdecimal() 保证 int() 可解析。
+        int(text[:15]) if text.isdecimal() else text.lower()
         for text in re.split(r"(\d+)", s)
     ]
 
@@ -23,16 +26,18 @@ def natural_compare(a: str, b: str) -> int:
     na, nb = len(a), len(b)
     while ia < na and ib < nb:
         ca, cb = a[ia], b[ib]
-        da, db = ca.isdigit(), cb.isdigit()
+        # 一律用 isdecimal()：'²' '①' 这类 isdigit() 为真但 ord()-48 算出的
+        # 是无意义的数字（'²' → 170），会让排序结果错乱。
+        da, db = ca.isdecimal(), cb.isdecimal()
         if da and db:
             sa = ia
             va = 0
-            while ia < na and a[ia].isdigit():
+            while ia < na and a[ia].isdecimal():
                 va = va * 10 + (ord(a[ia]) - 48)
                 ia += 1
             sb = ib
             vb = 0
-            while ib < nb and b[ib].isdigit():
+            while ib < nb and b[ib].isdecimal():
                 vb = vb * 10 + (ord(b[ib]) - 48)
                 ib += 1
             if va != vb:

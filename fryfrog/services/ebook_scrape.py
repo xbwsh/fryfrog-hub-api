@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import httpx
 from sqlalchemy.orm import Session
@@ -69,8 +68,13 @@ def fetch_detail(source_id: str) -> dict | None:
 
 
 def _download_cover(book: Ebook, cover_url: str) -> None:
-    target = Path(book.file_path).parent / "cover.jpg"
+    from fryfrog.services.assets import ebook_cover_path
+
+    # 按 id 唯一命名并放在应用数据区：原先写 <书目录>/cover.jpg，同目录多本书
+    # 会互相覆盖同一个文件，且污染用户媒体目录。
+    target = ebook_cover_path(book.id)
     try:
+        target.parent.mkdir(parents=True, exist_ok=True)
         from fryfrog.core.http import make_client
 
         with make_client(timeout=20.0) as client:

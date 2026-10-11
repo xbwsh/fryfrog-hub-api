@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Generator
 from pathlib import Path
 
@@ -18,21 +19,29 @@ class Base(DeclarativeBase):
 
 _engine = None
 _SessionLocal: sessionmaker | None = None
+# 懒初始化的双检锁：get_engine 可能被多个线程同时首访（后台调度线程 + 请求线程），
+# 没有锁时 _engine 赋值后、_SessionLocal 赋值前存在窗口，另线程会拿到
+# _SessionLocal is None 的断言失败（python -O 下 assert 被剥离，更难定位）。
+_engine_lock = threading.Lock()
 
 
 def get_engine():
     global _engine, _SessionLocal
-    if _engine is None:
+    if _engine is not None and _SessionLocal is not None:
+        return _engine
+    with _engine_lock:
+        if _engine is not None and _SessionLocal is not None:
+            return _engine
         settings = get_settings()
         db_path = Path(settings.sqlite_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        _engine = create_engine(
+        engine = create_engine(
             f"sqlite:///{db_path}",
             connect_args={"check_same_thread": False, "timeout": 30},
             future=True,
         )
 
-        @event.listens_for(_engine, "connect")
+        @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_conn, _):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
@@ -40,14 +49,18 @@ def get_engine():
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
-        _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
+        factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        # 两个全局一起赋值，避免中间态被别的线程观察到
+        _engine, _SessionLocal = engine, factory
     return _engine
 
 
 def get_session_factory() -> sessionmaker:
     get_engine()
-    assert _SessionLocal is not None
-    return _SessionLocal
+    factory = _SessionLocal
+    if factory is None:  # 不用 assert：python -O 下会被剥离成 None() → TypeError
+        raise RuntimeError("数据库会话工厂未初始化")
+    return factory
 
 
 def get_db() -> Generator[Session, None, None]:

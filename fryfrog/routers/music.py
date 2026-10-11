@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1113,8 +1113,20 @@ def _ss_parse_any(value: str | None) -> tuple[str, int] | None:
 
 
 def _created_ms(dt: datetime | None) -> int | None:
+    """naive datetime（库里存的是 UTC）→ 毫秒时间戳。
+
+    `server_default=func.now()` 在 SQLite 里落到 CURRENT_TIMESTAMP，即 **UTC**；
+    容器未设 TZ 时 `datetime.now()` 同样是 UTC，两者同源。但 `dt.timestamp()`
+    会把 naive 值当作**本地时间**解释，于是 Subsonic 客户端拿到的 created /
+    changed 偏出一个时区偏移（UTC+8 环境差8 小时）。
+
+    这里显式标注 UTC 再转换；已带 tzinfo 的值原样处理，因此将来若给容器
+    配置了 TZ，逻辑依然正确。
+    """
     if dt is None:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
 
 
@@ -1202,6 +1214,20 @@ def _ss_songs(db: Session, songs: list[MusicSong], user_id: int) -> list[dict]:
     return [_ss_to_song_clean(db, s, user_id) for s in songs]
 
 
+_XML_INVALID_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xml_text(value: Any) -> str:
+    """转义前先剔除 XML 1.0 禁止的控制字符。
+
+    html.escape 只处理 & < > " '，不过滤 \\x00-\\x08 这类字符，而它们会让
+    ET.fromstring 抛 ParseError: not well-formed —— 客户端（Subsonic 默认
+    f=xml）收到无法解析的响应，整个同步失败。标题来自 ffprobe 标签，
+    标签里出现控制字符在真实媒体库中并不罕见。
+    """
+    return html.escape(_XML_INVALID_RE.sub("", str(value)), quote=True)
+
+
 def _json_to_xml(name: str, data: Any) -> str:
     if data is None:
         return ""
@@ -1210,7 +1236,7 @@ def _json_to_xml(name: str, data: Any) -> str:
     if isinstance(data, bool):
         return f'<{name} value="{"true" if data else "false"}"/>'
     if not isinstance(data, dict):
-        text = html.escape(str(data), quote=True)
+        text = _xml_text(data)
         return f'<{name} value="{text}"/>'
     attrs: list[str] = []
     children: list[str] = []
@@ -1222,7 +1248,7 @@ def _json_to_xml(name: str, data: Any) -> str:
         elif isinstance(value, bool):
             attrs.append(f'{key}="{"true" if value else "false"}"')
         else:
-            attrs.append(f'{key}="{html.escape(str(value), quote=True)}"')
+            attrs.append(f'{key}="{_xml_text(value)}"')
     attr_str = (" " + " ".join(attrs)) if attrs else ""
     if children:
         return f"<{name}{attr_str}>{''.join(children)}</{name}>"
@@ -1344,7 +1370,13 @@ async def subsonic_entry(method: str, request: Request, db: DbSession):
             return _render_envelope(_error_envelope(exc.code, exc.message), fmt, callback)
         except Exception as exc:
             logger.warning("Subsonic %s error: %s", method_name, exc, exc_info=True)
-            return _render_envelope(_error_envelope(ERROR_GENERIC, str(exc)), fmt, callback)
+            # 只回通用文案：str(exc) 会把 SQLAlchemy 的表名/列名/SQL 片段、
+            # 绝对文件路径、内部异常类型泄露给客户端（客户端可见
+            # "sqlite3.IntegrityError: FOREIGN KEY constraint failed" 这类痕迹）。
+            # 完整异常已在服务端日志里（exc_info=True）。
+            return _render_envelope(
+                _error_envelope(ERROR_GENERIC, "Server error"), fmt, callback
+            )
 
     # 整个分发都是同步重活（SQLite 查询、封面要起 ffmpeg 子进程）：直接在 async
     # 入口里跑会堵死事件循环，几个并发的封面请求就能让整个服务停摆。

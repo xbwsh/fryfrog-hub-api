@@ -70,8 +70,11 @@ def _epub_meta(book: Ebook, file: Path) -> None:
         book.total_chapters = len(spine) if spine else None
 
         # 封面：ITEM_COVER 或元数据 refiner
-        cover_path = file.parent / "cover.jpg"
+        from fryfrog.services.assets import ebook_cover_path
+
+        cover_path = ebook_cover_path(book.id)
         try:
+            cover_path.parent.mkdir(parents=True, exist_ok=True)
             from ebooklib import ITEM_COVER, ITEM_IMAGE
 
             for item in doc.get_items_of_type(ITEM_COVER) or []:

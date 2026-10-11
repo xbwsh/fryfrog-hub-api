@@ -11,6 +11,21 @@ def comic_cover_path(comic_id: int) -> Path:
     return Path("data") / "covers" / "comic" / f"{comic_id}.jpg"
 
 
+def ebook_cover_path(book_id: int) -> Path:
+    """电子书封面统一放在应用数据区，按 id 唯一命名。
+
+    原先写 `<书目录>/cover.jpg`，同一目录下多本书会互相覆盖同一个文件
+    （所有书的封面都指向最后写入者的那张），扫描还会污染用户媒体目录。
+    与 comic_cover_path 同款处理。
+    """
+    return Path("data") / "covers" / "ebook" / f"{book_id}.jpg"
+
+
+def audiobook_cover_path(book_id: int) -> Path:
+    """有声书封面统一放在应用数据区，理由同 ebook_cover_path。"""
+    return Path("data") / "covers" / "audiobook" / f"{book_id}.jpg"
+
+
 def signed_url(path: str) -> str:
     return sign(path)
 
