@@ -79,3 +79,6 @@ media-library/
 # Local test deps
 .deps/
 .pytest_tmp/
+# pytest 的 --basetemp 目录（名字随意，统一用通配排除，避免误提交）
+.pt_*/
+.pytest_*/
