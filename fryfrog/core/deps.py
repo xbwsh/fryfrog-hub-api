@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from fryfrog.core.api_response import ApiResponse
 from fryfrog.core.security import (
+    ANONYMOUS_ID,
     AuthManager,
     UserService,
     current_user_id_or_none,
@@ -143,6 +144,11 @@ async def auth_middleware(request: Request, call_next):
     try:
         auth_manager = AuthManager.from_settings()
         if not auth_manager.enabled:
+            # 关闭鉴权 = 单用户自部署模式，所有端点都应放行。此处必须显式写入
+            # 当前用户，否则 current_user_id() 停在 None，路由里的 _require_admin
+            # 判is_admin(db, None) 恒为 False —— 扫描、改元数据、用户管理等
+            # admin 接口会全部 403，比开着鉴权还难用。
+            set_current_user_id(ANONYMOUS_ID)
             return await call_next(request)
 
         user_id = auth_manager.get_user_id(db, token)

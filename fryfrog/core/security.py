@@ -336,6 +336,11 @@ class UserService:
             db.flush()
 
     def is_admin(self, db: Session, user_id: int | None) -> bool:
+        # ANONYMOUS_ID 是「鉴权已关闭」时中间件写入的哨兵（见 deps.auth_middleware）：
+        # 该模式下没有登录概念，所有端点都应视为管理员，否则关闭鉴权反而让
+        # 扫描、改元数据、用户管理等 admin 接口全部 403。
+        if user_id == ANONYMOUS_ID and not get_settings().auth_enabled:
+            return True
         if user_id is None:
             return False
         user = db.get(User, user_id)

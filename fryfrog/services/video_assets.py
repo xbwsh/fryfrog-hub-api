@@ -55,6 +55,9 @@ def read_image(path: str | None, label: str = "", width: int = 300, height: int 
 
 
 def download_image(url: str, target: Path, force: bool = False) -> bool:
+    if not url:
+        # 上游校验不通过时会传空串（如 _full_image_url 拒绝了非 TMDB 源的 URL）
+        return False
     if not force and target.exists():
         return True
     try:
@@ -1019,11 +1022,45 @@ def _repair_tmdb_url(url: str) -> str:
     return url.replace("image.tmdb.org/t/", "image.tmdb.org/t/p/", 1) if url.startswith("http") else url
 
 
+# 只有 TMDB 图片 CDN 可作为图片源。写接口（封面/背景/logo 的 filePath）接受的
+# 值会经 _full_image_url 直连下载并落盘，若在此放行任意 http(s) URL，管理员
+# 就能让服务器去请求内网地址（169.254.169.254 等）并把响应读回——即 SSRF。
+# 读端点 tmdb_image_proxy 早就有 _safe_tmdb_path 白名单，这里补齐写入路径。
+_ALLOWED_IMAGE_HOST = "image.tmdb.org"
+
+
+def _is_allowed_image_url(url: str) -> bool:
+    """只允许 TMDB 图片 CDN 的 https URL；其余（相对路径）交给调用方拼接。"""
+    if not url:
+        return False
+    if url.startswith("/"):
+        # TMDB 相对路径：不能含 .. 或协议；`//host` 这种协议相对前缀同样拒绝，
+        # 拼出来是畸形 URL（虽仍发往 TMDB，但没必要放行）
+        return not url.startswith("//") and ".." not in url and "://" not in url and len(url) <= 512
+    if not url.startswith("https://"):
+        return False
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return (parts.scheme == "https" and parts.hostname == _ALLOWED_IMAGE_HOST and not parts.username
+            and not parts.password and parts.port in (None, 443))
+
+
 def _full_image_url(url: str) -> str:
     if url.startswith("http"):
+        # 非 TMDB 源的绝对 URL 一律拒绝（SSRF）；调用方据此跳过下载。
+        if not _is_allowed_image_url(url):
+            logger.warning("拒绝非 TMDB 图片源的 URL: %s", url[:120])
+            return ""
         return _repair_tmdb_url(url)
     from fryfrog.config import get_settings
 
+    if not _is_allowed_image_url(url):
+        logger.warning("拒绝非法的 TMDB 图片相对路径: %s", url[:120])
+        return ""
     size = get_settings().tmdb_image_size or "original"
     return f"https://image.tmdb.org/t/p/{size}{url}"
 
