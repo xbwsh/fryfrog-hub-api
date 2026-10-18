@@ -16,7 +16,7 @@ from fryfrog.core.exceptions import BadRequestException, ForbiddenException, Res
 from fryfrog.core.security import AuthManager, UserService, current_user_id
 from fryfrog.core.signer import sign
 from fryfrog.models.ebook import Ebook, EbookProgress
-from fryfrog.services import ebook_scan, ebook_scrape, ebook_text
+from fryfrog.services import ebook_scrape, ebook_text
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
 
@@ -159,32 +159,19 @@ def scan(
         lib = media_lib.get_library_by_id(db, libraryId)
         if not media_lib.is_visible_to_current_user(db, libraryId):
             raise ResourceNotFoundException("MediaLibrary", "id", libraryId)
+        if not lib.is_ebook_type():
+            raise BadRequestException("指定的媒体库不是电子书库")
         libraries = [lib]
     else:
-        libraries = [x for x in media_lib.get_visible_libraries(db) if x.is_ebook_type()]
+        libraries = [
+            x
+            for x in media_lib.get_visible_libraries(db)
+            if x.enabled and x.is_ebook_type()
+        ]
 
-    def run():
-        from fryfrog.db import get_session_factory
-        from fryfrog.services.scan import _claim_library_scan
+    from fryfrog.services import scan as scan_svc
 
-        session = get_session_factory()()
-        try:
-            for lib in libraries:
-                try:
-                    # 与视频/音乐同一条护栏：热监听+周期+手动可能同时触发同一库
-                    if not _claim_library_scan(lib):
-                        continue
-                    ebook_scan.scan_ebook_library(session, lib)
-                    session.commit()
-                except Exception:
-                    session.rollback()
-                    logger.exception("Ebook scan failed for library %s", lib.id)
-        finally:
-            session.close()
-
-    import threading
-
-    threading.Thread(target=run, daemon=True).start()
+    scan_svc.submit_scan_job([lib.id for lib in libraries if lib.id is not None])
     return ApiResponse.ok(
         {"status": "started", "libraryCount": len(libraries)}, message="扫描任务已启动"
     )

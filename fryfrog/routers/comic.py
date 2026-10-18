@@ -14,7 +14,7 @@ from fryfrog.core.exceptions import BadRequestException, ForbiddenException, Res
 from fryfrog.core.security import AuthManager, UserService, current_user_id
 from fryfrog.core.signer import sign
 from fryfrog.models.comic import Comic, ComicChapter, ComicProgress
-from fryfrog.services import comic_organize, comic_pages, comic_scan, comic_scrape
+from fryfrog.services import comic_organize, comic_pages, comic_scrape
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
 
@@ -178,32 +178,19 @@ def scan(
         lib = media_lib.get_library_by_id(db, libraryId)
         if not media_lib.is_visible_to_current_user(db, libraryId):
             raise ResourceNotFoundException("MediaLibrary", "id", libraryId)
+        if not lib.is_comic_type():
+            raise BadRequestException("指定的媒体库不是漫画库")
         libraries = [lib]
     else:
-        libraries = [x for x in media_lib.get_visible_libraries(db) if x.is_comic_type()]
+        libraries = [
+            x
+            for x in media_lib.get_visible_libraries(db)
+            if x.enabled and x.is_comic_type()
+        ]
 
-    def run():
-        from fryfrog.db import get_session_factory
-        from fryfrog.services.scan import _claim_library_scan
+    from fryfrog.services import scan as scan_svc
 
-        session = get_session_factory()()
-        try:
-            for lib in libraries:
-                try:
-                    # 与视频/音乐同一条护栏：热监听+周期+手动可能同时触发同一库
-                    if not _claim_library_scan(lib):
-                        continue
-                    comic_scan.scan_comic_library(session, lib)
-                    session.commit()
-                except Exception:
-                    session.rollback()
-                    logger.exception("Comic scan failed for library %s", lib.id)
-        finally:
-            session.close()
-
-    import threading
-
-    threading.Thread(target=run, daemon=True).start()
+    scan_svc.submit_scan_job([lib.id for lib in libraries if lib.id is not None])
     return ApiResponse.ok(
         {"status": "started", "libraryCount": len(libraries)}, message="扫描任务已启动"
     )

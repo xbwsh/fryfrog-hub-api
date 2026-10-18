@@ -55,6 +55,7 @@ class MusicSong(TimestampMixin, Base):
     duration_seconds: Mapped[float | None] = mapped_column(Double, nullable=True)
     file_path: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_mtime: Mapped[float | None] = mapped_column(Double, nullable=True)
     format: Mapped[str | None] = mapped_column(String, nullable=True)
     bit_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sample_rate: Mapped[int | None] = mapped_column(Integer, nullable=True)

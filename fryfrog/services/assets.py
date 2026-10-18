@@ -6,9 +6,16 @@ from fryfrog.core.signer import sign
 from fryfrog.core.utils import placeholder_jpeg
 
 
+def _cover_path(kind: str, item_id: int) -> Path:
+    """返回持久化应用数据目录中的封面路径。"""
+    from fryfrog.config import get_settings
+
+    return get_settings().data_dir / "covers" / kind / f"{item_id}.jpg"
+
+
 def comic_cover_path(comic_id: int) -> Path:
     """漫画封面统一放在应用数据区，避免污染媒体目录。"""
-    return Path("data") / "covers" / "comic" / f"{comic_id}.jpg"
+    return _cover_path("comic", comic_id)
 
 
 def ebook_cover_path(book_id: int) -> Path:
@@ -18,12 +25,12 @@ def ebook_cover_path(book_id: int) -> Path:
     （所有书的封面都指向最后写入者的那张），扫描还会污染用户媒体目录。
     与 comic_cover_path 同款处理。
     """
-    return Path("data") / "covers" / "ebook" / f"{book_id}.jpg"
+    return _cover_path("ebook", book_id)
 
 
 def audiobook_cover_path(book_id: int) -> Path:
     """有声书封面统一放在应用数据区，理由同 ebook_cover_path。"""
-    return Path("data") / "covers" / "audiobook" / f"{book_id}.jpg"
+    return _cover_path("audiobook", book_id)
 
 
 def signed_url(path: str) -> str:

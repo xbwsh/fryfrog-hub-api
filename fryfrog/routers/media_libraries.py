@@ -19,6 +19,15 @@ from fryfrog.services.media_library import MediaLibraryService
 router = APIRouter(prefix="/api/v1/media-libraries", tags=["媒体库"])
 
 
+def _schedule_scan_after_commit(db, library_id: int) -> None:
+    """提交媒体库变更后再排队扫描，避免后台线程读到旧事务。"""
+    from fryfrog.core.deps import commit_with_retry
+    from fryfrog.services.scan import submit_scan_job
+
+    commit_with_retry(db)
+    submit_scan_job([library_id])
+
+
 def _browse_item(name: str, path: str, writable: bool) -> dict:
     # 与旧版 Java MediaLibraryBrowseService 契约一致
     return {"name": name, "path": path, "writable": writable}
@@ -98,6 +107,8 @@ def create_library(body: MediaLibraryCreateRequest, db: DbSession, service: Medi
         "description": body.description,
     }
     lib = service.create_library(db, data)
+    if lib.enabled and lib.id is not None:
+        _schedule_scan_after_commit(db, lib.id)
     return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True))
 
 
@@ -163,6 +174,10 @@ def update_library(
     db: DbSession,
     service: MediaLibraryService = Depends(get_media_library_service),
 ):
+    before = service.get_library_by_id(db, library_id)
+    before_enabled = bool(before.enabled)
+    before_path = before.path
+    before_type = before.type
     data = {
         "name": body.name,
         "path": body.path,
@@ -175,6 +190,11 @@ def update_library(
         "description": body.description,
     }
     lib = service.update_library(db, library_id, data)
+    needs_scan = bool(lib.enabled) and (
+        not before_enabled or before_path != lib.path or before_type != lib.type
+    )
+    if needs_scan and lib.id is not None:
+        _schedule_scan_after_commit(db, lib.id)
     return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True))
 
 
@@ -186,7 +206,10 @@ def delete_library(library_id: int, db: DbSession, service: MediaLibraryService 
 
 @router.put("/{library_id}/toggle")
 def toggle_library(library_id: int, db: DbSession, service: MediaLibraryService = Depends(get_media_library_service)):
+    was_enabled = bool(service.get_library_by_id(db, library_id).enabled)
     lib = service.toggle_library(db, library_id)
+    if lib.enabled and not was_enabled and lib.id is not None:
+        _schedule_scan_after_commit(db, lib.id)
     return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True))
 
 

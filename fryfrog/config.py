@@ -91,8 +91,8 @@ class Settings(BaseSettings):
         ./data。现改为从 sqlite_path 派生，默认（data/fryfrog.db）下
         解析结果仍是 data/，行为兼容。
 
-        注意：当前全项目无调用点（comic_cover_path 等封面路径是各自
-        写死 `Path("data")/covers/...`），保留仅为向后兼容。
+        漫画、电子书和有声书封面也使用该目录，确保数据库与封面处于同一
+        个持久化数据卷中。
         """
         return Path(self.sqlite_path).parent
 

@@ -129,7 +129,9 @@ def organize_music_library(db: Session, library: MediaLibrary, dry_run: bool) ->
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source.replace(target)
                 song.file_path = str(target)
-                song.file_size = target.stat().st_size
+                stat = target.stat()
+                song.file_size = stat.st_size
+                song.file_mtime = stat.st_mtime
                 db.flush()
                 row["status"] = "moved"
                 moved += 1
@@ -201,7 +203,9 @@ def _save_song(db: Session, path: Path, library_id: int | None, root: Path) -> M
     song.year = _parse_year(tags.get("date"), tags.get("year"))
     song.file_path = absolute
     try:
-        song.file_size = path.stat().st_size
+        stat = path.stat()
+        song.file_size = stat.st_size
+        song.file_mtime = stat.st_mtime
     except OSError:
         pass
     song.lyrics_content = _extract_embedded_lyrics(tags)
@@ -411,10 +415,10 @@ def _prune_empty_albums_artists(db: Session, library_id: int | None) -> None:
 
 def _is_changed(song: MusicSong, path: Path) -> bool:
     try:
-        size = path.stat().st_size
+        stat = path.stat()
     except OSError:
         return True
-    if song.file_size != size:
+    if song.file_size != stat.st_size or song.file_mtime != stat.st_mtime:
         return True
     if _is_mojibake(song.title) or _is_mojibake(song.artist_name) or _is_mojibake(song.album_name):
         return True

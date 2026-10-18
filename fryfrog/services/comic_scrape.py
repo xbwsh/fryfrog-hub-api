@@ -135,6 +135,43 @@ def bind(db: Session, comic_id: int, source: str, source_id: str) -> Comic:
     return _bind_bangumi(db, comic_id, source_id)
 
 
+def scrape_comic_if_needed(db: Session, comic: Comic) -> None:
+    """扫描时对未刮削漫画做保守自动匹配。
+
+    漫画搜索结果可能包含同名作品，只有标题规范化后完全相等才自动绑定；
+    模糊结果继续留给管理端手动选择，避免周期扫描把作品绑错。
+    """
+    if comic.id is None or comic.metadata_source not in (None, "scan"):
+        return
+    title = (comic.title or "").strip()
+    if not title:
+        return
+
+    import re
+
+    def normalize(value: str) -> str:
+        return re.sub(r"[\W_]+", "", value.casefold(), flags=re.UNICODE)
+
+    try:
+        candidates = search(title)
+        wanted = normalize(title)
+        match = next(
+            (
+                item
+                for item in candidates
+                if item.get("source")
+                and item.get("sourceId")
+                and normalize(str(item.get("title") or "")) == wanted
+            ),
+            None,
+        )
+        if match is None:
+            return
+        bind(db, comic.id, str(match["source"]), str(match["sourceId"]))
+    except Exception:
+        logger.warning("漫画自动刮削失败: %s", comic.title, exc_info=True)
+
+
 def unbind(db: Session, comic_id: int) -> None:
     comic = db.get(Comic, comic_id)
     if comic is None:

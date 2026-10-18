@@ -231,6 +231,7 @@ def _upsert_book(
                     format=_format_of(file),
                     duration_seconds=duration,
                     file_size=size,
+                    file_mtime=file.stat().st_mtime,
                 )
             )
         if single and audio_files[0].suffix.lower() in CHAPTER_CAPABLE:
@@ -260,7 +261,8 @@ def _tracks_unchanged(existing: list[AudiobookTrack], audio_files: list[Path]) -
         if t.track_index != i or t.file_path != str(file):
             return False
         try:
-            if t.file_size != file.stat().st_size:
+            stat = file.stat()
+            if t.file_size != stat.st_size or t.file_mtime != stat.st_mtime:
                 return False
         except OSError:
             return False

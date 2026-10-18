@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -22,7 +21,7 @@ from fryfrog.models.audiobook import (
     AudiobookProgress,
     AudiobookTrack,
 )
-from fryfrog.services import audiobook_organize, audiobook_scan, audiobook_scrape
+from fryfrog.services import audiobook_organize, audiobook_scrape
 from fryfrog.services.assets import cover_bytes
 from fryfrog.services.media_library import MediaLibraryService
 
@@ -314,30 +313,19 @@ def scan(
         lib = media_lib.get_library_by_id(db, libraryId)
         if not media_lib.is_visible_to_current_user(db, libraryId):
             raise ResourceNotFoundException("MediaLibrary", "id", libraryId)
+        if not lib.is_audiobook_type():
+            raise BadRequestException("指定的媒体库不是有声书库")
         libraries = [lib]
     else:
-        libraries = [x for x in media_lib.get_visible_libraries(db) if x.is_audiobook_type()]
+        libraries = [
+            x
+            for x in media_lib.get_visible_libraries(db)
+            if x.enabled and x.is_audiobook_type()
+        ]
 
-    def run():
-        from fryfrog.db import get_session_factory
-        from fryfrog.services.scan import _claim_library_scan
+    from fryfrog.services import scan as scan_svc
 
-        session = get_session_factory()()
-        try:
-            for lib in libraries:
-                try:
-                    # 与视频/音乐同一条护栏：热监听+周期+手动可能同时触发同一库
-                    if not _claim_library_scan(lib):
-                        continue
-                    audiobook_scan.scan_audiobook_library(session, lib)
-                    session.commit()
-                except Exception:
-                    session.rollback()
-                    logger.exception("Audiobook scan failed for library %s", lib.id)
-        finally:
-            session.close()
-
-    threading.Thread(target=run, daemon=True).start()
+    scan_svc.submit_scan_job([lib.id for lib in libraries if lib.id is not None])
     return ApiResponse.ok(
         {"status": "started", "libraryCount": len(libraries)}, message="扫描任务已启动"
     )

@@ -41,6 +41,15 @@ def _claim_library_scan(library: MediaLibrary) -> bool:
         return True
 
 
+def _release_library_scan(library: MediaLibrary, started: float | None) -> None:
+    """仅释放自己持有的占位，避免旧的超时扫描误删新扫描的锁。"""
+    if library.id is None or started is None:
+        return
+    with _scan_lock:
+        if _running_scans.get(library.id) == started:
+            _running_scans.pop(library.id, None)
+
+
 def scan_progress_module(library: MediaLibrary) -> str:
     """与 progress.get_pipeline_progress 约定一致的进度键。"""
     return f"scan:{library.type}:{library.id}"
@@ -86,6 +95,7 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
         # 必须写终态：调用方（submit_scan_job）已先把 pipeline 标成 running，
         # 这里直接 return 会让 /pipeline-progress 永远停在「扫描中」，前端进度条卡死。
         # 已有一次真实扫描在跑，本次只是没抢到执行权。
+        still_running = False
         if library.id is not None:
             with _scan_lock:
                 still_running = library.id in _running_scans
@@ -99,6 +109,10 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
             currentItem=None,
         )
         return
+    claimed_started = None
+    if library.id is not None:
+        with _scan_lock:
+            claimed_started = _running_scans.get(library.id)
     report_scan_progress(library, stage="scan", running=True, total=1, completed=0, failed=0)
     failed = 0
     # 路径预检：各域的 scan_*_library 在路径不存在时都是「记一条 warning 后
@@ -117,19 +131,25 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
             currentItem=None,
             message=f"路径不可访问: {library.path}",
         )
-        if library.id is not None:
-            with _scan_lock:
-                _running_scans.pop(library.id, None)
+        _release_library_scan(library, claimed_started)
         return
+    watcher = None
     try:
+        # 周期扫描、手动扫描和热监听都经过这里。只要热监听已经启动，
+        # 就把扫描写入的 NFO/封面事件隔离掉，避免扫描完成后再次自触发。
+        from fryfrog.services.watcher import get_active_file_watcher
+
+        watcher = get_active_file_watcher()
+        if watcher is not None:
+            watcher.begin_scan()
         _scan_library(db, library)
     except Exception:
         failed = 1
         raise
     finally:
-        if library.id is not None:
-            with _scan_lock:
-                _running_scans.pop(library.id, None)
+        if watcher is not None:
+            watcher.end_scan()
+        _release_library_scan(library, claimed_started)
         # 写终态：客户端以 running/percent 判断扫描结束，不写会一直停在「扫描中」。
         # 失败时用 stage="error"，否则只判断 stage=="done" 的客户端会误判成功。
         report_scan_progress(

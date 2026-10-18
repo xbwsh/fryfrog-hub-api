@@ -83,7 +83,7 @@ class FileWatcher:
     def __init__(self) -> None:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self._inventory: dict[str, dict[str, float]] = {}
+        self._inventory: dict[str, dict[str, tuple[float, int]]] = {}
         self._primed = False
         self._pending: dict[str, float] = {}
         self._pending_delete: dict[str, float] = {}
@@ -212,10 +212,10 @@ class FileWatcher:
                 if not self._primed:
                     self._inventory[root] = current
                     continue
-                added = [p for p in current if p not in prev]
+                changed = [p for p, snapshot in current.items() if prev.get(p) != snapshot]
                 removed = [p for p in prev if p not in current]
                 self._inventory[root] = current
-                if added:
+                if changed:
                     self._pending[root] = now + DEBOUNCE_SECONDS
                 if removed:
                     self._pending_delete[root] = now + DELETE_DELAY_SECONDS
@@ -242,8 +242,8 @@ class FileWatcher:
         finally:
             session.close()
 
-    def _scan_root(self, root: Path, exts: set[str]) -> dict[str, float]:
-        result: dict[str, float] = {}
+    def _scan_root(self, root: Path, exts: set[str]) -> dict[str, tuple[float, int]]:
+        result: dict[str, tuple[float, int]] = {}
         try:
             for path in root.rglob("*"):
                 if not path.is_file() or path.name.startswith("."):
@@ -251,7 +251,8 @@ class FileWatcher:
                 if path.suffix.lower() not in exts:
                     continue
                 try:
-                    result[str(path)] = path.stat().st_mtime
+                    stat = path.stat()
+                    result[str(path)] = (stat.st_mtime, stat.st_size)
                 except OSError:
                     continue
         except OSError:
@@ -347,14 +348,13 @@ class FileWatcher:
             return
         if not watch_path:
             return
-        root = next(
-            (
-                candidate
-                for candidate in self._event_roots
-                if watch_path == candidate or watch_path.startswith(candidate.rstrip(os.sep) + os.sep)
-            ),
-            None,
-        )
+        matching_roots = [
+            candidate
+            for candidate in self._event_roots
+            if watch_path == candidate
+            or watch_path.startswith(candidate.rstrip(os.sep) + os.sep)
+        ]
+        root = max(matching_roots, key=len, default=None)
         if root is None:
             return
         path = Path(watch_path) / name if name else Path(watch_path)
@@ -378,16 +378,18 @@ class FileWatcher:
         if lib is None:
             return
         logger.info("[FileWatcher] 触发扫描: %s (%s)", lib.name, lib.type)
-        self.begin_scan()
         try:
             scan_library(session, lib)
         except Exception:
             logger.exception("热监听扫描失败: %s", root)
-        finally:
-            self.end_scan()
 
 
 _watcher: FileWatcher | None = None
+
+
+def get_active_file_watcher() -> FileWatcher | None:
+    """返回已创建的监听器；扫描模块用于复用扫描事件隔离状态。"""
+    return _watcher
 
 
 def get_file_watcher() -> FileWatcher:

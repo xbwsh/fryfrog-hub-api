@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -176,7 +178,18 @@ class MediaLibraryService:
     def is_path_in_enabled_library(self, db: Session, file_path: str | None) -> bool:
         if not file_path:
             return False
-        return any(file_path.startswith(p) for p in self.get_enabled_paths(db))
+        try:
+            target = Path(file_path).resolve()
+        except OSError:
+            return False
+        for root_str in self.get_enabled_paths(db):
+            try:
+                root = Path(root_str).resolve()
+            except OSError:
+                continue
+            if target == root or root in target.parents:
+                return True
+        return False
 
     def find_by_path(self, db: Session, path: str) -> MediaLibrary | None:
         """按路径找出所属媒体库：库根等于该路径，或该路径在库根之下。
@@ -189,7 +202,8 @@ class MediaLibraryService:
             target = Path(path).resolve()
         except OSError:
             return None
-        for lib in self.get_all_libraries(db):
+        matches: list[tuple[int, MediaLibrary]] = []
+        for lib in self.get_enabled_libraries(db):
             if not lib.path:
                 continue
             try:
@@ -197,8 +211,12 @@ class MediaLibraryService:
             except OSError:
                 continue
             if target == root or root in target.parents:
-                return lib
-        return None
+                # 媒体库允许嵌套时，必须把事件交给最具体的库；否则外层库
+                # 先命中后会把内层文件按错误类型扫描。
+                matches.append((len(root.parts), lib))
+        if not matches:
+            return None
+        return max(matches, key=lambda item: item[0])[1]
 
 def _purge_library_rows(db: Session, library_id: int) -> None:
     """删库时把库里所有媒体的行一起清掉（含子表）。

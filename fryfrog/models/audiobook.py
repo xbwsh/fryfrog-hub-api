@@ -56,6 +56,7 @@ class AudiobookTrack(TimestampMixin, Base):
     format: Mapped[str | None] = mapped_column(String, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Double, nullable=True)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_mtime: Mapped[float | None] = mapped_column(Double, nullable=True)
 
 
 class AudiobookChapter(TimestampMixin, Base):

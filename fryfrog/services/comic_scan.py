@@ -195,6 +195,14 @@ def scan_comic_library(db: Session, library: MediaLibrary) -> dict:
         comic.cover_art_path = _resolve_cover(comic, draft)
         db.flush()
 
+        if library.enable_scraping:
+            from fryfrog.services.comic_scrape import scrape_comic_if_needed
+
+            scrape_comic_if_needed(db, comic)
+            # 自动刮削可能刚下载了远程封面，刷新指针而不覆盖刮削封面。
+            comic.cover_art_path = _resolve_cover(comic, draft)
+            db.flush()
+
         existing_map = existing_chapters.get(comic.id) or {}
         for i, cd in enumerate(draft.chapters):
             chapter = existing_map.get(cd.file_path)

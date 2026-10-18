@@ -8,10 +8,10 @@ from fryfrog.media_core import get_media_probe
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".ts", ".m2ts", ".webm"}
 MUSIC_EXTS = {".mp3", ".flac", ".m4a", ".wav", ".wma", ".aac", ".ogg", ".opus", ".ape"}
-AUDIOBOOK_EXTS = MUSIC_EXTS | {".m4b"}
+AUDIOBOOK_EXTS = MUSIC_EXTS | {".m4b", ".m4r", ".oga", ".mp4", ".mka"}
 EBOOK_EXTS = {".epub", ".pdf", ".mobi", ".azw3", ".txt"}
 COMIC_ARCHIVE_EXTS = {".zip", ".cbz", ".rar", ".cbr", ".7z", ".pdf"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 
 
 def iter_files(root: Path, exts: set[str]) -> list[Path]:
