@@ -71,6 +71,7 @@ def _require_visible(db, media_lib: MediaLibraryService, comic_id: int) -> Comic
 def _require_visible_chapter(db, media_lib: MediaLibraryService, chapter_id: int) -> ComicChapter:
     chapter = db.get(ComicChapter, chapter_id)
     if chapter is None:
+        logger.warning("漫画章节记录不存在: chapter_id=%s", chapter_id)
         raise ResourceNotFoundException("ComicChapter", "id", chapter_id)
     _require_visible(db, media_lib, chapter.comic_id)
     return chapter
@@ -289,6 +290,9 @@ def chapter_pages(
     try:
         names = comic_pages.list_page_names(chapter)
     except Exception:
+        logger.exception(
+            "漫画章节列页失败: chapter_id=%s, file_path=%s", chapter_id, chapter.file_path
+        )
         raise ResourceNotFoundException("ComicChapter", "id", chapter_id)
     urls = [sign(f"/api/v1/comics/chapters/{chapter_id}/pages/{i}") for i in range(len(names))]
     return ApiResponse.ok(urls)
