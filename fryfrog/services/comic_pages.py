@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 import zipfile
+from contextlib import closing
 from pathlib import Path
+from threading import Lock
 
 from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
 from fryfrog.core.natural_order import natural_key
@@ -20,6 +22,8 @@ ARCHIVE_EXTS = ZIP_EXTS | RAR_EXTS | SEVEN_EXTS | PDF_EXTS
 # 渲染目标宽度（px）：缩放按 PDF 页宽折算，限制在 1x~4x
 PDF_TARGET_WIDTH = 1600.0
 PDF_JPEG_QUALITY = 85
+# PDFium operations must not run concurrently in FastAPI worker threads.
+_PDF_LOCK = Lock()
 # 压缩包单条目读取上限：页面图片不可能这么大；构造的 cbz（zip bomb）
 # 一个条目解出数 GB，zf.read 直接整块进内存会打爆进程
 MAX_ENTRY_BYTES = 256 * 1024 * 1024
@@ -74,28 +78,33 @@ def _open_pdf(path: Path):
 
 
 def _pdf_page_names(path: Path) -> list[str]:
-    with _open_pdf(path) as doc:
-        return [f"page_{i:05d}.jpg" for i in range(len(doc))]
+    with _PDF_LOCK:
+        with _open_pdf(path) as doc:
+            return [f"page_{i:05d}.jpg" for i in range(len(doc))]
 
 
 def _render_pdf_page(path: Path, index: int) -> bytes:
-    with _open_pdf(path) as doc:
-        if index < 0 or index >= len(doc):
-            raise ResourceNotFoundException("ComicPage", "index", index)
-        page = doc[index]
-        width = page.get_width() or 595.0
-        height = page.get_height() or 842.0
-        scale = min(4.0, max(1.0, PDF_TARGET_WIDTH / width))
-        # 异常大页（恶意/损坏 PDF）：scale 钳到 1.0 后仍按原生尺寸渲染会产生
-        # 海量像素分配，必须按像素预算二次收缩
-        if width * height * scale * scale > MAX_RENDER_PIXELS:
-            scale = (MAX_RENDER_PIXELS / (width * height)) ** 0.5
-        image = page.render(scale=scale).to_pil()
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG", quality=PDF_JPEG_QUALITY)
-        return buf.getvalue()
+    with _PDF_LOCK:
+        with _open_pdf(path) as doc:
+            if index < 0 or index >= len(doc):
+                raise ResourceNotFoundException("ComicPage", "index", index)
+            page = doc[index]
+            width = page.get_width() or 595.0
+            height = page.get_height() or 842.0
+            scale = min(4.0, max(1.0, PDF_TARGET_WIDTH / width))
+            # 异常大页（恶意/损坏 PDF）：scale 钳到 1.0 后仍按原生尺寸渲染会产生
+            # 海量像素分配，必须按像素预算二次收缩
+            if width * height * scale * scale > MAX_RENDER_PIXELS:
+                scale = (MAX_RENDER_PIXELS / (width * height)) ** 0.5
+            try:
+                with closing(page.render(scale=scale)) as bitmap:
+                    with bitmap.to_pil() as image:
+                        with image.convert("RGB") as rgb:
+                            buf = io.BytesIO()
+                            rgb.save(buf, format="JPEG", quality=PDF_JPEG_QUALITY)
+                            return buf.getvalue()
+            finally:
+                page.close()
 
 
 def _list_archive_names(path: Path) -> list[str]:

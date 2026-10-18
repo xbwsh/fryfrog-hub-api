@@ -88,3 +88,20 @@ def test_scan_picks_up_pdf(tmp_path):
         assert chapters[0].page_count == 2
         assert Path(chapters[0].file_path).suffix == ".pdf"
         assert comic.cover_art_path  # 首页渲染为封面
+
+
+def test_pdf_parallel_page_requests(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    pdf = _make_pdf(tmp_path / "parallel.pdf", pages=3)
+    chapter = _chapter(pdf)
+
+    def read(index):
+        assert len(comic_pages.list_page_names(chapter)) == 3
+        data, media = comic_pages.read_page(chapter, index % 3)
+        assert media == "image/jpeg"
+        assert data.startswith(b"\xff\xd8")
+        return len(data)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        assert all(size > 1000 for size in pool.map(read, range(24)))
