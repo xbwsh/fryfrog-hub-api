@@ -44,6 +44,14 @@ Video media backend API service for metadata management and streaming.
 - **Playlists** - Playlist CRUD and bookmarks
 - **Subsonic API** - `/rest` endpoints compatible with Subsonic clients
 
+### Audiobook Scraping
+
+- Supports Bangumi, Open Library, Google Books, Audiobooker, and Ximalaya.
+- Ximalaya uses public website metadata without an Open Platform AppKey or login cookies.
+- Select `ximalaya` and enter keywords, an album URL (for example, `https://www.ximalaya.com/album/19095902`), or an album ID. Album URLs also work without selecting a provider.
+- Keyword searches may be restricted by Ximalaya. An error suggests using an album URL or ID; aggregate searches still return results from other providers.
+- The existing binding endpoint saves metadata and covers. Author and narrator are extracted only when explicitly labeled in the description.
+
 ### Common Features
 
 - **Swagger Docs** - Auto-generated API documentation with online testing

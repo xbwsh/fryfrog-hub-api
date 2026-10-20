@@ -186,7 +186,7 @@ def _upsert_book(
         book.total_file_size = sum(s for _, _, _, s in tracks)
         book.track_count = len(tracks)
         # 扫描不覆盖已刮削字段
-        if book.metadata_source != "scrape":
+        if (book.metadata_source or "").split(":", 1)[0] != "scrape":
             first_tags = tracks[0][1] if tracks else {}
             book.title = _first_tag(first_tags, *TAG_TITLE_KEYS) or clean_title(
                 Path(book_path).name

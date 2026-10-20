@@ -48,6 +48,14 @@
 -   **播放列表** - 播放列表 CRUD 与书签
 -   **Subsonic 兼容 API** - 提供 `/rest` 端点，可对接 Subsonic 客户端
 
+### 有声书刮削 / Audiobook Scraping
+
+- 支持 Bangumi、Open Library、Google Books、Audiobooker 和喜马拉雅。
+- 喜马拉雅读取公开网页使用的元数据，无需开放平台 AppKey 或登录 Cookie。
+- 来源选择 `ximalaya`，搜索框可输入关键词、专辑链接（如 `https://www.ximalaya.com/album/19095902`）或专辑 ID；未指定来源时也能识别专辑链接。
+- 关键词搜索可能受喜马拉雅风控限制，此时会提示改用专辑链接或 ID；聚合搜索仍返回其他来源的结果。
+- 选中结果后通过现有绑定接口保存元数据和封面；作者、演播者仅提取简介中明确标注的信息。
+
 ### 通用功能 / Common Features
 
 -   **Swagger 文档** - 自动生成 API 文档，支持在线测试
