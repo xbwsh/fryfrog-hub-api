@@ -1,7 +1,7 @@
-**/target/
-**/.idea/
-**/.vscode/
-**/node_modules/
-**/.git/
-**/.gitignore
-*.md
+# Dockerfile 只需要项目配置和 Python 源码。
+**
+!pyproject.toml
+!fryfrog/
+!fryfrog/**
+**/__pycache__/
+**/*.py[cod]
