@@ -11,6 +11,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from fryfrog.config import get_settings
 
 logger = logging.getLogger(__name__)
+SCHEMA_VERSION = 1
 
 
 class Base(DeclarativeBase):
@@ -80,12 +81,28 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """创建表结构（SQLite 文件库）并补齐老库缺失的列。"""
+    """升级未版本化的旧库；迁移失败时不标记完成，也不启动服务。"""
     from fryfrog import models  # noqa: F401  确保模型已注册
+    from sqlalchemy import inspect, text
 
     engine = get_engine()
+    with engine.connect() as conn:
+        version = conn.execute(text("PRAGMA user_version")).scalar_one()
+    if version > SCHEMA_VERSION:
+        raise RuntimeError(f"数据库版本 {version} 高于本程序支持的 {SCHEMA_VERSION}，请使用兼容版本并先备份数据库")
     Base.metadata.create_all(engine)
-    _ensure_columns(engine)
+    if version == 0:
+        _ensure_columns(engine, strict=True)
+    inspector = inspect(engine)
+    missing = []
+    for table in Base.metadata.sorted_tables:
+        columns = {column["name"] for column in inspector.get_columns(table.name)}
+        missing.extend(f"{table.name}.{column.name}" for column in table.columns if column.name not in columns)
+    if missing:
+        raise RuntimeError(f"数据库结构不完整，缺少列: {', '.join(missing)}；请备份数据库并检查迁移")
+    if version == 0:
+        with engine.begin() as conn:
+            conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
 
 
 # 老库补列：create_all 只建表不加列，这里按模型元数据做幂等 ALTER TABLE。
@@ -129,7 +146,7 @@ def _add_column_ddl(column, dialect, has_rows: bool) -> str:
     return f"{ddl[:idx]} DEFAULT {lit}{ddl[idx:]}"
 
 
-def _ensure_columns(engine) -> None:
+def _ensure_columns(engine, *, strict: bool = False) -> None:
     """老库补列：create_all 只建表不加列，这里按模型元数据做幂等 ALTER TABLE。
 
     直接尝试加列，失败就回滚并跳过——SQLite 对「NOT NULL 无默认值」
@@ -184,6 +201,8 @@ def _ensure_columns(engine) -> None:
         # 用 error 级别：跳过的列在运行期会表现为 no such column 或 NULL 误判，
         # warning 容易被淹没在启动日志里。
         logger.error("以下列无法安全补加，已跳过（运行期可能报no such column）: %s", ", ".join(skipped))
+        if strict:
+            raise RuntimeError(f"数据库迁移失败，无法添加列: {', '.join(skipped)}；请备份数据库并检查迁移")
 
 
 def _backfill_column(engine, table_name: str, column) -> bool:

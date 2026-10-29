@@ -141,6 +141,7 @@ def _migrate_legacy() -> None:
     except Exception:
         session.rollback()
         logger.exception("Legacy data migration failed")
+        raise
     finally:
         session.close()
 

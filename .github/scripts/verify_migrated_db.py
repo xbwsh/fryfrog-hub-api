@@ -18,9 +18,12 @@ def verify(path: Path) -> None:
     lib_rows = con.execute("select count(*) from media_libraries").fetchone()[0]
     video_rows = con.execute("select count(*) from videos").fetchone()[0]
     old_title = con.execute("select title from videos where file_path like '%old.mp4'").fetchone()
+    version = con.execute("pragma user_version").fetchone()[0]
     con.close()
 
     problems: list[str] = []
+    if version != 1:
+        problems.append(f"数据库版本错误: {version} != 1")
     if missing := REQUIRED_VIDEO_COLUMNS - video_cols:
         problems.append(f"videos 未补上新列: {sorted(missing)}")
     if "enable_scraping" not in lib_cols:

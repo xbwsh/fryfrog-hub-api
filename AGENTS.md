@@ -107,7 +107,7 @@ python -m venv .venv
   不轮转会长期涨到几百 MB
 - TMDB 连续失败 `TMDB_FAILURE_THRESHOLD` 次后熔断 `TMDB_COOLDOWN_SECONDS`，
   期间跳过刮削；瞬时网络错误只打一行 WARNING，不打完整堆栈
-- `init_db()` 会按模型元数据为老库幂等补列（`create_all` 只建表不加列）
+- `init_db()` 为未版本化老库幂等补列并写入 SQLite `user_version=1`；失败不推进版本，版本化后的结构变更必须增加明确迁移
 
 ## Environment
 
