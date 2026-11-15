@@ -5,6 +5,7 @@ description = "Video media backend API for metadata extraction and streaming"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
+    "anyio>=4.4.0",
     "uvicorn[standard]>=0.30.0",
     "sqlalchemy>=2.0.30",
     "pydantic>=2.8.0",

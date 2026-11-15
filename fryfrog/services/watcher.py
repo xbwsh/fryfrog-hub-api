@@ -371,15 +371,15 @@ class FileWatcher:
     def _fire_scan(self, session, root: str) -> None:
         from fryfrog.services.media_library import MediaLibraryService
         from fryfrog.core.security import UserService
-        from fryfrog.services.scan import scan_library
+        from fryfrog.services.scan import submit_scan_job
 
         service = MediaLibraryService(UserService())
         lib = service.find_by_path(session, root)
-        if lib is None:
+        if lib is None or lib.id is None:
             return
         logger.info("[FileWatcher] 触发扫描: %s (%s)", lib.name, lib.type)
         try:
-            scan_library(session, lib)
+            submit_scan_job([lib.id])
         except Exception:
             logger.exception("热监听扫描失败: %s", root)
 

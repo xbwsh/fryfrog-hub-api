@@ -12,6 +12,7 @@ from fryfrog.core.exceptions import ResourceNotFoundException
 from fryfrog.core.security import ANONYMOUS_ID, UserService, current_user_id
 from fryfrog.core.utils import clean_title
 from fryfrog.models.video import Favorite, Video, VideoActor, VideoSeries, WatchProgress
+from fryfrog.services.fsutil import VIDEO_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -249,38 +250,22 @@ def get_nfo_path(db: Session, video: Video) -> Path:
     return get_video_assets_dir(video) / f"{get_base_name(video.file_name)}.nfo"
 
 
-def _dir_has_multiple_videos(db: Session, video: Video) -> bool:
-    """同目录下是否有多个「独立条目」视频（分集不计）。
+def _needs_private_art(video: Video) -> bool:
+    """同目录还有其他视频时，独立影片使用专属素材名。
 
-    平铺布局（视频直接躺在库根或合集目录下，如 `jav/素人/` 里 8 个散片、
-    `Asia-Lynn/` 里 19 条同来源视频）下，固定命名 poster.jpg / fanart.jpg
-    会被同目录所有视频共用 —— 给 A 截帧就覆盖 B 的封面，最后设置的赢，
-    其余全部变成同一张。实测一个 `jav` 库约 60 个视频处于这种状态。
-
-    分集（series_id 非空）不算：分集竖封面**本就设计为共用季海报**
-    （见 get_poster_path 的原注释与 test_episode_vertical_cover）。
-
-    实现上按 file_path 前缀在 Python 侧比对，不用 SQL LIKE：Windows 上
-    `Path` 渲染成反斜杠而库里的路径是正斜杠，LIKE 会永远匹配不上；
-    这里统一 `as_posix()` 后两端都可比较。
-    查不到 / 无库 id 时保守返回 False，维持既有 Emby 命名。
+    直接看磁盘，首次扫描时其他影片可能还未入库。分集保留季级素材规则。
     """
-    if db is None or video.library_id is None or video.id is None:
+    if video.is_episode:
         return False
+    path = Path(video.file_path)
     try:
-        parent = Path(video.file_path).parent.as_posix()
-        prefix = parent + "/"
-        rows = db.scalars(
-            select(Video.file_path).where(
-                Video.library_id == video.library_id,
-                Video.series_id.is_(None),
-                Video.id != video.id,
-            )
-        ).all()
-        return sum(1 for p in rows if p and Path(p).parent.as_posix() == parent) > 1
-    except Exception:
-        # 查询失败不该阻断封面写入，退回固定命名
-        return False
+        return any(
+            sibling != path and sibling.suffix.lower() in VIDEO_EXTS and sibling.is_file()
+            for sibling in path.parent.iterdir()
+        )
+    except OSError:
+        # 无法确认是否有其他影片时，避免覆盖共用素材。
+        return True
 
 
 def get_poster_path(db: Session, video: Video) -> Path:
@@ -290,7 +275,7 @@ def get_poster_path(db: Session, video: Video) -> Path:
     两种命名，故降级不会破坏兼容性（单视频目录维持 poster.jpg 不变）。
     """
     video_dir = get_video_assets_dir(video)
-    if _dir_has_multiple_videos(db, video):
+    if _needs_private_art(video):
         return video_dir / f"{get_base_name(video.file_name)}-poster.jpg"
     return video_dir / "poster.jpg"
 
@@ -298,13 +283,13 @@ def get_poster_path(db: Session, video: Video) -> Path:
 def get_fanart_path(db: Session, video: Video) -> Path:
     """横屏背景图路径；同目录多个独立条目时同样降级为 {base}-fanart.jpg。"""
     video_dir = get_video_assets_dir(video)
-    if _dir_has_multiple_videos(db, video):
+    if _needs_private_art(video):
         return video_dir / f"{get_base_name(video.file_name)}-fanart.jpg"
     return video_dir / "fanart.jpg"
 
 
 def local_poster_candidates(db: Session, video: Video) -> list[Path]:
-    """封面候选（有序）：视频同目录固定 poster.jpg → 旧 {base}-poster → 无前缀 → 老 metadata 目录。
+    """独立影片优先使用同名封面，兼容目录级封面和旧 metadata 目录。
 
     固定命名是 Emby/Kodi 约定；旧变体与老方案（素材写去 metadata 目录）
     保留兼容，重新刮削时会被 sync_legacy_assets 迁移整理。
@@ -312,9 +297,11 @@ def local_poster_candidates(db: Session, video: Video) -> list[Path]:
     video_dir = get_video_assets_dir(video)
     base = get_base_name(video.file_name)
     legacy = get_metadata_dir(db, video)
+    posters = [video_dir / f"{base}-poster.jpg", video_dir / "poster.jpg"]
+    if video.is_episode:
+        posters.reverse()
     return [
-        video_dir / "poster.jpg",
-        video_dir / f"{base}-poster.jpg",
+        *posters,
         video_dir / "folder.jpg",
         video_dir / "thumb.jpg",
         legacy / f"{base}-poster.jpg",
@@ -326,11 +313,10 @@ def local_fanart_candidates(db: Session, video: Video) -> list[Path]:
     video_dir = get_video_assets_dir(video)
     base = get_base_name(video.file_name)
     legacy = get_metadata_dir(db, video)
-    return [
-        video_dir / "fanart.jpg",
-        video_dir / f"{base}-fanart.jpg",
-        legacy / f"{base}-fanart.jpg",
-    ]
+    fanarts = [video_dir / f"{base}-fanart.jpg", video_dir / "fanart.jpg"]
+    if video.is_episode:
+        fanarts.reverse()
+    return [*fanarts, legacy / f"{base}-fanart.jpg"]
 
 
 def asset_flags(db: Session, video: Video) -> dict:

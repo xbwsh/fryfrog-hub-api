@@ -72,14 +72,6 @@ def _setup(tmp_path, monkeypatch):
     return db, lib
 
 
-def _join_scan_threads(timeout: float = 10.0) -> None:
-    import threading
-
-    for thread in threading.enumerate():
-        if thread.name.startswith("Thread-"):
-            thread.join(timeout=timeout)
-
-
 def test_scan_all_reports_progress_and_finishes(tmp_path, monkeypatch):
     db, lib = _setup(tmp_path, monkeypatch)
 
@@ -90,9 +82,10 @@ def test_scan_all_reports_progress_and_finishes(tmp_path, monkeypatch):
     assert items, "扫描开始后 /scan/progress 不能是空列表"
     assert {"running", "total", "completed", "failed", "skipped", "currentItem"} <= set(items[0])
 
-    _join_scan_threads()
-
-    items = progress_svc.get_scrape_progress()
+    deadline = time.monotonic() + 10
+    while any(item["running"] for item in items) and time.monotonic() < deadline:
+        time.sleep(0.01)
+        items = progress_svc.get_scrape_progress()
     assert items and items[0]["running"] is False, "扫完必须收尾，否则客户端一直显示扫描中"
     assert items[0]["stage"] == "done"
 

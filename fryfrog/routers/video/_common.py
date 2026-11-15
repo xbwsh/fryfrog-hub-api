@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -14,6 +13,7 @@ from fryfrog.core.signer import sign
 from fryfrog.models.video import Video, VideoActor
 from fryfrog.schemas.video import apply_watch_progress
 from fryfrog.services import progress as progress_svc
+from fryfrog.services.background_jobs import enqueue_job
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_scrape as scrape
 from fryfrog.services import video_service as vs
@@ -123,15 +123,17 @@ def _actor_dict(a: VideoActor) -> dict:
 
 def submit_job(
     module: str, stage: str, total: int, work, *, error_fields=None, **done_fields
-) -> None:
+) -> bool:
     """提交后台批量任务：登记进度 → 独立 session 线程执行 → done/error 收尾。
 
     work(session) 内可自行调用 progress_svc.update_progress 汇报单项进度；
     done_fields / error_fields 分别合并进成功与失败时的进度更新。
     """
-    progress_svc.update_progress(
-        module, stage=stage, running=True, total=total, completed=0, failed=0
-    )
+    def queued():
+        progress_svc.update_progress(
+            module, stage=stage, running=True, total=total, completed=0, failed=0, skipped=0,
+            currentItem=None,
+        )
 
     def job():
         session = None
@@ -153,4 +155,4 @@ def submit_job(
             if session:
                 session.close()
 
-    threading.Thread(target=job, daemon=True).start()
+    return enqueue_job(module, job, on_queued=queued)

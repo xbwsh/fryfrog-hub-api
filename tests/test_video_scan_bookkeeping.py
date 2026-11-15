@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from fryfrog.db import Base, _ensure_columns
 from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video
-from fryfrog.services import video_scan
+from fryfrog.services import progress, scan, video_scan
 
 
 class _FakeProbe:
@@ -225,15 +225,54 @@ def test_unchanged_file_skips_reprobe(tmp_path, monkeypatch):
     assert probe.duration_calls == 1, "重复扫描不应再次探测"
 
     target = tmp_path / "show-0" / "show-0.mp4"
+    original_stat = target.stat()
     target.write_bytes(b"fake-video-v2")
-    os.utime(target, (1, 1))  # 改 mtime，确保走到重探分支
-    video = db.scalar(select(Video))
-    video.duration_seconds = None
-    db.flush()
+    os.utime(target, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    monkeypatch.setattr(probe, "probe_video_resolution", lambda _: (1280, 720))
+    monkeypatch.setattr(probe, "probe_video_duration", lambda _: 420.0)
 
     video_scan.scan_video_library(db, lib)
     db.commit()
-    assert probe.duration_calls == 2
+    video = db.scalar(select(Video))
+    assert (video.duration_seconds, video.duration_minutes, video.resolution) == (420.0, 7, "1280x720")
+
+
+def test_probe_retries_missing_fields_without_file_change(tmp_path, monkeypatch):
+    db, lib, probe = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(probe, "probe_video_resolution", lambda _: None)
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+    assert db.scalar(select(Video)).resolution is None
+
+    monkeypatch.setattr(probe, "probe_video_resolution", lambda _: (1280, 720))
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+    assert db.scalar(select(Video)).resolution == "1280x720"
+    assert probe.duration_calls == 1
+
+
+def test_failed_file_keeps_other_scan_results(tmp_path, monkeypatch):
+    db, lib, probe = _setup(tmp_path, monkeypatch, count=3)
+    db.commit()
+    monkeypatch.setattr(progress, "_store", {})
+    read_duration = probe.probe_video_duration
+
+    def fail_middle_file(path):
+        if Path(path).name == "show-1.mp4":
+            raise OSError("probe failed")
+        return read_duration(path)
+
+    monkeypatch.setattr(probe, "probe_video_duration", fail_middle_file)
+    assert scan.scan_library(db, lib) is False
+    db.rollback()
+
+    assert set(db.scalars(select(Video.file_name))) == {"show-0.mp4", "show-2.mp4"}
+    state = next(
+        item for item in progress.get_scrape_progress(lib.id)
+        if item["module"] == scan.scan_progress_module(lib)
+    )
+    assert (state["stage"], state["completed"], state["failed"]) == ("error", 2, 1)
+    assert progress.get_pipeline_progress(lib)["message"] == "视频扫描失败 1 项，成功 2 项"
 
 
 def test_scan_bookkeeping_written(tmp_path, monkeypatch):

@@ -65,7 +65,7 @@ def report_scan_progress(library: MediaLibrary, **fields: Any) -> None:
     """
     progress_svc.update_progress(scan_progress_module(library), libraryId=library.id, **fields)
     progress_svc.update_progress(
-        f"pipeline:{library.id}", libraryId=library.id, **fields
+        f"pipeline:{library.id}", libraryId=library.id, queued=False, **fields
     )
 
 
@@ -89,7 +89,7 @@ def _path_readable(path_str: str) -> bool:
         return False
 
 
-def scan_library(db: Session, library: MediaLibrary) -> None:
+def scan_library(db: Session, library: MediaLibrary) -> bool:
     if not _claim_library_scan(library):
         logger.info("该库正在扫描中，跳过重复触发: %s", library.name)
         # 必须写终态：调用方（submit_scan_job）已先把 pipeline 标成 running，
@@ -108,13 +108,16 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
             failed=0,
             currentItem=None,
         )
-        return
+        return True
     claimed_started = None
     if library.id is not None:
         with _scan_lock:
             claimed_started = _running_scans.get(library.id)
-    report_scan_progress(library, stage="scan", running=True, total=1, completed=0, failed=0)
+    report_scan_progress(library, stage="scan", running=True, total=1, completed=0, failed=0, message=None)
     failed = 0
+    completed = 1
+    total = 1
+    message = None
     # 路径预检：各域的 scan_*_library 在路径不存在时都是「记一条 warning 后
     # return 0」，前端完全无感知 —— 用户建了库、扫描跑完、界面却空空如也，
     # 无从判断是扫描失败还是本来就没内容（实测踩过：重新扫描一次就好了）。
@@ -132,7 +135,7 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
             message=f"路径不可访问: {library.path}",
         )
         _release_library_scan(library, claimed_started)
-        return
+        return False
     watcher = None
     try:
         # 周期扫描、手动扫描和热监听都经过这里。只要热监听已经启动，
@@ -142,9 +145,18 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
         watcher = get_active_file_watcher()
         if watcher is not None:
             watcher.begin_scan()
-        _scan_library(db, library)
+        result = _scan_library(db, library)
+        if result is not None:
+            # 视频扫描允许部分成功，先保存已处理的文件，再发布终态。
+            db.commit()
+            scanned, failed = result
+            if failed:
+                completed = scanned
+                total = scanned + failed
+                message = f"视频扫描失败 {failed} 项，成功 {scanned} 项"
     except Exception:
         failed = 1
+        completed = 0
         raise
     finally:
         if watcher is not None:
@@ -156,19 +168,21 @@ def scan_library(db: Session, library: MediaLibrary) -> None:
             library,
             stage="error" if failed else "done",
             running=False,
-            total=1,
-            completed=0 if failed else 1,
+            total=total,
+            completed=completed,
             failed=failed,
             currentItem=None,
+            message=message,
         )
+    return failed == 0
 
 
-def _scan_library(db: Session, library: MediaLibrary) -> None:
+def _scan_library(db: Session, library: MediaLibrary) -> tuple[int, int] | None:
     kind = (library.type or "").upper()
     if kind == "VIDEO":
         from fryfrog.services.video_scan import scan_video_library
 
-        scan_video_library(db, library)
+        return scan_video_library(db, library)
     elif kind == "MUSIC":
         from fryfrog.services.music_scan import scan_music_library
 
@@ -190,59 +204,48 @@ def _scan_library(db: Session, library: MediaLibrary) -> None:
 
 
 def scan_all_enabled(db: Session) -> None:
-    """同步扫描全部启用库（周期调度与后台任务共用）。"""
+    """把启用的库交给与手动扫描相同的队列。"""
     from fryfrog.services.media_library import MediaLibraryService
     from fryfrog.core.security import UserService
 
     service = MediaLibraryService(UserService())
-    for lib in service.get_enabled_libraries(db):
-        try:
-            scan_library(db, lib)
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.exception("Scan failed for library %s", lib.id)
+    submit_scan_job([lib.id for lib in service.get_enabled_libraries(db) if lib.id is not None])
 
 
 def submit_scan_job(library_ids: list[int]) -> None:
-    """后台线程扫描多个库；立即返回，进度由 /scan/progress 轮询。
+    """逐库排队，手动、周期和热监听触发共用同一个扫描任务。"""
+    from fryfrog.db import get_session_factory
+    from fryfrog.services.background_jobs import enqueue_job
 
-    library_ids 为空（无启用库）时立即收尾，避免客户端轮询一直等。
-    """
-    total = len(library_ids)
-
-    def work(session: Session) -> None:
-        from fryfrog.services.media_library import MediaLibraryService
-        from fryfrog.core.security import UserService
-
-        service = MediaLibraryService(UserService())
-        for index, lib_id in enumerate(library_ids):
-            library = service.get_library_by_id(session, lib_id)
-            # 双键：scan:ALL 供 /scan/progress 聚合；pipeline:{id} 供单库详情页
-            progress_svc.update_progress(
-                "scan:ALL", libraryId=lib_id, currentItem=library.name, completed=index
-            )
-            progress_svc.update_progress(
-                f"pipeline:{lib_id}",
-                libraryId=lib_id,
-                stage="scan",
-                running=True,
-                total=1,
-                completed=0,
-                currentItem=library.name,
-            )
-            try:
-                scan_library(session, library)
-                session.commit()
-            except Exception:
-                session.rollback()
-                logger.exception("Scan failed for library %s", lib_id)
-                progress_svc.update_progress("scan:ALL", failed=index + 1, completed=index + 1)
-
-    if total == 0:
+    if not library_ids:
         progress_svc.update_progress("scan:ALL", stage="done", running=False, total=0, completed=0)
         return
 
-    from fryfrog.routers.video._common import submit_job
+    def submit_one(library_id: int) -> None:
+        module = f"pipeline:{library_id}"
 
-    submit_job("scan:ALL", "scan", total, work)
+        def queued():
+            progress_svc.update_progress(
+                module, libraryId=library_id, stage="scan", running=True, total=1,
+                completed=0, failed=0, currentItem=None, message=None, queued=True,
+            )
+
+        def work():
+            try:
+                with get_session_factory()() as session:
+                    library = session.get(MediaLibrary, library_id)
+                    if library is None:
+                        raise LookupError(f"媒体库不存在: {library_id}")
+                    scan_library(session, library)
+                    session.commit()
+            except Exception:
+                logger.exception("Scan failed for library %s", library_id)
+                progress_svc.update_progress(
+                    module, stage="error", running=False, completed=0, failed=1,
+                    currentItem=None, message="扫描失败，详情见服务端日志", queued=False,
+                )
+
+        enqueue_job(f"scan:{library_id}", work, on_queued=queued)
+
+    for library_id in dict.fromkeys(library_ids):
+        submit_one(library_id)

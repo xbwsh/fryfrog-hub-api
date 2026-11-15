@@ -52,9 +52,11 @@ def _setup(tmp_path, monkeypatch):
         "fryfrog.services.media_library.MediaLibraryService",
         lambda *a, **k: _FakeService(db, lib),
     )
-    monkeypatch.setattr(
-        "fryfrog.services.scan.scan_library", lambda db, library: fired.append(library.path)
-    )
+    def submit(ids):
+        assert ids == [lib.id]
+        fired.append(lib.path)
+
+    monkeypatch.setattr("fryfrog.services.scan.submit_scan_job", submit)
     assert MediaLibraryService  # 保持引用，避免被当成未使用导入
     return db, lib, fired
 

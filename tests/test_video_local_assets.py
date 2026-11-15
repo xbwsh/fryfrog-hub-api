@@ -12,7 +12,9 @@ from sqlalchemy.orm import sessionmaker
 from fryfrog.db import Base
 from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video
+from fryfrog.routers.video import assets as video_routes
 from fryfrog.services import video_scan, video_service as vs
+from fryfrog.services.video_assets import upgrade_legacy_assets
 
 
 class _FakeProbe:
@@ -110,6 +112,34 @@ def test_local_candidates_order(tmp_path):
     db.add(video)
     db.flush()
     poster_names = [p.name for p in vs.local_poster_candidates(db, video)]
-    assert poster_names == ["poster.jpg", "adn-499-poster.jpg", "folder.jpg", "thumb.jpg", "adn-499-poster.jpg", "poster.jpg"]
+    assert poster_names == ["adn-499-poster.jpg", "poster.jpg", "folder.jpg", "thumb.jpg", "adn-499-poster.jpg", "poster.jpg"]
     fanart_names = [p.name for p in vs.local_fanart_candidates(db, video)]
-    assert fanart_names == ["fanart.jpg", "adn-499-fanart.jpg", "adn-499-fanart.jpg"]
+    assert fanart_names == ["adn-499-fanart.jpg", "fanart.jpg", "adn-499-fanart.jpg"]
+
+
+def test_two_movies_use_private_artwork_over_saved_shared_paths(tmp_path, monkeypatch):
+    db, lib, folder = _setup(tmp_path, monkeypatch, with_artwork=True)
+    (folder / "other.mp4").write_bytes(b"fake-video")
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+    movies = db.scalars(select(Video).order_by(Video.file_name)).all()
+    assert len(movies) == 2
+
+    # 先保留扫描记下的旧共享路径，再放入影片专属素材。
+    monkeypatch.setattr(video_routes, "get_visible_video", lambda db, id: db.get(Video, id))
+    for movie in movies:
+        base = Path(movie.file_name).stem
+        poster = vs.get_poster_path(db, movie)
+        fanart = vs.get_fanart_path(db, movie)
+        assert poster.name == f"{base}-poster.jpg"
+        assert fanart.name == f"{base}-fanart.jpg"
+        poster.write_bytes(movie.file_name.encode())
+        fanart.write_bytes(movie.file_name.encode())
+        assert Path(video_routes.get_cover(db, movie.id).path) == poster
+        assert Path(video_routes.get_fanart(db, movie.id).path) == fanart
+
+    # 素材整理不能把专属素材收敛回共享文件。
+    upgrade_legacy_assets(db, movies[0])
+    assert list(tmp_path.rglob("adn-499-poster.jpg"))
+    assert list(tmp_path.rglob("adn-499-fanart.jpg"))
+    assert (folder / "poster.jpg").is_file()

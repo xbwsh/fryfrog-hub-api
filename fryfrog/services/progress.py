@@ -46,9 +46,9 @@ def get_pipeline_progress(library: MediaLibrary) -> dict:
     item = _store.get(key, {})
     scan = _store.get(f"scan:{library.type}:{library.id}", {})
     scrape = _store.get(f"scrape:{library.type}:{library.id}", {})
-    scan_pct = scan.get("percent") or 0.0
-    scrape_pct = scrape.get("percent") or 0.0
-    return {
+    scan_pct = 0.0 if item.get("queued") else scan.get("percent") or 0.0
+    scrape_pct = 0.0 if item.get("queued") else scrape.get("percent") or 0.0
+    result = {
         "libraryId": library.id,
         "stage": item.get("stage", "idle"),
         "running": bool(item.get("running") or scan.get("running") or scrape.get("running")),
@@ -58,3 +58,6 @@ def get_pipeline_progress(library: MediaLibrary) -> dict:
         "scanPercent": scan_pct,
         "scrapePercent": scrape_pct,
     }
+    if item.get("message"):
+        result["message"] = item["message"]
+    return result

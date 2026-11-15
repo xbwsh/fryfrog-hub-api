@@ -1691,11 +1691,14 @@ def organize_videos(db: Session, videos: list[Video]) -> dict:
             if old_path.resolve() != new_path.resolve():
                 old_dir = old_path.parent
                 base = get_base_name(video.file_name)
+                shared_dir = get_poster_path(db, video).name != "poster.jpg"
                 for sibling in list(old_dir.iterdir()):
                     if not sibling.is_file():
                         continue
                     s_base = get_base_name(sibling.name)
                     fixed = sibling.name in {"poster.jpg", "fanart.jpg", "folder.jpg", "thumb.jpg"}
+                    if fixed and shared_dir:
+                        continue
                     is_subtitle = sibling.suffix.lower() in SUBTITLE_EXTS
                     if is_subtitle:
                         # 字幕必须按 base 归属筛选：同目录可能放着其他分集的字幕
@@ -1758,7 +1761,7 @@ def upgrade_legacy_assets(db: Session, video: Video) -> None:
 
     老方案（升级前）把 nfo/封面写到 get_metadata_dir（库根/剧名/第N季/第N集/），
     命名带 -poster/-fanart 前缀；重新刮削（bind/refresh/rescrape-library）时
-        调用本函数：素材迁到视频同目录的固定命名（poster.jpg/fanart.jpg/{base}.nfo），
+        调用本函数：素材迁到视频同目录，按目录布局选择共用或专属命名，
         删除旧变体与 -frame-v3 截帧，修正 DB 素材字段；散放在库根的视频
         归置进「剧名/第N季/第N集」规范目录，并在搬移后清理空目录。
     """
@@ -1766,14 +1769,16 @@ def upgrade_legacy_assets(db: Session, video: Video) -> None:
         rename_show_dir(db, video)
         video_dir = get_video_assets_dir(video)
         base = get_base_name(video.file_name)
+        poster = get_poster_path(db, video)
+        fanart = get_fanart_path(db, video)
         legacy = get_metadata_dir(db, video)
         if legacy == video_dir:
             legacy = None
         if legacy is not None:
-            _migrate_legacy_files(legacy, video_dir, base)
-        _collect_stray_assets(video)
-        _converge_asset_variants(video_dir, base)
-        _repair_asset_paths(db, video)
+            _migrate_legacy_files(legacy, video_dir, base, poster.name, fanart.name)
+        _collect_stray_assets(video, poster.name, fanart.name)
+        _converge_asset_variants(video_dir, base, poster, fanart)
+        _repair_asset_paths(db, video, poster, fanart)
         if legacy is not None:
             root = None
             if video.library_id is not None:
@@ -1790,18 +1795,18 @@ def upgrade_legacy_assets(db: Session, video: Video) -> None:
         logger.exception("升级素材整理失败: %s", video.file_name)
 
 
-def _migrate_legacy_files(legacy: Path, video_dir: Path, base: str) -> None:
-    """老位置素材按固定命名规则搬到视频目录；目标已存在时删除旧副本。"""
+def _migrate_legacy_files(legacy: Path, video_dir: Path, base: str, poster: str, fanart: str) -> None:
+    """按当前命名把旧素材搬到视频目录；目标已存在时删除旧副本。"""
     if not video_dir.is_dir():
         # 视频被归置到新目录后可能还没建出来，先补建再搬
         video_dir.mkdir(parents=True, exist_ok=True)
     for src_name, dst_name in (
         (f"{base}.nfo", f"{base}.nfo"),
-        (f"{base}-poster.jpg", "poster.jpg"),
-        (f"{base}-fanart.jpg", "fanart.jpg"),
+        (f"{base}-poster.jpg", poster),
+        (f"{base}-fanart.jpg", fanart),
         (f"{base}-logo.png", f"{base}-logo.png"),
-        ("poster.jpg", "poster.jpg"),
-        ("fanart.jpg", "fanart.jpg"),
+        ("poster.jpg", poster),
+        ("fanart.jpg", fanart),
         ("folder.jpg", "folder.jpg"),
         ("thumb.jpg", "thumb.jpg"),
     ):
@@ -1817,11 +1822,11 @@ def _migrate_legacy_files(legacy: Path, video_dir: Path, base: str) -> None:
             shutil.move(str(src), str(dst))
 
 
-def _converge_asset_variants(video_dir: Path, base: str) -> None:
-    """视频目录内旧变体收敛到固定命名；清理未被 DB 引用的兜底截帧。"""
+def _converge_asset_variants(video_dir: Path, base: str, poster: Path, fanart: Path) -> None:
+    """将旧素材名收敛到当前影片使用的命名。"""
     for old, new in (
-        (video_dir / f"{base}-poster.jpg", video_dir / "poster.jpg"),
-        (video_dir / f"{base}-fanart.jpg", video_dir / "fanart.jpg"),
+        (video_dir / f"{base}-poster.jpg", poster),
+        (video_dir / f"{base}-fanart.jpg", fanart),
     ):
         if not old.exists() or old.resolve() == new.resolve():
             continue
@@ -1832,19 +1837,19 @@ def _converge_asset_variants(video_dir: Path, base: str) -> None:
             old.rename(new)
 
 
-def _collect_stray_assets(video: Video) -> None:
+def _collect_stray_assets(video: Video, poster: str, fanart: str) -> None:
     """回收其他目录里遗留的同名素材（老方案名称变化后剩余的），搬到视频目录。
 
     覆盖「视频已被旧 organize 搬去新名目录、素材留在旧名目录」的场景：
     只移动与视频 base 同名（或同 base 的 poster/fanart 变体）的素材文件，
-    收敛为固定命名；搬空的源目录顺带尝试删除。
+    按当前命名保存；搬空的源目录顺带尝试删除。
     """
     video_dir = get_video_assets_dir(video)
     base = get_base_name(video.file_name)
     wanted = {
         f"{base}.nfo": f"{base}.nfo",
-        f"{base}-poster.jpg": "poster.jpg",
-        f"{base}-fanart.jpg": "fanart.jpg",
+        f"{base}-poster.jpg": poster,
+        f"{base}-fanart.jpg": fanart,
         f"{base}-logo.png": f"{base}-logo.png",
     }
     search_root = video_dir.parent
@@ -1871,26 +1876,20 @@ def _collect_stray_assets(video: Video) -> None:
         logger.debug("扫描散落素材失败: %s", search_root, exc_info=True)
 
 
-def _repair_asset_paths(db: Session, video: Video) -> None:
+def _repair_asset_paths(db: Session, video: Video, poster: Path, fanart: Path) -> None:
     """cover_art_path/backdrop_local_path 指向已迁移/收敛后的素材（或置空）。"""
     video_dir = get_video_assets_dir(video)
     base = get_base_name(video.file_name)
     if video.cover_art_path:
         p = Path(video.cover_art_path)
         if not p.exists():
-            poster = video_dir / "poster.jpg"
             video.cover_art_path = str(poster) if poster.exists() else None
-        elif p.name == f"{base}-poster.jpg":
-            poster = video_dir / "poster.jpg"
-            if poster.exists() and poster.resolve() != p.resolve():
-                video.cover_art_path = str(poster)
+        elif p == video_dir / "poster.jpg" and poster.is_file():
+            video.cover_art_path = str(poster)
     if video.backdrop_local_path:
         p = Path(video.backdrop_local_path)
         if not p.exists():
-            fanart = video_dir / "fanart.jpg"
             video.backdrop_local_path = str(fanart) if fanart.exists() else None
-        elif p.name == f"{base}-fanart.jpg":
-            fanart = video_dir / "fanart.jpg"
-            if fanart.exists() and fanart.resolve() != p.resolve():
-                video.backdrop_local_path = str(fanart)
+        elif p == video_dir / "fanart.jpg" and fanart.is_file():
+            video.backdrop_local_path = str(fanart)
     db.flush()

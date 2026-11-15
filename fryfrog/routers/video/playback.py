@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import socket
-import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,6 +15,7 @@ from fryfrog.core.deps import DbSession
 from fryfrog.core.exceptions import BadRequestException, ResourceNotFoundException
 from fryfrog.core.signer import sign
 from fryfrog.media_core import get_ffmpeg_runtime
+from fryfrog.media_core.transcode import TranscodeResponse
 from fryfrog.models.video import Video
 from fryfrog.services import video_assets as assets
 from fryfrog.services import video_service as vs
@@ -25,20 +25,6 @@ from ._common import _visible_to_user, get_visible_video
 router = APIRouter()
 
 
-class _BackgroundReap:
-    """StreamingResponse 结束后兜底回收 ffmpeg 进程。
-
-    生成器的 finally 只在「被迭代过且被关闭」时执行；客户端在首字节前断开，
-    响应就从未迭代，ffmpeg 会一直空转到自然结束。这里挂在 background 上，
-    由 Starlette 在响应收尾时调用一次。
-    """
-
-    def __init__(self, proc: subprocess.Popen, reap) -> None:
-        self._proc = proc
-        self._reap = reap
-
-    async def __call__(self) -> None:
-        self._reap()
 @router.get("/{id:int}/stream")
 def stream_video(db: DbSession, id: int, request: Request):
     video = get_visible_video(db, id)
@@ -106,6 +92,9 @@ def stream_transcode(
         vf = f"{vf},subtitles={_escape_filter_path(subtitle_path)}"
     cmd = [
         runtime.ffmpeg_path,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-nostats",
         "-nostdin",  # 防止 ffmpeg 读取服务进程的 stdin（后台线程中会阻塞/抢占）
         "-i",
         str(path),
@@ -125,45 +114,7 @@ def stream_transcode(
     if maxBitrate:
         cmd.extend(["-b:v", maxBitrate])
     cmd.append("pipe:1")
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-
-    def _reap() -> None:
-        """结束 ffmpeg 并回收。分级终止：先 terminate 再 kill，最后 wait。"""
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
-
-    def gen():
-        try:
-            assert proc.stdout is not None
-            while True:
-                chunk = proc.stdout.read(8192)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            _reap()
-
-    return StreamingResponse(
-        gen(),
-        media_type="video/mp4",
-        headers={"Accept-Ranges": "none", "Cache-Control": "no-cache"},
-        # 客户端在首字节前断开时生成器可能从未被迭代，gen 的 finally 不会执行；
-        # 交给 GC 回收时先 terminate，避免 ffmpeg 空转占 CPU。
-        background=_BackgroundReap(proc, _reap),
-    )
+    return TranscodeResponse(cmd, id, env=runtime.apply_library_env())
 
 
 @router.get("/{id:int}/playlist.m3u")

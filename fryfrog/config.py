@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # Media / FFmpeg
     video_root_paths: str = ""
     ffmpeg_path: str = ""
+    transcode_max_concurrent: int = Field(default=1, ge=1)
+    background_job_workers: int = Field(default=2, ge=1)
 
     # TMDB
     tmdb_api_key: str = ""

@@ -71,14 +71,18 @@ def get_cover(db: DbSession, id: int):
             root_poster = root_dir / "tvshow-poster.jpg"
             if root_poster.is_file():
                 return FileResponse(str(root_poster), media_type="image/jpeg")
-    if video.cover_art_path and Path(video.cover_art_path).exists():
+    poster_candidates = vs.local_poster_candidates(db, video)
+    cover = Path(video.cover_art_path) if video.cover_art_path else None
+    if not video.is_episode and cover == poster_candidates[1] and poster_candidates[0].is_file():
+        cover = poster_candidates[0]
+    if cover and cover.is_file():
         # 历史扫描可能把横屏缩略图（thumb.jpg 等）写进了 cover_art_path，
         # 当竖封面会被 2:3 区域裁切，跳过它继续走正经竖封面候选。
-        cover_name = Path(video.cover_art_path).name.lower()
+        cover_name = cover.name.lower()
         if not cover_name.startswith("thumb") and "-thumb." not in cover_name:
-            return FileResponse(video.cover_art_path, media_type="image/jpeg")
+            return FileResponse(str(cover), media_type="image/jpeg")
     # 本地刮削产物优先（含无前缀 poster.jpg/folder.jpg/thumb.jpg），最后才截帧
-    for candidate in vs.local_poster_candidates(db, video):
+    for candidate in poster_candidates:
         if candidate.exists():
             # thumb.jpg 常见是横屏缩略图（尤其分集缩略图），
             # 作为竖封面会被 2:3 区域裁切，跳过它继续找正儿八经的竖海报。
@@ -150,10 +154,14 @@ def get_fanart(db: DbSession, id: int):
             media_type="image/jpeg",
         )
     # 电影：本地文件（含无前缀 fanart.jpg） → 旧截帧 → 截帧兜底
-    if video.backdrop_local_path and Path(video.backdrop_local_path).exists():
-        return FileResponse(video.backdrop_local_path, media_type="image/jpeg")
+    fanart_candidates = vs.local_fanart_candidates(db, video)
+    fanart = Path(video.backdrop_local_path) if video.backdrop_local_path else None
+    if fanart == fanart_candidates[1] and fanart_candidates[0].is_file():
+        fanart = fanart_candidates[0]
+    if fanart and fanart.is_file():
+        return FileResponse(str(fanart), media_type="image/jpeg")
     for candidate in [
-        *vs.local_fanart_candidates(db, video),
+        *fanart_candidates,
         video_dir / f"{base}-fanart-frame-v3.jpg",
     ]:
         if candidate.exists():
