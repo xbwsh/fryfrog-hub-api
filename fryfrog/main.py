@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from fryfrog.config import get_settings
+from fryfrog.core.access_logging import filter_access_log
 from fryfrog.core.api_response import ApiResponse
 from fryfrog.core.deps import auth_middleware
 from fryfrog.core.exceptions import (
@@ -36,6 +37,7 @@ _stop_schedulers = threading.Event()
 
 def _setup_logging() -> None:
     """stdout + app.log（供 /api/v1/logs 导出），按大小轮转避免无限增长。"""
+    logging.getLogger("uvicorn.access").addFilter(filter_access_log)
     settings = get_settings()
     log_dir = Path(settings.log_home or "logs")
     try:

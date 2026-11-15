@@ -34,9 +34,9 @@ class SubsonicPasswordEncryptor:
                 self.key = None
             else:
                 self.key = key
-                logger.info("Subsonic password encryption enabled (AES-256-GCM)")
+                logger.debug("Subsonic password encryption enabled (AES-256-GCM)")
         else:
-            logger.info("Subsonic password encryption disabled (no key configured)")
+            logger.debug("Subsonic password encryption disabled (no key configured)")
 
     def encrypt(self, plain_text: str | None) -> str | None:
         if plain_text is None or self.key is None:

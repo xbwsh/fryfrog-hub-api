@@ -17,6 +17,7 @@ os.environ.setdefault("AUTH_ENABLED", "false")
 import httpx
 import pytest
 
+from fryfrog.core.access_logging import filter_access_log
 from fryfrog.services.tmdb import TmdbClient
 
 
@@ -47,6 +48,17 @@ def test_log_rotates_and_keeps_backups(tmp_path):
     assert "app.log" in files
     assert len(files) <= 3, f"应为当前 + 2 份备份，实际 {files}"
     assert (tmp_path / "app.log").stat().st_size <= 2048
+
+
+@pytest.mark.parametrize("status", [200, 206, 304, 401, 404, 503])
+def test_access_logs_only_errors_and_omits_query_parameters(status):
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+        ("client", "GET", "/api/v1/video/4/cover?exp=100&sig=private", "1.1", status), None,
+    )
+    assert filter_access_log(record) == (status >= 400)
+    if status >= 400:
+        assert record.getMessage() == f'client - "GET /api/v1/video/4/cover HTTP/1.1" {status}'
 
 
 def test_tmdb_circuit_opens_after_repeated_failures(monkeypatch):
