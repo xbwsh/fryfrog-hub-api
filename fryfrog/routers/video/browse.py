@@ -196,7 +196,11 @@ def get_favorites(db: DbSession, page: int = 0, size: int = 20):
 
 @router.get("/unscraped")
 def list_unscraped(
-    db: DbSession, page: int = 0, size: int = 20, libraryId: int | None = None
+    db: DbSession,
+    page: int = 0,
+    size: int = 20,
+    libraryId: int | None = None,
+    q: str = "",
 ):
     """未刮削视频（tmdb_id 为空）平铺列表：前端「未刮削」入口，批量补刮削用。
 
@@ -214,9 +218,22 @@ def list_unscraped(
     )
     if libraryId is not None:
         base = base.where(Video.library_id == libraryId)
+    keyword = q.strip()
+    if keyword:
+        base = base.where(or_(
+            Video.title.icontains(keyword, autoescape=True),
+            Video.original_title.icontains(keyword, autoescape=True),
+            Video.file_name.icontains(keyword, autoescape=True),
+            Video.original_file_name.icontains(keyword, autoescape=True),
+            Video.series_name.icontains(keyword, autoescape=True),
+            Video.series.has(or_(
+                VideoSeries.title.icontains(keyword, autoescape=True),
+                VideoSeries.original_title.icontains(keyword, autoescape=True),
+            )),
+        ))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = list(db.scalars(base.order_by(Video.title.asc(), Video.id.asc()).offset(page * size).limit(size)).all())
-    return ApiResponse.ok(_page_videos(db, rows, page, size, total))
+    return ApiResponse.ok({**_page_videos(db, rows, page, size, total), "searchSupported": True})
 
 
 # ==================== /{id} 系列 ====================

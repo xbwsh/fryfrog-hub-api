@@ -77,6 +77,23 @@ def test_unscraped_paging(tmp_path):
     assert empty["content"] == []
 
 
+def test_unscraped_searches_filename_and_series_before_paging(tmp_path):
+    db = _setup(tmp_path)
+    episode = db.scalar(select(Video).where(Video.title == "未刮削C"))
+    episode.original_file_name = "发布名_100%.mkv"
+    episode.series = VideoSeries(title="正式剧名", original_title="Original show")
+    db.commit()
+
+    page = browse.list_unscraped(
+        db, size=1, libraryId=episode.library_id, q="  名_100%  ",
+    ).data
+    assert page["searchSupported"] is True
+    assert page["totalElements"] == 1
+    assert [v["id"] for v in page["content"]] == [episode.id]
+    assert browse.list_unscraped(db, q="original SHOW").data["totalElements"] == 1
+    assert browse.list_unscraped(db, q="%").data["totalElements"] == 1
+
+
 def test_unscraped_filters_by_library(tmp_path):
     """libraryId 只返回该库的未刮削——「库内未刮削」入口场景。"""
     db = _setup(tmp_path)
