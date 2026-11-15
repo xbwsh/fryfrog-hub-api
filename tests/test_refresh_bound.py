@@ -197,9 +197,9 @@ def test_progress_callback_reports_incrementally(env):
     )
 
     assert len(ticks) >= 2, f"应至少上报两次（开始 + 每部剧），实际 {ticks}"
-    assert ticks[0] == (0, 2, 0, 1), f"首次应上报初始状态，实际 {ticks[0]}"
+    assert ticks[0] == (0, 2, 0, 4), f"首次应上报初始状态，实际 {ticks[0]}"
     assert ticks[-1][0] == 2, f"最后一次 completed 应为 2，实际 {ticks[-1]}"
-    assert all(t[3] == 1 for t in ticks), "计划总数应稳定为 1 部剧"
+    assert all(t[3] == 4 for t in ticks), "完成、失败、跳过与总数应使用同一单位"
     # 进度必须单调不减，否则客户端进度条会跳
     assert [t[0] for t in ticks] == sorted(t[0] for t in ticks)
 
@@ -221,7 +221,7 @@ def test_commits_per_unit_not_once_for_whole_batch(env, monkeypatch):
 
     整批只在末尾提交一次的话，SQLite 写锁被占几分钟，期间认证中间件的 commit
     撞锁 → 登录 500（实测）。分批提交把单次持锁压到几百毫秒。
-    提交还要走 `commit_with_retry`：裸 commit 撞锁会直接抛错中断整批。
+    单部剧提交失败会被计为失败，后续剧集继续处理。
 
     注：提交次数按「剧」计，不是按集。本用例再加一部剧，才能证明是逐剧而非整批。
     """
@@ -268,3 +268,26 @@ def test_commits_per_unit_not_once_for_whole_batch(env, monkeypatch):
 
     assert result["refreshed"] == 3, f"应刷新 3 集（原 2 + 新 1），实际 {result}"
     assert commits["n"] >= 2, f"应逐剧提交，实际只提交 {commits['n']} 次"
+
+
+def test_refresh_touches_only_bound_episodes_in_selected_library(env):
+    db, lib, series, bound, unbound, show, _ = env
+    unbound[0].series_id = series.id
+    other_library = MediaLibrary(name="Another", path=str(show.parent / "other"), type="VIDEO")
+    db.add(other_library)
+    db.flush()
+    path = show.parent / "other" / "Other.S01E03.mp4"
+    path.parent.mkdir()
+    path.touch()
+    other = Video(
+        file_path=str(path), file_name=path.name, title="Other",
+        library_id=other_library.id, series_id=series.id, tmdb_id=bound[0].tmdb_id,
+    )
+    db.add(other)
+    db.commit()
+
+    assert scrape.refresh_bound_by_library(db, lib.id) == {"refreshed": 2, "skipped": 2, "failed": 0}
+    assert other.overview is None
+    assert not path.with_suffix(".nfo").exists()
+    assert unbound[0].tmdb_id is None
+    assert unbound[0].overview is None

@@ -57,7 +57,7 @@ def rescrape_library(db: DbSession, library_id: int):
     """
     _require_admin(db)
     lib = db.get(MediaLibrary, library_id)
-    if lib is None:
+    if lib is None or not lib.is_video_type():
         raise ResourceNotFoundException("MediaLibrary", "id", library_id)
     total = db.scalar(select(func.count()).where(Video.library_id == library_id)) or 0
     module = f"rescrape:{library_id}"
@@ -74,8 +74,6 @@ def rescrape_library(db: DbSession, library_id: int):
             )
 
         result = scrape.refresh_bound_by_library(session, library_id, on_progress)
-        for v in session.scalars(select(Video).where(Video.library_id == library_id)).all():
-            assets.upgrade_legacy_assets(session, v)
         progress_svc.update_progress(
             module,
             completed=result["refreshed"],
@@ -84,7 +82,8 @@ def rescrape_library(db: DbSession, library_id: int):
         )
         logger.info("[Rescrape] Library %s 完成: %s", library_id, result)
 
-    submit_job(module, "rescrape", total, work)
+    if submit_job(module, "rescrape", total, work) is False:
+        return ApiResponse.ok("此库的元数据刷新已排队或正在运行")
     return ApiResponse.ok(
         f"已开始刷新资源库 {library_id}（跳过未绑定视频；绑错的请逐个手动重绑）"
     )
@@ -102,9 +101,13 @@ def regenerate_all_nfo(db: DbSession, libraryId: int | None = None):
     （由扫描/刮削按集生成）。
     """
     _require_admin(db)
+    if libraryId is not None:
+        library = db.get(MediaLibrary, libraryId)
+        if library is None or not library.is_video_type():
+            raise ResourceNotFoundException("MediaLibrary", "id", libraryId)
     series_rows = list(
         db.execute(
-            select(VideoSeries.id, VideoSeries.tmdb_id, VideoSeries.title).order_by(
+            select(VideoSeries.id, VideoSeries.title).order_by(
                 VideoSeries.id
             )
         ).all()
@@ -126,50 +129,56 @@ def regenerate_all_nfo(db: DbSession, libraryId: int | None = None):
     def work(session):
         client = TmdbClient()
         completed = failed = 0
-        for series_id, tmdb_id, title in series_rows:
+        for series_id, title in series_rows:
             try:
                 series = vs.get_series(session, series_id)
-                episodes = vs.series_videos(session, series_id) if series else None
+                episodes_query = select(Video).where(Video.series_id == series_id)
+                if libraryId is not None:
+                    episodes_query = episodes_query.where(Video.library_id == libraryId)
+                episodes = list(session.scalars(episodes_query.order_by(Video.id))) if series else []
                 if series is None or not episodes:
                     failed += 1
                 else:
+                    tmdb_id = series.tmdb_id
                     detail = client.get_tv(tmdb_id) if tmdb_id else None
-                    series_path = assets.generate_series_nfo(
-                        session, series, episodes, detail
-                    )
-                    if series_path:
-                        completed += 1
-                    else:
-                        failed += 1
-                    # 季级 NFO：用剧详情里已带的 seasons（零额外请求）
+                    if tmdb_id and (not detail or detail.get("id") != tmdb_id):
+                        raise ValueError("未取得匹配的 TMDB 剧集详情，保留已有 NFO")
                     seasons_info = {
                         s.get("season_number"): s
                         for s in ((detail or {}).get("seasons") or [])
                         if s.get("season_number") is not None
                     }
-                    seen: set[int] = set()
+                    by_library: dict[int | None, list[Video]] = {}
                     for ep in episodes:
-                        number = vs.season_of(ep)
-                        if number in seen:
-                            continue
-                        seen.add(number)
-                        info = seasons_info.get(number) or {"season_number": number}
-                        assets.generate_season_nfo(session, ep, info)
+                        by_library.setdefault(ep.library_id, []).append(ep)
+                    success = True
+                    for local_episodes in by_library.values():
+                        if not assets.generate_series_nfo(session, series, local_episodes, detail):
+                            success = False
+                        seen = set()
+                        for ep in local_episodes:
+                            season_dir = vs.get_season_dir(session, ep)
+                            if season_dir in seen:
+                                continue
+                            seen.add(season_dir)
+                            number = vs.season_of(ep)
+                            info = seasons_info.get(number)
+                            if not info and season_dir and (season_dir / "season.nfo").is_file():
+                                continue  # 缺少季详情时保留已有文件
+                            if not assets.generate_season_nfo(session, ep, info or {"season_number": number}):
+                                success = False
+                    completed += int(success)
+                    failed += int(not success)
             except Exception:
                 logger.exception("[NFO] 生成失败: series=%s %s", series_id, title)
                 failed += 1
             progress_svc.update_progress(
                 module, total=total, completed=completed, failed=failed
             )
-            # 周期性提交，避免长事务卡住 SQLite 写锁（扫描期间尤其明显）
-            if (completed + failed) % 20 == 0:
-                try:
-                    session.commit()
-                except Exception:
-                    session.rollback()
         logger.info("[NFO] 批量生成完成: %s 成功 / %s 失败 / 共 %s", completed, failed, total)
 
-    submit_job(module, "nfo", total, work)
+    if submit_job(module, "nfo", total, work) is False:
+        return ApiResponse.ok("此次 NFO 重写已排队或正在运行")
     return ApiResponse.ok(f"NFO 批量生成已启动，共 {total} 部剧")
 
 
@@ -337,7 +346,8 @@ def refresh_all_resolutions(db: DbSession):
 
 
 @router.get("/scrape/progress")
-def scrape_progress(module: str | None = None):
+def scrape_progress(db: DbSession, module: str | None = None):
+    _require_admin(db)
     key = module or "video"
     items = progress_svc.get_scrape_progress()
     for item in items:
@@ -491,6 +501,8 @@ def tmdb_bind(db: DbSession, id: int, body: VideoBindRequest):
 
     def work(session):
         bound = scrape.bind_series(session, id, body.tmdbId, body.mediaType)
+        if not bound:
+            raise ValueError("无法取得匹配的 TMDB 详情")
         progress_svc.update_progress(module, stage="organize")
         for v in bound:
             assets.upgrade_legacy_assets(session, v)
@@ -499,8 +511,13 @@ def tmdb_bind(db: DbSession, id: int, body: VideoBindRequest):
             assets.generate_nfo(session, v)
             assets.download_all_covers(session, v, force=True)
         _download_root_art_if_series(session, bound)
+        for v in bound:
+            assets.cleanup_redundant_frames(session, v)
 
-    submit_job(module, "bind", 1, work, error_fields={"completed": 1}, completed=1)
+    if submit_job(module, "bind", 1, work, error_fields={"failed": 1}, completed=1) is False:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail="这个视频已有绑定任务在运行，请等待结果")
     return ApiResponse.ok({"status": "started", "videoId": id})
 
 
@@ -511,6 +528,6 @@ def tmdb_unbind(db: DbSession, id: int):
     if not video.tmdb_id:
         return ApiResponse.ok({"unbound": 0})
     tmdb_id = video.tmdb_id
-    count = scrape.unbind_by_tmdb_id(db, tmdb_id)
+    count = scrape.unbind_video(db, video)
     return ApiResponse.ok({"tmdbId": tmdb_id, "unbound": count})
 

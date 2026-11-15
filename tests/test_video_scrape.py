@@ -139,7 +139,7 @@ def test_bind_movie_still_matches_same_title_only(tmp_path, monkeypatch):
         title="同名电影",
     )
     other = Video(
-        file_path=str(tmp_path / "别的电影.mkv"),
+        file_path=str(tmp_path / "a" / "别的电影.mkv"),
         file_name="别的电影.mkv",
         title="别的电影",
     )
@@ -158,6 +158,12 @@ def test_bind_movie_still_matches_same_title_only(tmp_path, monkeypatch):
     db.refresh(other_dir_same_title)
     assert other_dir_same_title.tmdb_id is None, "别的目录的同名文件不能被连带"
     assert other.tmdb_id is None
+    other.tmdb_id = 42
+    other.rating = 8.0
+    db.flush()
+    assert video_scrape.unbind_video(db, dup_a) == 2
+    assert dup_a.tmdb_id is None and dup_b.tmdb_id is None
+    assert other.tmdb_id == 42 and other.rating == 8.0
 
 
 def test_search_queries_release_name():

@@ -6,6 +6,8 @@ os.environ.setdefault("AUTH_ENABLED", "false")
 
 from pathlib import Path
 
+import pytest
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -13,8 +15,11 @@ from fryfrog.db import Base
 from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video
 from fryfrog.routers.video import assets as video_routes
+from fryfrog.routers.video import scrape as scrape_routes
+from fryfrog.schemas.video import VideoBindRequest
 from fryfrog.services import video_scan, video_service as vs
 from fryfrog.services.video_assets import upgrade_legacy_assets
+from fryfrog.services import video_assets
 
 
 class _FakeProbe:
@@ -25,6 +30,14 @@ class _FakeProbe:
 
     def probe_video_resolution(self, path):
         return None
+
+
+class _SuccessfulProbe:
+    def probe_video_duration(self, path):
+        return 600.0
+
+    def probe_video_resolution(self, path):
+        return (1920, 1080)
 
 
 def _setup(tmp_path, monkeypatch, with_artwork: bool):
@@ -95,12 +108,69 @@ def test_scan_keeps_frame_when_no_local_artwork(tmp_path, monkeypatch):
     db, lib, folder = _setup(tmp_path, monkeypatch, with_artwork=False)
     frame = folder / "adn-499-frame-v3.jpg"
     frame.write_bytes(b"frame")
+    (folder / "thumb.jpg").write_bytes(b"horizontal thumbnail")
 
     video_scan.scan_video_library(db, lib)
     db.commit()
 
     assert frame.exists()
-    assert db.scalar(select(Video)).cover_art_path is None
+
+
+@pytest.mark.parametrize("manual_frame", [False, True])
+def test_scan_checks_cached_episode_frame_when_only_the_season_poster_changes(
+    tmp_path, monkeypatch, manual_frame,
+):
+    db, lib, folder = _setup(tmp_path, monkeypatch, with_artwork=False)
+    monkeypatch.setattr(video_scan, "get_media_probe", _SuccessfulProbe)
+    source = folder / "示例动画 #1.mp4"
+    (folder / "adn-499.mp4").rename(source)
+    frame = source.with_name("示例动画 #1-frame-v3.jpg")
+    frame.write_bytes(b"cached")
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+    ep = db.scalar(select(Video))
+    assert frame.is_file()
+    if manual_frame:
+        ep.cover_art_path = str(frame)
+        db.commit()
+
+    season_dir = vs.get_season_dir(db, ep)
+    season_dir.mkdir(parents=True, exist_ok=True)
+    poster = season_dir / "tvshow-poster.jpg"
+    poster.write_bytes(b"season poster")
+    monkeypatch.setattr(video_assets, "parse_nfo", lambda *_: pytest.fail("媒体未变不应重读 NFO"))
+    assert video_scan.scan_video_library(db, lib) == (1, 0)
+    db.commit()
+    assert frame.is_file() is manual_frame
+    monkeypatch.setattr(video_routes, "get_visible_video", lambda db, id: db.get(Video, id))
+    assert Path(video_routes.get_cover(db, ep.id).path) == poster
+
+
+@pytest.mark.parametrize("downloaded", [False, True])
+def test_binding_cleans_frame_only_after_local_show_poster_exists(tmp_path, monkeypatch, downloaded):
+    db, lib, folder = _setup(tmp_path, monkeypatch, with_artwork=False)
+    source = folder / "示例动画 #1.mp4"
+    (folder / "adn-499.mp4").rename(source)
+    frame = source.with_name("示例动画 #1-frame-v3.jpg")
+    frame.write_bytes(b"cached")
+    video_scan.scan_video_library(db, lib)
+    db.commit()
+    ep = db.scalar(select(Video))
+
+    def download_show_poster(session, videos):
+        if downloaded:
+            root = vs.get_series_root_dir(session, videos)
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "tvshow-poster.jpg").write_bytes(b"new poster")
+
+    monkeypatch.setattr(scrape_routes, "_require_visible", lambda *_: None)
+    monkeypatch.setattr(scrape_routes, "submit_job", lambda key, stage, total, work, **kw: work(db))
+    monkeypatch.setattr(scrape_routes.scrape, "bind_series", lambda *_: [ep])
+    monkeypatch.setattr(scrape_routes, "_download_root_art_if_series", download_show_poster)
+    monkeypatch.setattr(video_assets, "upgrade_legacy_assets", lambda *_: None)
+    bind = VideoBindRequest(tmdbId=123, mediaType="tv")
+    assert scrape_routes.tmdb_bind(db, ep.id, bind).success
+    assert frame.is_file() is not downloaded
 
 
 def test_local_candidates_order(tmp_path):

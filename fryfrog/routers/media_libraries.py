@@ -141,7 +141,7 @@ def scan_all(db: DbSession, service: MediaLibraryService = Depends(get_media_lib
     from fryfrog.services import scan as scan_svc
 
     scan_svc.submit_scan_job(library_ids)
-    return ApiResponse.ok({"status": "started", "libraryCount": len(libs)})
+    return ApiResponse.ok({"status": "started", "libraryCount": len(library_ids), "libraryIds": library_ids})
 
 
 @router.get("/scan/progress")

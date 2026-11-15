@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -246,7 +247,10 @@ def _apply_tv_detail(db: Session, video: Video, detail: dict, client: TmdbClient
     if series is None and detail.get("id"):
         series = db.scalar(select(VideoSeries).where(VideoSeries.tmdb_id == detail["id"]))
     if series is None:
-        series = db.scalar(select(VideoSeries).where(VideoSeries.title == show_title))
+        series = db.scalar(select(VideoSeries).where(
+            VideoSeries.title == show_title,
+            (VideoSeries.tmdb_id.is_(None) | (VideoSeries.tmdb_id == detail.get("id"))),
+        ))
     if series is None:
         series = VideoSeries(title=show_title)
         db.add(series)
@@ -335,6 +339,32 @@ def save_actors(db: Session, video: Video, cast: list[dict]) -> None:
     db.flush()
 
 
+def _binding_targets(db: Session, video: Video, media_type: str) -> list[Video]:
+    same_library = Video.library_id == video.library_id
+    if media_type == "tv" and video.series_id is not None:
+        return list(db.scalars(select(Video).where(same_library, Video.series_id == video.series_id)))
+    if media_type != "movie":
+        return [video]
+
+    part_suffix = re.compile(r"[. _-]+(?:cd|disc|disk|part)[. _-]*\d+$", re.IGNORECASE)
+    path = Path(video.file_path)
+    stem = part_suffix.sub("", path.stem)
+    if stem == path.stem:
+        return [video]
+    candidates = db.scalars(select(Video).where(
+        same_library,
+        Video.series_id.is_(None),
+        Video.file_path.like(f"{_like_escape(str(path.parent))}%", escape="\\"),
+    ))
+    return [video, *(
+        candidate for candidate in candidates
+        if candidate.id != video.id
+        and Path(candidate.file_path).parent == path.parent
+        and part_suffix.search(Path(candidate.file_path).stem)
+        and part_suffix.sub("", Path(candidate.file_path).stem).casefold() == stem.casefold()
+    )]
+
+
 def bind_series(db: Session, video_id: int, tmdb_id: int, media_type: str) -> list[Video]:
     from fryfrog.services.video_service import get_video
 
@@ -342,32 +372,11 @@ def bind_series(db: Session, video_id: int, tmdb_id: int, media_type: str) -> li
     client = TmdbClient()
     media_type = (media_type or "").lower()
     bound: list[Video] = []
-
-    # 连带范围（务必保守，历史上这里按 title 全库匹配曾把 11 部无关剧的
-    # S01E01 一起改成同一部电影）：
-    # - 剧集：同 series_id 的全部分集；
-    # - 电影/未入剧：仅限**同一目录**（同名分片，如 CD1/CD2）。
-    if media_type == "tv" and video.series_id is not None:
-        siblings = list(
-            db.scalars(select(Video).where(Video.series_id == video.series_id)).all()
-        )
-    else:
-        vid_dir = str(Path(video.file_path).parent)
-        siblings = [
-            v
-            for v in db.scalars(
-                select(Video).where(
-                    Video.file_path.like(f"{_like_escape(vid_dir)}%", escape="\\")
-                )
-            ).all()
-            if str(Path(v.file_path).parent) == vid_dir
-        ]
-    if video not in siblings:
-        siblings.append(video)
+    siblings = _binding_targets(db, video, media_type)
 
     detail = client.get_movie(tmdb_id) if media_type == "movie" else client.get_tv(tmdb_id)
-    if not detail:
-        return [video]
+    if not detail or detail.get("id") != tmdb_id:
+        return []
 
     for v in siblings:
         if media_type == "movie":
@@ -422,10 +431,12 @@ def _merge_split_series(db: Session, siblings: list[Video], target: int) -> int:
             VideoSeries.id != target, VideoSeries.media_type == "tv"
         )
     ).all():
+        if other.tmdb_id and other.tmdb_id != siblings[0].tmdb_id:
+            continue
         episodes = list(db.scalars(select(Video).where(Video.series_id == other.id)).all())
         # 有分集的：必须全部位于同一剧名根目录才并
         if episodes:
-            if not all(show_root(e.file_path) == root for e in episodes):
+            if not all(e.library_id == siblings[0].library_id and show_root(e.file_path) == root for e in episodes):
                 continue
         # 空壳行：没有分集可依据，只能用「剧名与目录名互为前缀」判断，
         # 否则会误删别的剧的空壳行。
@@ -457,21 +468,24 @@ def _series_looks_like_show(series: VideoSeries, root: Path) -> bool:
     return title.startswith(name) or name.startswith(title)
 
 
-def unbind_by_tmdb_id(db: Session, tmdb_id: int) -> int:
-    videos = list(db.scalars(select(Video).where(Video.tmdb_id == tmdb_id)).all())
+def unbind_video(db: Session, video: Video) -> int:
+    tmdb_id = video.tmdb_id
+    if not tmdb_id:
+        return 0
+    media_type = "tv" if video.series_id is not None or video.is_episode else "movie"
+    videos = [target for target in _binding_targets(db, video, media_type) if target.tmdb_id == tmdb_id]
+    series = video.series
     for v in videos:
         v.tmdb_id = None
         v.metadata_source = None
         v.metadata_updated_at = None
-        v.imdb_id = None
-        v.rating = None
-        v.vote_count = None
-    series_list = list(db.scalars(select(VideoSeries).where(VideoSeries.tmdb_id == tmdb_id)).all())
-    for s in series_list:
-        s.tmdb_id = None
-        s.metadata_source = None
-        s.imdb_id = None
-        s.rating = None
+    if series and series.tmdb_id == tmdb_id and db.scalar(select(Video.id).where(
+        Video.series_id == series.id,
+        Video.tmdb_id == tmdb_id,
+        Video.id.not_in([target.id for target in videos]),
+    ).limit(1)) is None:
+        series.tmdb_id = None
+        series.metadata_source = None
     db.flush()
     return len(videos)
 
@@ -519,21 +533,20 @@ def refresh_bound_by_library(
     正确的绑定改坏，也会去搜用户刻意未绑定的视频。这里只认已绑定的记录。
 
     [on_progress] 可选回调 `(refreshed, skipped, failed, total)`：每处理完一部剧
-    （或一个独立视频）调用一次。库大时整批可能跑几分钟，没有它界面会一直显示
-    0%（实测 400+ 部剧的库跑了 4 分钟仍显示 0，看起来像卡死）。
+    （或一个独立视频）调用一次。所有计数均以视频文件为单位。
 
     返回 {"refreshed": n, "skipped": 未绑定数, "failed": 失败数}。
     """
-    from fryfrog.services import video_service as vs
-
     videos = list(db.scalars(select(Video).where(Video.library_id == library_id)).all())
     bound = [v for v in videos if v.tmdb_id]
     skipped = len(videos) - len(bound)
 
-    # 按 series_id 聚合：整剧只需取一次详情，避免每集重复请求
-    series_ids = sorted({v.series_id for v in bound if v.series_id is not None})
+    groups: dict[int, list[Video]] = {}
+    for video in bound:
+        if video.series_id is not None:
+            groups.setdefault(video.series_id, []).append(video)
     solo = [v for v in bound if v.series_id is None]
-    total = len(series_ids) + len(solo)
+    total = len(videos)
 
     refreshed = failed = 0
     client = TmdbClient()
@@ -548,66 +561,59 @@ def refresh_bound_by_library(
 
     report()
 
-    for series_id in series_ids:
-        series = vs.get_series(db, series_id)
-        episodes = vs.series_videos(db, series_id) or []
-        if series is None or not series.tmdb_id or not episodes:
-            failed += 1
-        else:
-            try:
-                detail = client.get_tv(series.tmdb_id)
-                if not detail:
-                    failed += 1
-                else:
-                    for ep in episodes:
-                        _apply_tv_detail(db, ep, detail, client)
-                    # 剧根素材 + 剧级/季级 NFO 都在这一步里（detail 复用，零额外请求）
-                    assets.download_series_root_art(db, series, episodes, detail)
-                    for ep in episodes:
-                        assets.ensure_season_poster(db, ep)
-                        assets.ensure_season_nfo_from_detail(db, ep, detail)
-                        assets.download_all_covers(db, ep, force=False)
-                        generate_nfo(db, ep)
-                        refreshed += 1
-            except Exception:
-                logger.exception("刷新剧集失败: series=%s", series_id)
-                failed += 1
-        report()
+    for series_id, episodes in groups.items():
         try:
-            # 走重试版提交：裸 commit 撞上别的写者会直接抛错中断整批刷新
-            from fryfrog.core.deps import commit_with_retry
-
-            commit_with_retry(db)
+            series = db.get(VideoSeries, series_id)
+            if series is None or not series.tmdb_id:
+                raise ValueError("剧集缺少 TMDB ID")
+            # 共享剧集行可能跨库，只处理本库且绑定一致的分集。
+            matching = [ep for ep in episodes if ep.tmdb_id == series.tmdb_id]
+            written = 0
+            if matching:
+                detail = client.get_tv(series.tmdb_id)
+                if not detail or detail.get("id") != series.tmdb_id:
+                    raise ValueError("未取得匹配的 TMDB 剧集详情")
+                for ep in matching:
+                    _apply_tv_detail(db, ep, detail, client)
+                assets.download_series_root_art(db, series, matching, detail)
+                for ep in matching:
+                    assets.ensure_season_poster(db, ep)
+                    assets.ensure_season_nfo_from_detail(db, ep, detail)
+                    assets.download_all_covers(db, ep, force=False)
+                    written += bool(generate_nfo(db, ep))
+                db.commit()
+            refreshed += written
+            failed += len(episodes) - written
         except Exception:
-            logger.warning("刷新中途提交失败，继续", exc_info=True)
             db.rollback()
+            logger.exception("刷新剧集失败: series=%s", series_id)
+            failed += len(episodes)
+        report()
 
     for video in solo:
         try:
             if (video.media_type or "").lower() == "movie":
                 detail = client.get_movie(video.tmdb_id)
-                if not detail:
-                    failed += 1
-                    report()
-                    continue
+                if not detail or detail.get("id") != video.tmdb_id:
+                    raise ValueError("未取得匹配的 TMDB 电影详情")
                 _apply_movie_detail(video, detail, client)
             else:
                 detail = client.get_tv(video.tmdb_id)
-                if not detail:
-                    failed += 1
-                    report()
-                    continue
+                if not detail or detail.get("id") != video.tmdb_id:
+                    raise ValueError("未取得匹配的 TMDB 剧集详情")
                 _apply_tv_detail(db, video, detail, client)
             video.metadata_updated_at = datetime.now()
             assets.download_all_covers(db, video, force=False)
-            generate_nfo(db, video)
-            refreshed += 1
+            nfo_path = generate_nfo(db, video)
+            db.commit()
+            refreshed += bool(nfo_path)
+            failed += not nfo_path
         except Exception:
             logger.exception("刷新视频失败: %s", video.file_name)
+            db.rollback()
             failed += 1
         report()
 
-    db.flush()
     logger.info(
         "[Refresh] library=%s 刷新 %s / 跳过未绑定 %s / 失败 %s",
         library_id,
@@ -636,7 +642,8 @@ def scrape_video_if_needed(db: Session, video: Video) -> None:
     if not pick:
         return
     try:
-        bind_series(db, video.id, pick["id"], pick["mediaType"] or media_pref)
+        if not bind_series(db, video.id, pick["id"], pick["mediaType"] or media_pref):
+            return
         from fryfrog.services import video_assets as assets
 
         assets.upgrade_legacy_assets(db, video)

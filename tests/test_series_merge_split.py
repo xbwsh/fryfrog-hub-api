@@ -90,7 +90,7 @@ def test_merges_series_whose_episodes_are_same_show(env):
     """两个剧组都有分集、但同属一个剧名根目录 → 也要合并。"""
     db, media, lib = env
     a = VideoSeries(title="某剧", tmdb_id=1, media_type="tv")
-    b = VideoSeries(title="某剧", tmdb_id=2, media_type="tv")
+    b = VideoSeries(title="某剧", tmdb_id=1, media_type="tv")
     db.add_all([a, b])
     db.flush()
     ep1 = _add(db, lib, media, "某剧", 1, 1, a)
@@ -105,6 +105,18 @@ def test_merges_series_whose_episodes_are_same_show(env):
     assert len(remaining) == 1, "只应剩一个剧组"
     assert db.get(Video, ep1.id).series_id == remaining[0].id
     assert db.get(Video, ep2.id).series_id == remaining[0].id
+
+
+def test_distinct_tmdb_bindings_are_not_merged_in_shared_directory(env):
+    db, media, lib = env
+    a = VideoSeries(title="甲", tmdb_id=1, media_type="tv")
+    b = VideoSeries(title="乙", tmdb_id=2, media_type="tv")
+    db.add_all([a, b])
+    db.flush()
+    ep1 = _add(db, lib, media, "共用目录", 1, 1, a)
+    ep2 = _add(db, lib, media, "共用目录", 1, 2, b)
+    assert _merge_split_series(db, [ep1], a.id) == 0
+    assert ep2.series_id == b.id
 
 
 def test_does_not_merge_different_shows_with_same_title(env):

@@ -132,7 +132,7 @@ def submit_job(
     def queued():
         progress_svc.update_progress(
             module, stage=stage, running=True, total=total, completed=0, failed=0, skipped=0,
-            currentItem=None,
+            currentItem=None, message=None,
         )
 
     def job():
@@ -149,7 +149,8 @@ def submit_job(
             if session:
                 session.rollback()
             progress_svc.update_progress(
-                module, stage="error", running=False, **(error_fields or {})
+                module, stage="error", running=False,
+                **({"message": "后台任务失败，详情见服务端日志"} | (error_fields or {})),
             )
         finally:
             if session:

@@ -14,7 +14,7 @@ from fryfrog.models.video import Video, VideoSeries
 from fryfrog.routers.video import series as series_router
 from fryfrog.routers.video._common import MAX_PAGE_SIZE, clamp_paging
 from fryfrog.routers.video import browse
-from fryfrog.services.video_scrape import unbind_by_tmdb_id
+from fryfrog.services.video_scrape import unbind_video
 
 
 def _setup(tmp_path):
@@ -161,17 +161,18 @@ def test_grouped_hides_unbound_series(tmp_path):
     db.commit()
 
     first = db.scalars(select(VideoSeries).order_by(VideoSeries.id)).first()
-    episode_titles = [
-        e.title
-        for e in db.scalars(select(Video).where(Video.series_id == first.id)).all()
-    ]
+    episodes = db.scalars(select(Video).where(Video.series_id == first.id)).all()
+    episode_titles = [episode.title for episode in episodes]
+    for episode in episodes:
+        episode.tmdb_id = first.tmdb_id
+    db.flush()
     assert episode_titles
 
     data = series_router.grouped_by_library(db, page=0, size=20).data
     assert len(data[0]["series"]) == 4
 
     # 同后端「解除绑定」路径：清空该剧视频与系列行的 tmdb_id
-    unbind_by_tmdb_id(db, first.tmdb_id)
+    unbind_video(db, episodes[0])
     db.commit()
     assert first.tmdb_id is None
 

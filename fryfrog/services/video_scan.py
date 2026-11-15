@@ -287,6 +287,9 @@ def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
     保守规则：目录内没有任何视频文件；所有文件都是素材类后缀；
     且目录内文件未被任何 Video 的 cover_art_path/backdrop_local_path/logo_local_path 引用。
     """
+    from fryfrog.services.video_assets import find_shared_vertical_poster
+
+    resolved_root = root.resolve()
     referenced: set[str] = set()
     for v in db.scalars(select(Video)).all():
         for p in (v.cover_art_path, v.backdrop_local_path, v.logo_local_path):
@@ -295,6 +298,16 @@ def cleanup_orphan_asset_dirs(db: Session, root: Path) -> int:
                     referenced.add(str(Path(p).resolve()))
                 except OSError:
                     pass
+        # 季/剧海报可直接被封面端点使用，数据库未必保存图片路径。
+        if v.is_episode and v.missing_since is None:
+            try:
+                media_path = Path(v.file_path)
+                if media_path.is_relative_to(resolved_root) and media_path.is_file():
+                    shared = find_shared_vertical_poster(db, v)
+                    if shared is not None:
+                        referenced.add(str(shared.resolve()))
+            except OSError:
+                pass
     #剧集行也持有本地素材路径（总海报/总背景/剧徽，写在剧名根目录），
     # 漏掉会让「分集都移走但季海报还在」的目录被当成空壳 rmtree —— 用户
     # 手工放进来的季海报就这么没了，且删除只走 ignore_errors 不留日志。
@@ -390,7 +403,8 @@ def scan_video_library(db: Session, library: MediaLibrary) -> tuple[int, int]:
             continue
 
     def scan_file(path: Path) -> tuple[str, int]:
-        removed_frames = 0
+        from fryfrog.services import video_assets as assets
+
         file_path = str(path.resolve())
         file_stat = path.stat()
 
@@ -497,8 +511,6 @@ def scan_video_library(db: Session, library: MediaLibrary) -> tuple[int, int]:
             # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
             prune_private_vertical_cover(db, video)
 
-            removed_frames = cleanup_redundant_frames(db, video)
-
         # 已入库的分集可能有 TMDB ID，但剧集行仍缺 ID，即使文件没变也要修复。
         sync_series_from_episode(db, video)
         db.flush()
@@ -515,8 +527,6 @@ def scan_video_library(db: Session, library: MediaLibrary) -> tuple[int, int]:
         # 已有文件时只是一次 is_file() 检查，开销可忽略。
         if video.is_episode:
             try:
-                from fryfrog.services import video_assets as assets
-
                 assets.ensure_season_poster(db, video)
                 # 剧级 NFO 也在这里确保：存量剧没有 tvshow.nfo，靠扫描补齐
                 # （已有则跳过，不写盘、不发请求）。
@@ -528,7 +538,7 @@ def scan_video_library(db: Session, library: MediaLibrary) -> tuple[int, int]:
                     assets.ensure_series_nfo(db, video.series, episodes or [video])
             except Exception:
                 logger.debug("确保剧/季素材失败: %s", path, exc_info=True)
-        return file_path, removed_frames
+        return file_path, assets.cleanup_redundant_frames(db, video)
 
     for path in iter_files(root, VIDEO_EXTS):
         failed_file = False
@@ -663,38 +673,3 @@ def merge_duplicate_series(db: Session) -> int:
     if victims:
         db.flush()
     return victims
-
-
-def cleanup_redundant_frames(db: Session, video: Video) -> int:
-    """本地已有正式封面/背景时，删掉此前封面/背景兜底自动生成的 -frame-v3 截图。
-
-    只删未被 DB 引用的帧（手动选帧的结果 cover_art_path/backdrop_local_path 会指向它）。
-    """
-    from fryfrog.services import video_service as vs
-
-    video_dir = Path(video.file_path).parent
-    base = vs.get_base_name(video.file_name)
-    removed = 0
-    frame = video_dir / f"{base}-frame-v3.jpg"
-    if (
-        frame.exists()
-        and str(frame) != video.cover_art_path
-        and any(p.exists() for p in vs.local_poster_candidates(db, video))
-    ):
-        try:
-            frame.unlink()
-            removed += 1
-        except OSError:
-            logger.debug("清理帧截图失败: %s", frame, exc_info=True)
-    fanart_frame = video_dir / f"{base}-fanart-frame-v3.jpg"
-    if (
-        fanart_frame.exists()
-        and str(fanart_frame) != video.backdrop_local_path
-        and any(p.exists() for p in vs.local_fanart_candidates(db, video))
-    ):
-        try:
-            fanart_frame.unlink()
-            removed += 1
-        except OSError:
-            logger.debug("清理帧截图失败: %s", fanart_frame, exc_info=True)
-    return removed

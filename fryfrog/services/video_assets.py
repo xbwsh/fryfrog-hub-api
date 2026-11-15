@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 import shutil
+import stat
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from fryfrog.core.http import make_client
@@ -540,12 +543,25 @@ def parse_series_nfo(db: Session, video: Video) -> bool:
     return changed
 
 
+def _write_nfo(path: Path, content: str) -> None:
+    """先写同目录的临时文件，再替换旧 NFO。"""
+    temporary = path.with_name(f".{uuid4().hex}.nfo.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as file:
+            file.write(content)
+        if path.is_file():
+            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def generate_nfo(db: Session, video: Video) -> str | None:
     try:
         nfo_path = get_nfo_path(db, video)
         # 目录可能已被清理（空壳素材目录回收、视频被搬移），写前先补建
         nfo_path.parent.mkdir(parents=True, exist_ok=True)
-        nfo_path.write_text(_build_nfo(video), encoding="utf-8")
+        _write_nfo(nfo_path, _build_nfo(video))
         return str(nfo_path)
     except Exception:
         logger.exception("生成 NFO 失败: %s", video.file_name)
@@ -652,9 +668,7 @@ def generate_series_nfo(
     if not target.parent.is_dir():
         return None
     try:
-        target.write_text(
-            build_series_nfo(series, detail, sample=episodes[0]), encoding="utf-8"
-        )
+        _write_nfo(target, build_series_nfo(series, detail, sample=episodes[0]))
         return str(target)
     except Exception:
         logger.debug("生成剧级 NFO 失败: %s", target, exc_info=True)
@@ -671,7 +685,7 @@ def generate_season_nfo(db: Session, video: Video, season: dict) -> str | None:
     if not target.parent.is_dir():
         return None
     try:
-        target.write_text(build_season_nfo(season), encoding="utf-8")
+        _write_nfo(target, build_season_nfo(season))
         return str(target)
     except Exception:
         logger.debug("生成季级 NFO 失败: %s", target, exc_info=True)
@@ -891,6 +905,8 @@ def prune_private_vertical_cover(db: Session, video: Video) -> bool:
     if shared is None:
         return False
     stale = Path(video.cover_art_path)
+    if stale.name.endswith("-frame-v3.jpg"):
+        return False  # 旧版本可能把用户选中的截帧直接存成封面
     try:
         if stale.exists() and stale != shared:
             stale.unlink()
@@ -900,6 +916,67 @@ def prune_private_vertical_cover(db: Session, video: Video) -> bool:
     except OSError:
         logger.debug("清理分集私有竖图失败: %s", stale, exc_info=True)
         return False
+
+
+def cleanup_redundant_frames(db: Session, video: Video) -> int:
+    """只清理已有本地替代图且没有被引用的自动截帧缓存。"""
+    from fryfrog.services import video_service as vs
+
+    folder = Path(video.file_path).parent
+    base = get_base_name(video.file_name)
+    removed = 0
+    for suffix, saved in (
+        ("-frame-v3.jpg", video.cover_art_path),
+        ("-fanart-frame-v3.jpg", video.backdrop_local_path),
+    ):
+        frame = folder / f"{base}{suffix}"
+        try:
+            if frame.is_symlink() or not frame.is_file():
+                continue
+            resolved = frame.resolve()
+            if any(
+                value and Path(value).resolve() == resolved
+                for value in (video.cover_art_path, video.backdrop_local_path)
+            ):
+                continue
+
+            if suffix == "-frame-v3.jpg":
+                shared = find_shared_vertical_poster(db, video)
+                candidates = vs.local_poster_candidates(db, video)
+                if shared is not None:
+                    candidates.append(shared)
+            else:
+                candidates = vs.local_fanart_candidates(db, video)
+            if saved:
+                candidates.append(Path(saved))
+            if not any(
+                not p.name.lower().startswith("thumb")
+                and "-thumb." not in p.name.lower()
+                and p.is_file()
+                and p.resolve() != resolved
+                and p.stat().st_size > 0
+                for p in candidates
+            ):
+                continue
+
+            references = (str(frame), str(resolved))
+            linked_video = select(Video.id).where(or_(
+                Video.cover_art_path.in_(references),
+                Video.backdrop_local_path.in_(references),
+                Video.logo_local_path.in_(references),
+            )).limit(1)
+            linked_series = select(VideoSeries.id).where(or_(
+                VideoSeries.poster_local_path.in_(references),
+                VideoSeries.backdrop_local_path.in_(references),
+                VideoSeries.logo_local_path.in_(references),
+            )).limit(1)
+            if db.scalar(linked_video) is not None or db.scalar(linked_series) is not None:
+                continue
+            frame.unlink()
+            removed += 1
+        except OSError:
+            logger.debug("清理截帧缓存失败: %s", frame, exc_info=True)
+    return removed
 
 
 def _looks_vertical(path: Path) -> bool:
@@ -949,6 +1026,7 @@ def download_all_covers(
         if fanart_ok:
             video.backdrop_local_path = str(get_fanart_path(db, video))
     db.flush()
+    cleanup_redundant_frames(db, video)
     return poster_ok or fanart_ok
 
 
@@ -1762,7 +1840,7 @@ def upgrade_legacy_assets(db: Session, video: Video) -> None:
     老方案（升级前）把 nfo/封面写到 get_metadata_dir（库根/剧名/第N季/第N集/），
     命名带 -poster/-fanart 前缀；重新刮削（bind/refresh/rescrape-library）时
         调用本函数：素材迁到视频同目录，按目录布局选择共用或专属命名，
-        删除旧变体与 -frame-v3 截帧，修正 DB 素材字段；散放在库根的视频
+        收敛旧变体并修正 DB 素材字段；散放在库根的视频
         归置进「剧名/第N季/第N集」规范目录，并在搬移后清理空目录。
     """
     try:

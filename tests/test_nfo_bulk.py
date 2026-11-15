@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from fryfrog.core.exceptions import ForbiddenException
+from fryfrog.core.exceptions import ForbiddenException, ResourceNotFoundException
 from fryfrog.db import Base
 from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video, VideoSeries
@@ -84,7 +84,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(scrape_router, "submit_job", fake_submit_job)
     monkeypatch.setattr(scrape_router, "_require_admin", lambda db, **k: None)
     monkeypatch.setattr(scrape_router, "progress_svc", type("P", (), {
-        "update_progress": staticmethod(lambda *a, **k: None)
+        "update_progress": staticmethod(lambda *a, **k: calls.update(k))
     }))
     monkeypatch.setattr(
         scrape_router.TmdbClient, "get_tv", lambda self, tid, *a, **k: TV_DETAIL
@@ -133,9 +133,10 @@ def test_regenerate_all_filters_by_library(env):
     """指定别的库时不该处理本库的剧。"""
     db, _lib, _series, show, calls = env
 
-    scrape_router.regenerate_all_nfo(db, libraryId=9999)
+    with pytest.raises(ResourceNotFoundException):
+        scrape_router.regenerate_all_nfo(db, libraryId=9999)
 
-    assert calls["total"] == 0
+    assert calls == {}
     assert not (show / "tvshow.nfo").exists()
 
 
@@ -146,6 +147,56 @@ def test_regenerate_all_without_library_covers_all(env):
 
     assert calls["total"] == 1
     assert (show / "tvshow.nfo").is_file()
+
+
+def test_nfo_rewrite_does_not_write_in_other_library_and_reports_season_failure(env):
+    db, lib, series, show, calls = env
+    other_root = show.parent / "other"
+    other_folder = other_root / series.title / "第 3 季"
+    other_folder.mkdir(parents=True)
+    other_library = MediaLibrary(name="Other", path=str(other_root), type="VIDEO")
+    db.add(other_library)
+    db.flush()
+    db.add(Video(
+        file_path=str(other_folder / "Other.S03E01.mp4"), file_name="Other.S03E01.mp4",
+        title="Other", library_id=other_library.id, series_id=series.id, season_number=3,
+    ))
+    db.commit()
+    (show / "第 2 季" / "season.nfo").mkdir()  # 无法写成文件
+
+    assert scrape_router.regenerate_all_nfo(db, libraryId=lib.id).success
+    assert calls["completed"] == 0 and calls["failed"] == 1
+    assert not (other_folder / "season.nfo").exists()
+    assert not (other_folder.parent / "tvshow.nfo").exists()
+
+
+def test_nfo_rewrite_keeps_existing_files_when_tmdb_fails(env, monkeypatch):
+    db, lib, _series, show, calls = env
+    target = show / "tvshow.nfo"
+    target.write_text("existing", encoding="utf-8")
+    monkeypatch.setattr(scrape_router.TmdbClient, "get_tv", lambda *_: None)
+
+    scrape_router.regenerate_all_nfo(db, libraryId=lib.id)
+    assert target.read_text(encoding="utf-8") == "existing"
+    assert calls["completed"] == 0 and calls["failed"] == 1
+
+
+def test_nfo_replace_failure_preserves_original_file(env, monkeypatch):
+    db, lib, _series, show, calls = env
+    target = show / "第 1 季" / "season.nfo"
+    target.write_text("original", encoding="utf-8")
+    replace = Path.replace
+
+    def fail_first_season(path, destination):
+        if destination == target:
+            raise OSError("模拟写入失败")
+        return replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", fail_first_season)
+    scrape_router.regenerate_all_nfo(db, libraryId=lib.id)
+    assert target.read_text(encoding="utf-8") == "original"
+    assert not list(target.parent.glob(".*.nfo.tmp"))
+    assert calls["completed"] == 0 and calls["failed"] == 1
 
 
 def test_regenerate_all_requires_admin(env, monkeypatch):
