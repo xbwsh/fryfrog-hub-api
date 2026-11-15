@@ -192,9 +192,17 @@ def _start_schedulers() -> None:
                 if _stop_schedulers.wait(interval):
                     break
 
+    def _progress_cleanup_loop():
+        from fryfrog.services.progress import cleanup_expired_progress
+
+        interval = min(get_settings().task_progress_retention_seconds, 60)
+        while not _stop_schedulers.wait(interval):
+            cleanup_expired_progress()
+
     _stop_schedulers.clear()
     threading.Thread(target=_token_cleanup_loop, daemon=True, name="token-cleanup").start()
     threading.Thread(target=_periodic_scan_loop, daemon=True, name="periodic-scan").start()
+    threading.Thread(target=_progress_cleanup_loop, daemon=True, name="progress-cleanup").start()
 
 
 def create_app() -> FastAPI:

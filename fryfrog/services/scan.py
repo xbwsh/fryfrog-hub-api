@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # 没有超时的话占位永不释放，之后所有触发都会被静默吞掉。
 _scan_lock = threading.Lock()
 _running_scans: dict[int, float] = {}
+_periodic_cursor = 0
 
 
 def _claim_library_scan(library: MediaLibrary) -> bool:
@@ -204,24 +205,31 @@ def _scan_library(db: Session, library: MediaLibrary) -> tuple[int, int] | None:
 
 
 def scan_all_enabled(db: Session) -> None:
-    """把启用的库交给与手动扫描相同的队列。"""
+    """按上次入队位置轮转，队列较小时也不会一直只扫描前几个库。"""
     from fryfrog.services.media_library import MediaLibraryService
     from fryfrog.core.security import UserService
 
+    global _periodic_cursor
     service = MediaLibraryService(UserService())
-    submit_scan_job([lib.id for lib in service.get_enabled_libraries(db) if lib.id is not None])
+    library_ids = sorted(lib.id for lib in service.get_enabled_libraries(db) if lib.id is not None)
+    ordered = [i for i in library_ids if i > _periodic_cursor] + [
+        i for i in library_ids if i <= _periodic_cursor
+    ]
+    accepted = submit_scan_job(ordered, allow_partial=True)
+    if accepted:
+        _periodic_cursor = accepted[-1]
 
 
-def submit_scan_job(library_ids: list[int]) -> None:
+def submit_scan_job(library_ids: list[int], *, allow_partial: bool = False) -> list[int]:
     """逐库排队，手动、周期和热监听触发共用同一个扫描任务。"""
     from fryfrog.db import get_session_factory
-    from fryfrog.services.background_jobs import enqueue_job
+    from fryfrog.services.background_jobs import enqueue_jobs
 
     if not library_ids:
         progress_svc.update_progress("scan:ALL", stage="done", running=False, total=0, completed=0)
-        return
+        return []
 
-    def submit_one(library_id: int) -> None:
+    def make_job(library_id: int):
         module = f"pipeline:{library_id}"
 
         def queued():
@@ -245,7 +253,11 @@ def submit_scan_job(library_ids: list[int]) -> None:
                     currentItem=None, message="扫描失败，详情见服务端日志", queued=False,
                 )
 
-        enqueue_job(f"scan:{library_id}", work, on_queued=queued)
+        return work, queued
 
-    for library_id in dict.fromkeys(library_ids):
-        submit_one(library_id)
+    ids_by_key = {f"scan:{library_id}": library_id for library_id in library_ids}
+    accepted = enqueue_jobs(
+        {key: make_job(library_id) for key, library_id in ids_by_key.items()},
+        allow_partial=allow_partial,
+    )
+    return [ids_by_key[key] for key in accepted]

@@ -19,13 +19,18 @@ from fryfrog.services.media_library import MediaLibraryService
 router = APIRouter(prefix="/api/v1/media-libraries", tags=["媒体库"])
 
 
-def _schedule_scan_after_commit(db, library_id: int) -> None:
+def _schedule_scan_after_commit(db, library_id: int) -> str | None:
     """提交媒体库变更后再排队扫描，避免后台线程读到旧事务。"""
     from fryfrog.core.deps import commit_with_retry
+    from fryfrog.services.background_jobs import JobQueueFull
     from fryfrog.services.scan import submit_scan_job
 
     commit_with_retry(db)
-    submit_scan_job([library_id])
+    try:
+        submit_scan_job([library_id])
+    except JobQueueFull:
+        return "媒体库已保存，后台任务队列已满，请稍后手动扫描"
+    return None
 
 
 def _browse_item(name: str, path: str, writable: bool) -> dict:
@@ -107,9 +112,10 @@ def create_library(body: MediaLibraryCreateRequest, db: DbSession, service: Medi
         "description": body.description,
     }
     lib = service.create_library(db, data)
+    message = None
     if lib.enabled and lib.id is not None:
-        _schedule_scan_after_commit(db, lib.id)
-    return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True))
+        message = _schedule_scan_after_commit(db, lib.id)
+    return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True), message=message)
 
 
 @router.get("/browse")
@@ -193,9 +199,8 @@ def update_library(
     needs_scan = bool(lib.enabled) and (
         not before_enabled or before_path != lib.path or before_type != lib.type
     )
-    if needs_scan and lib.id is not None:
-        _schedule_scan_after_commit(db, lib.id)
-    return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True))
+    message = _schedule_scan_after_commit(db, lib.id) if needs_scan and lib.id is not None else None
+    return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True), message=message)
 
 
 @router.delete("/{library_id}")
@@ -208,9 +213,10 @@ def delete_library(library_id: int, db: DbSession, service: MediaLibraryService 
 def toggle_library(library_id: int, db: DbSession, service: MediaLibraryService = Depends(get_media_library_service)):
     was_enabled = bool(service.get_library_by_id(db, library_id).enabled)
     lib = service.toggle_library(db, library_id)
+    message = None
     if lib.enabled and not was_enabled and lib.id is not None:
-        _schedule_scan_after_commit(db, lib.id)
-    return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True))
+        message = _schedule_scan_after_commit(db, lib.id)
+    return ApiResponse.ok(MediaLibraryDTO.from_entity(lib).model_dump(exclude_none=True), message=message)
 
 
 @router.post("/{library_id}/scan")

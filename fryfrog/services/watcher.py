@@ -371,6 +371,7 @@ class FileWatcher:
     def _fire_scan(self, session, root: str) -> None:
         from fryfrog.services.media_library import MediaLibraryService
         from fryfrog.core.security import UserService
+        from fryfrog.services.background_jobs import JobQueueFull, QUEUE_RETRY_AFTER_SECONDS
         from fryfrog.services.scan import submit_scan_job
 
         service = MediaLibraryService(UserService())
@@ -380,6 +381,8 @@ class FileWatcher:
         logger.info("[FileWatcher] 触发扫描: %s (%s)", lib.name, lib.type)
         try:
             submit_scan_job([lib.id])
+        except JobQueueFull:
+            self._pending[root] = time.time() + QUEUE_RETRY_AFTER_SECONDS
         except Exception:
             logger.exception("热监听扫描失败: %s", root)
 
