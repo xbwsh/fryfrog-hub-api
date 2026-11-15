@@ -37,14 +37,14 @@ class FFmpegRuntime:
             self.ffprobe_path = str(
                 Path(configured).with_name(name.replace("ffmpeg", "ffprobe", 1))
             )
-            logger.info("Using configured FFmpeg: %s", self.ffmpeg_path)
+            logger.debug("Using configured FFmpeg: %s", self.ffmpeg_path)
         else:
             system_ffmpeg = shutil.which("ffmpeg")
             system_ffprobe = shutil.which("ffprobe")
             if system_ffmpeg:
                 self.ffmpeg_path = system_ffmpeg
                 self.ffprobe_path = system_ffprobe or "ffprobe"
-                logger.info("Using system FFmpeg: %s", self.ffmpeg_path)
+                logger.debug("Using system FFmpeg: %s", self.ffmpeg_path)
             else:
                 logger.warning("No FFmpeg found, trying PATH names")
                 self.ffmpeg_path = "ffmpeg"
@@ -52,7 +52,7 @@ class FFmpegRuntime:
 
         self.available = self._check_available()
         if self.available:
-            logger.info("FFmpeg transcoding available: %s", self.ffmpeg_path)
+            logger.debug("FFmpeg transcoding available: %s", self.ffmpeg_path)
         else:
             logger.warning("FFmpeg not available, transcoding disabled")
 

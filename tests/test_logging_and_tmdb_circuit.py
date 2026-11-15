@@ -17,7 +17,7 @@ os.environ.setdefault("AUTH_ENABLED", "false")
 import httpx
 import pytest
 
-from fryfrog.core.access_logging import filter_access_log
+from fryfrog.core.access_logging import filter_access_log, filter_httpx_log
 from fryfrog.services.tmdb import TmdbClient
 
 
@@ -59,6 +59,25 @@ def test_access_logs_only_errors_and_omits_query_parameters(status):
     assert filter_access_log(record) == (status >= 400)
     if status >= 400:
         assert record.getMessage() == f'client - "GET /api/v1/video/4/cover HTTP/1.1" {status}'
+
+
+def test_outbound_httpx_drops_success_and_redacts_failed_urls(caplog):
+    http_log = logging.getLogger("httpx")
+    http_log.addFilter(filter_httpx_log)
+    try:
+        transport = httpx.MockTransport(
+            lambda req: httpx.Response(200 if req.url.path == "/image.jpg" else 429)
+        )
+        with httpx.Client(transport=transport) as client, caplog.at_level(logging.INFO, logger="httpx"):
+            client.get("https://example.org/image.jpg?sig=private")
+            client.get("https://name:pass@example.org/search?api_key=private")
+    finally:
+        http_log.removeFilter(filter_httpx_log)
+
+    records = [record.getMessage() for record in caplog.records if record.name == "httpx"]
+    assert len(records) == 1
+    assert "https://example.org/search" in records[0] and "429" in records[0]
+    assert "api_key" not in records[0] and "name:pass" not in records[0]
 
 
 def test_tmdb_circuit_opens_after_repeated_failures(monkeypatch):

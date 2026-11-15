@@ -32,6 +32,8 @@ def _client():
     jm = _load()
     if jm is None:
         raise BadRequestException("未安装 jmcomic：pip install jmcomic")
+    # 关闭库内重复的请求输出。最终搜索、详情和封面错误由本模块记录。
+    jm.disable_jm_log()
     option = jm.JmOption.default()
     return option.new_jm_client()
 
