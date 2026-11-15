@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from fryfrog.core.utils import clean_title, primary_title
@@ -387,157 +389,179 @@ def scan_video_library(db: Session, library: MediaLibrary) -> tuple[int, int]:
         except OSError:
             continue
 
-    for path in iter_files(root, VIDEO_EXTS):
-        # SQLite 旧版事务模式不会在 SAVEPOINT 前自动开启外层事务。
-        connection = db.connection()
-        if not connection.connection.driver_connection.in_transaction:
-            connection.exec_driver_sql("BEGIN")
+    def scan_file(path: Path) -> tuple[str, int]:
         removed_frames = 0
-        try:
-            with db.begin_nested():
-                file_path = str(path.resolve())
-                file_stat = path.stat()
+        file_path = str(path.resolve())
+        file_stat = path.stat()
 
-                video = existing.pop(file_path, None)
-                is_new = video is None
-                if video is None:
-                    # file_path 全表唯一：该文件可能已被别的库入库（库路径重叠/换过库目录），
-                    # 必须先查库再决定是否新建，否则会 INSERT 重复行撞 UNIQUE。
-                    video = db.scalar(select(Video).where(Video.file_path == file_path))
-                    if video is not None:
-                        existing.pop(file_path, None)
-                    else:
-                        video = Video(file_path=file_path)
-                        db.add(video)
-                        is_new = True
+        video = existing.get(file_path)
+        is_new = video is None
+        if video is None:
+            # file_path 全表唯一：该文件可能已被别的库入库（库路径重叠/换过库目录），
+            # 必须先查库再决定是否新建，否则会 INSERT 重复行撞 UNIQUE。
+            video = db.scalar(select(Video).where(Video.file_path == file_path))
+            if video is None:
+                video = Video(file_path=file_path)
+                db.add(video)
+                is_new = True
 
-                video.file_name = path.name
-                if is_new or not video.original_file_name:
-                    video.original_file_name = path.name
-                video.library_id = library.id
-                # 只升不降：库级 is_adult 是用户自己声明的，应能自愈已有记录
-                # （历史数据里同库的剧级 true、分集 false，就是这里"每次赋值"和
-                # 刮削里 `= bool(detail.adult)` 一起造成的）。也不能降级，否则会
-                # 抹掉 NFO 里 `<adult>true</adult>` 带来的标记。
-                if library.is_adult:
-                    video.is_adult = True
-                video.format = path.suffix.lstrip(".").upper() or None
-                video.last_seen_at = scanned_at
-                # 文件回来了：清掉缺失标记（宽限期内删行不会发生）
-                video.missing_since = None
+        video.file_name = path.name
+        if is_new or not video.original_file_name:
+            video.original_file_name = path.name
+        video.library_id = library.id
+        # 只升不降：库级 is_adult 是用户自己声明的，应能自愈已有记录
+        # （历史数据里同库的剧级 true、分集 false，就是这里"每次赋值"和
+        # 刮削里 `= bool(detail.adult)` 一起造成的）。也不能降级，否则会
+        # 抹掉 NFO 里 `<adult>true</adult>` 带来的标记。
+        if library.is_adult:
+            video.is_adult = True
+        video.format = path.suffix.lstrip(".").upper() or None
+        video.last_seen_at = scanned_at
+        # 文件回来了：清掉缺失标记（宽限期内删行不会发生）
+        video.missing_since = None
 
-                title, season, episode = parse_episode(path.stem)
-                # 主标题：中文名.英文名.2025 → 中文名。剧名与 TMDB 名一致，
-                # 避免同一部剧因刮削先后而分裂成多个剧集/目录。
-                display = primary_title(path.name) or clean_title(title) or path.stem
-                if season is not None or episode is not None:
-                    video.is_series = True
-                    # 保留第 0 季：S00Exx 是特别篇/OVA（TMDB 约定 Season 0）。
-                    # 写成 `season or 1` 会把 0 吞成 1，特别篇被并进第 1 季。
-                    video.season_number = 1 if season is None else season
-                    video.episode_number = episode
-                    series_name = display
-                    video.series_name = series_name
-                    if not video.title or is_new:
-                        video.title = f"{series_name} S{video.season_number:02d}E{(episode or 0):02d}"
-                    # 已刮削的分集优先按 TMDB 剧 ID 归位：历史 bug 把同一部剧拆成
-                    # 每集一个系列（系列被刮削改名成中文后，扫描按旧英文名再也找不到
-                    # 它，只能每集重建——实测慎重勇者 12 集 = 12 个同名系列）。
-                    # 按 tmdb_id 挂载一遍即可自愈，配合末尾 merge_duplicate_series 收尾。
-                    series = None
-                    if video.tmdb_id:
-                        series = db.scalar(
-                            select(VideoSeries).where(VideoSeries.tmdb_id == video.tmdb_id)
-                        )
-                    if series is None:
-                        series = db.scalar(select(VideoSeries).where(VideoSeries.title == series_name))
-                    if series is None:
-                        series = VideoSeries(title=series_name)
-                        db.add(series)
-                        db.flush()
-                    video.series = series
-                    video.series_id = series.id
-                else:
-                    if not video.title or is_new:
-                        video.title = display
-
-                unchanged = (
-                    video.media_probed_mtime == file_stat.st_mtime
-                    and video.file_size == file_stat.st_size
+        title, season, episode = parse_episode(path.stem)
+        # 主标题：中文名.英文名.2025 → 中文名。剧名与 TMDB 名一致，
+        # 避免同一部剧因刮削先后而分裂成多个剧集/目录。
+        display = primary_title(path.name) or clean_title(title) or path.stem
+        if season is not None or episode is not None:
+            video.is_series = True
+            # 保留第 0 季：S00Exx 是特别篇/OVA（TMDB 约定 Season 0）。
+            # 写成 `season or 1` 会把 0 吞成 1，特别篇被并进第 1 季。
+            video.season_number = 1 if season is None else season
+            video.episode_number = episode
+            series_name = display
+            video.series_name = series_name
+            if not video.title or is_new:
+                video.title = f"{series_name} S{video.season_number:02d}E{(episode or 0):02d}"
+            # 已刮削的分集优先按 TMDB 剧 ID 归位：历史 bug 把同一部剧拆成
+            # 每集一个系列（系列被刮削改名成中文后，扫描按旧英文名再也找不到
+            # 它，只能每集重建——实测慎重勇者 12 集 = 12 个同名系列）。
+            # 按 tmdb_id 挂载一遍即可自愈，配合末尾 merge_duplicate_series 收尾。
+            series = None
+            if video.tmdb_id:
+                series = db.scalar(
+                    select(VideoSeries).where(VideoSeries.tmdb_id == video.tmdb_id)
                 )
-                video.file_size = file_stat.st_size
-                if not unchanged or not video.duration_seconds:
-                    duration = probe.probe_video_duration(file_path)
-                    video.duration_seconds = duration if duration and duration > 0 else None
-                    video.duration_minutes = max(1, int(duration // 60)) if video.duration_seconds else None
-                if not unchanged or not video.resolution:
-                    wh = probe.probe_video_resolution(file_path)
-                    video.resolution = f"{wh[0]}x{wh[1]}" if wh and all(wh) else None
-                video.media_probed_mtime = file_stat.st_mtime
-
-                # 本地封面路径探测（含无前缀 poster.jpg/fanart.jpg/thumb.jpg 等手工刮削命名）
-                from fryfrog.services import video_service as vs
-
-                if not video.cover_art_path:
-                    for poster in vs.local_poster_candidates(db, video):
-                        if poster.exists():
-                            video.cover_art_path = str(poster)
-                            break
-                if not video.backdrop_local_path:
-                    for fanart in vs.local_fanart_candidates(db, video):
-                        if fanart.exists():
-                            video.backdrop_local_path = str(fanart)
-                            break
-
-                # 文件没变过就没有新素材/NFO 可读，跳过磁盘解析与渲染清理
-                if is_new or not unchanged:
-                    # 从已有 NFO 恢复元数据（含 tmdbId）
-                    from fryfrog.services.video_assets import (
-                        parse_nfo,
-                        parse_series_nfo,
-                        prune_private_vertical_cover,
-                    )
-
-                    parse_nfo(db, video)
-                    sync_series_from_episode(db, video)
-                    parse_series_nfo(db, video)
-                    # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
-                    prune_private_vertical_cover(db, video)
-
-                    removed_frames = cleanup_redundant_frames(db, video)
-
+            if series is None:
+                series = db.scalar(select(VideoSeries).where(VideoSeries.title == series_name))
+            if series is None:
+                series = VideoSeries(title=series_name)
+                db.add(series)
                 db.flush()
+            video.series = series
+            video.series_id = series.id
+        else:
+            if not video.title or is_new:
+                video.title = display
 
-                if library.enable_scraping and not video.tmdb_id:
-                    from fryfrog.services.video_scrape import scrape_video_if_needed
+        unchanged = (
+            video.media_probed_mtime == file_stat.st_mtime
+            and video.file_size == file_stat.st_size
+        )
+        video.file_size = file_stat.st_size
+        if not unchanged or not video.duration_seconds:
+            duration = probe.probe_video_duration(file_path)
+            video.duration_seconds = duration if duration and duration > 0 else None
+            video.duration_minutes = max(1, int(duration // 60)) if video.duration_seconds else None
+        if not unchanged or not video.resolution:
+            wh = probe.probe_video_resolution(file_path)
+            video.resolution = f"{wh[0]}x{wh[1]}" if wh and all(wh) else None
+        video.media_probed_mtime = file_stat.st_mtime
 
-                    scrape_video_if_needed(db, video)
+        # 本地封面路径探测（含无前缀 poster.jpg/fanart.jpg/thumb.jpg 等手工刮削命名）
+        from fryfrog.services import video_service as vs
 
-                # 季级素材（竖封面）必须每集都确保，不能只在刮削分支里做：
-                # 改名/换季后的新记录往往已经有 tmdb_id（从旧记录或 NFO 继承），
-                # 自动刮削会被跳过，于是新季目录永远拿不到 tvshow-poster.jpg
-                # （实测 `第 2 季` 就是空的，而 `第 1 季` 有）。
-                # 已有文件时只是一次 is_file() 检查，开销可忽略。
-                if video.is_episode:
-                    try:
-                        from fryfrog.services import video_assets as assets
+        if not video.cover_art_path:
+            for poster in vs.local_poster_candidates(db, video):
+                if poster.exists():
+                    video.cover_art_path = str(poster)
+                    break
+        if not video.backdrop_local_path:
+            for fanart in vs.local_fanart_candidates(db, video):
+                if fanart.exists():
+                    video.backdrop_local_path = str(fanart)
+                    break
 
-                        assets.ensure_season_poster(db, video)
-                        # 剧级 NFO 也在这里确保：存量剧没有 tvshow.nfo，靠扫描补齐
-                        # （已有则跳过，不写盘、不发请求）。
-                        # 季级 season.nfo 不在这里补——季名只能从 TMDB 季接口拿，
-                        # 每集都发一次请求太浪费；改由刮削时用已取好的 detail 生成，
-                        # 或走 POST /video/series/{id}/nfo 手动刷新。
-                        if video.series is not None:
-                            episodes = vs.series_videos(db, video.series_id)
-                            assets.ensure_series_nfo(db, video.series, episodes or [video])
-                    except Exception:
-                        logger.debug("确保剧/季素材失败: %s", path, exc_info=True)
-        except Exception:
+        # 文件没变过就没有新素材/NFO 可读，跳过磁盘解析与渲染清理
+        if is_new or not unchanged:
+            # 从已有 NFO 恢复元数据（含 tmdbId）
+            from fryfrog.services.video_assets import (
+                parse_nfo,
+                parse_series_nfo,
+                prune_private_vertical_cover,
+            )
+
+            parse_nfo(db, video)
+            sync_series_from_episode(db, video)
+            parse_series_nfo(db, video)
+            # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
+            prune_private_vertical_cover(db, video)
+
+            removed_frames = cleanup_redundant_frames(db, video)
+
+        db.flush()
+
+        if library.enable_scraping and not video.tmdb_id:
+            from fryfrog.services.video_scrape import scrape_video_if_needed
+
+            scrape_video_if_needed(db, video)
+
+        # 季级素材（竖封面）必须每集都确保，不能只在刮削分支里做：
+        # 改名/换季后的新记录往往已经有 tmdb_id（从旧记录或 NFO 继承），
+        # 自动刮削会被跳过，于是新季目录永远拿不到 tvshow-poster.jpg
+        # （实测 `第 2 季` 就是空的，而 `第 1 季` 有）。
+        # 已有文件时只是一次 is_file() 检查，开销可忽略。
+        if video.is_episode:
+            try:
+                from fryfrog.services import video_assets as assets
+
+                assets.ensure_season_poster(db, video)
+                # 剧级 NFO 也在这里确保：存量剧没有 tvshow.nfo，靠扫描补齐
+                # （已有则跳过，不写盘、不发请求）。
+                # 季级 season.nfo 不在这里补——季名只能从 TMDB 季接口拿，
+                # 每集都发一次请求太浪费；改由刮削时用已取好的 detail 生成，
+                # 或走 POST /video/series/{id}/nfo 手动刷新。
+                if video.series is not None:
+                    episodes = vs.series_videos(db, video.series_id)
+                    assets.ensure_series_nfo(db, video.series, episodes or [video])
+            except Exception:
+                logger.debug("确保剧/季素材失败: %s", path, exc_info=True)
+        return file_path, removed_frames
+
+    for path in iter_files(root, VIDEO_EXTS):
+        failed_file = False
+        for attempt in range(2):
+            try:
+                # SQLite 旧版事务模式不会在 SAVEPOINT 前自动开启外层事务。
+                connection = db.connection()
+                if not connection.connection.driver_connection.in_transaction:
+                    connection.exec_driver_sql("BEGIN IMMEDIATE" if attempt else "BEGIN")
+                with db.begin_nested():
+                    file_path, removed_frames = scan_file(path)
+                break
+            except OperationalError as exc:
+                code = getattr(exc.orig, "sqlite_errorcode", None)
+                if code is None or code & 0xff != sqlite3.SQLITE_BUSY:
+                    failed_file = True
+                    logger.exception("扫描视频失败: %s", path)
+                    break
+                if attempt or count % 50:
+                    # 交给调用方回滚当前批次并报告数据库错误。
+                    raise
+                # WAL 中读快照过期后，回滚 SAVEPOINT 不足以恢复写入。
+                # 此时本批没有成功文件，重启外层事务并先取得写锁，再重试文件。
+                db.rollback()
+                logger.warning("视频库扫描遇到 SQLite 写锁争用，重试: %s", library.name)
+            except Exception:
+                failed_file = True
+                logger.exception("扫描视频失败: %s", path)
+                break
+        if failed_file:
             failed += 1
-            logger.exception("扫描视频失败: %s", path)
             continue
 
+        existing.pop(file_path, None)
         count += 1
         frames_removed += removed_frames
         # 定期释放 SQLite 写锁；提交失败由调用方报告为扫描失败。

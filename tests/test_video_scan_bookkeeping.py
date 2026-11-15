@@ -275,6 +275,50 @@ def test_failed_file_keeps_other_scan_results(tmp_path, monkeypatch):
     assert progress.get_pipeline_progress(lib)["message"] == "视频扫描失败 1 项，成功 2 项"
 
 
+def test_wal_scan_retries_when_another_connection_invalidates_snapshot(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'scan.db'}", connect_args={"timeout": 0})
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one() == "wal"
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    for name in ("one.mp4", "two.mp4"):
+        (tmp_path / name).write_bytes(b"video")
+    probe = _FakeProbe()
+    monkeypatch.setattr(video_scan, "get_media_probe", lambda: probe)
+
+    with factory() as db:
+        lib = MediaLibrary(name="电影", path=str(tmp_path), type="VIDEO", enable_scraping=False)
+        db.add(lib)
+        db.commit()
+        assert video_scan.scan_video_library(db, lib) == (2, 0)
+        db.commit()
+        (tmp_path / "one.mp4").write_bytes(b"longer replacement")
+        first = db.scalar(select(Video).where(Video.file_name == "one.mp4"))
+        video_id = first.id
+        reads = 0
+
+        def probe_after_concurrent_write(_path):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                # 建立扫描连接的 WAL 读快照，然后让另一个连接提交。
+                db.execute(select(Video.id).where(Video.id == video_id)).scalar_one()
+                with factory.begin() as other:
+                    other.get(Video, video_id).title = "并发更新的标题"
+            return 420
+
+        monkeypatch.setattr(probe, "probe_video_duration", probe_after_concurrent_write)
+        assert video_scan.scan_video_library(db, lib) == (2, 0)
+        db.commit()
+        assert reads == 2
+
+    with factory() as db:
+        video = db.get(Video, video_id)
+        assert video.title == "并发更新的标题"
+        assert video.duration_seconds == 420
+        assert _count(db) == 2
+
+
 def test_scan_bookkeeping_written(tmp_path, monkeypatch):
     """扫描簿记落 SystemSetting，供护栏与诊断使用。"""
     db, lib, _ = _setup(tmp_path, monkeypatch, count=2)
