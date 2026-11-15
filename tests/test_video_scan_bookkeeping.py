@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from fryfrog.db import Base, _ensure_columns
 from fryfrog.models.library import MediaLibrary
 from fryfrog.models.video import Video
+from fryfrog.routers.video import browse
 from fryfrog.services import progress, scan, video_scan
 
 
@@ -249,6 +250,36 @@ def test_probe_retries_missing_fields_without_file_change(tmp_path, monkeypatch)
     db.commit()
     assert db.scalar(select(Video)).resolution == "1280x720"
     assert probe.duration_calls == 1
+
+
+def test_rescan_restores_search_for_unchanged_bound_episode(tmp_path, monkeypatch):
+    db, lib, probe = _setup(tmp_path, monkeypatch, count=0)
+    db.autoflush = False
+    db.expire_on_commit = False
+    title = "示例番剧"
+    folder = tmp_path / title / "第 1 季" / "第 1 集"
+    folder.mkdir(parents=True)
+    (folder / f"{title} #1.mp4").write_bytes(b"video")
+    monkeypatch.setattr("fryfrog.services.video_assets.ensure_season_poster", lambda *_: None)
+    monkeypatch.setattr(browse, "_allowed_ids", lambda _: [lib.id])
+    assert video_scan.scan_video_library(db, lib) == (1, 0)
+    db.commit()
+
+    video = db.scalar(select(Video))
+    series_id = video.series_id
+    video.tmdb_id = 123
+    lib.enable_scraping = True
+    db.commit()
+    assert video.series.tmdb_id is None
+    assert browse.search_by_library(db, libraryId=lib.id, q=title).data["seriesCount"] == 0
+    assert browse.list_unscraped(db, libraryId=lib.id).data["totalElements"] == 0
+
+    assert video_scan.scan_video_library(db, lib) == (1, 0)
+    db.commit()
+    assert probe.duration_calls == 1
+    assert video.series_id == series_id
+    assert video.series.tmdb_id == 123
+    assert browse.search_by_library(db, libraryId=lib.id, q=title).data["seriesCount"] == 1
 
 
 def test_failed_file_keeps_other_scan_results(tmp_path, monkeypatch):

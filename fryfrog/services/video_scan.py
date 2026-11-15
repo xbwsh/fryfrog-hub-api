@@ -493,13 +493,14 @@ def scan_video_library(db: Session, library: MediaLibrary) -> tuple[int, int]:
             )
 
             parse_nfo(db, video)
-            sync_series_from_episode(db, video)
             parse_series_nfo(db, video)
             # 分集竖屏共用季/剧海报：扫描顺手清掉历史私有副本
             prune_private_vertical_cover(db, video)
 
             removed_frames = cleanup_redundant_frames(db, video)
 
+        # 已入库的分集可能有 TMDB ID，但剧集行仍缺 ID，即使文件没变也要修复。
+        sync_series_from_episode(db, video)
         db.flush()
 
         if library.enable_scraping and not video.tmdb_id:
